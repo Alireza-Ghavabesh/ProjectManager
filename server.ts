@@ -15,7 +15,10 @@ const __dirname = path.dirname(__filename);
 initDatabase();
 
 const app = express();
-const PORT = process.env.NODE_ENV === 'production' ? (process.env.PORT || 3000) : 3000;
+
+// User requested port: 3241
+const PORT: number = 3241;
+const PREVIEW_PORT: number = 3000;
 
 app.use(express.json());
 
@@ -31,7 +34,7 @@ async function startServer() {
       res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
     });
   } else {
-    // Mount Vite dev server middleware with proper server binding
+    // Mount Vite dev server middleware
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
@@ -44,9 +47,22 @@ async function startServer() {
     app.use(vite.middlewares);
   }
 
-  httpServer.listen(Number(PORT), '0.0.0.0', () => {
-    console.log(`Council System server running on http://0.0.0.0:${PORT}`);
+  // 1. Listen on requested port 3241
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`Council System server running on http://0.0.0.0:${PORT} (Requested: 3241)`);
   });
+
+  // 2. Also listen on port 3000 for AI Studio cloud preview environment
+  if (PORT !== PREVIEW_PORT) {
+    const previewServer = http.createServer(app);
+    previewServer.listen(PREVIEW_PORT, '0.0.0.0', () => {
+      console.log(`AI Studio preview listener active on http://0.0.0.0:${PREVIEW_PORT}`);
+    }).on('error', (err: any) => {
+      if (err.code !== 'EADDRINUSE') {
+        console.warn(`Preview listener warning on port ${PREVIEW_PORT}:`, err.message);
+      }
+    });
+  }
 }
 
 startServer();
