@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>سامانه کارتابل و مصوبات شورای پروژه | Council Flow</title>
+    <meta name="description" content="سامانه مدیریت جلسات، کارتابل مصوبات شورا، سیستم ثبت آرا محرمانه، چت شورا و فیلدهای پویای پروژه با رای اکثریت" />
+    <meta property="og:title" content="سامانه کارتابل و مصوبات شورای پروژه | Council Flow" />
+    <meta property="og:description" content="سامانه مدیریت جلسات، کارتابل مصوبات شورا، سیستم ثبت آرا محرمانه، چت شورا و فیلدهای پویای پروژه با رای اکثریت" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- PWA & Mobile Meta Tags -->
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="شورای پروژه" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+
+    <!-- Google Font Vazirmatn for Persian Typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+
+    <!-- Dev environment Vite HMR WebSocket safe handler -->
+    <script>
+      (function() {
+        if (typeof window === 'undefined') return;
+
+        // Suppress unhandled rejection from WebSocket
+        window.addEventListener('unhandledrejection', function(event) {
+          if (event && event.reason && event.reason.message && event.reason.message.indexOf('WebSocket') !== -1) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        }, true);
+
+        // Suppress window error from WebSocket
+        window.addEventListener('error', function(event) {
+          if (event && event.message && (event.message.indexOf('WebSocket') !== -1 || event.message.indexOf('[vite]') !== -1)) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        }, true);
+
+        // Suppress console error noise
+        var origConsoleError = console.error;
+        console.error = function() {
+          var msg = arguments[0];
+          if (typeof msg === 'string' && (msg.indexOf('WebSocket') !== -1 || msg.indexOf('[vite]') !== -1)) {
+            return;
+          }
+          origConsoleError.apply(console, arguments);
+        };
+
+        // Mock WebSocket for vite-hmr so isOpened resolves cleanly without error
+        var OriginalWebSocket = window.WebSocket;
+        if (!OriginalWebSocket) return;
+
+        window.WebSocket = function(url, protocols) {
+          if (protocols === 'vite-hmr' || (typeof url === 'string' && (url.indexOf('vite-hmr') !== -1 || url.indexOf('@vite') !== -1))) {
+            var listeners = {};
+            var fakeWs = {
+              readyState: 1, // OPEN
+              url: url,
+              protocol: 'vite-hmr',
+              binaryType: 'blob',
+              bufferedAmount: 0,
+              extensions: '',
+              addEventListener: function(event, fn) {
+                listeners[event] = listeners[event] || [];
+                listeners[event].push(fn);
+                if (event === 'open') {
+                  setTimeout(function() {
+                    try { fn({ type: 'open', target: fakeWs }); } catch(e) {}
+                  }, 0);
+                }
+              },
+              removeEventListener: function(event, fn) {
+                if (!listeners[event]) return;
+                listeners[event] = listeners[event].filter(function(l) { return l !== fn; });
+              },
+              dispatchEvent: function(event) {
+                var list = listeners[event.type] || [];
+                list.forEach(function(l) {
+                  try { l(event); } catch(e) {}
+                });
+                return true;
+              },
+              send: function() {},
+              close: function(code, reason) {
+                fakeWs.readyState = 3;
+                var list = listeners['close'] || [];
+                list.forEach(function(l) {
+                  try { l({ type: 'close', wasClean: true, code: 1000, reason: reason }); } catch(e) {}
+                });
+              },
+              onopen: null,
+              onclose: null,
+              onerror: null,
+              onmessage: null
+            };
+
+            setTimeout(function() {
+              if (typeof fakeWs.onopen === 'function') {
+                fakeWs.onopen({ type: 'open', target: fakeWs });
+              }
+            }, 0);
+
+            return fakeWs;
+          }
+          return new OriginalWebSocket(url, protocols);
+        };
+
+        window.WebSocket.prototype = OriginalWebSocket.prototype;
+        window.WebSocket.CONNECTING = 0;
+        window.WebSocket.OPEN = 1;
+        window.WebSocket.CLOSING = 2;
+        window.WebSocket.CLOSED = 3;
+      })();
+    </script>
+  </head>
+  <body class="bg-slate-950 text-slate-100 font-['Vazirmatn',sans-serif] antialiased selection:bg-cyan-500 selection:text-white">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

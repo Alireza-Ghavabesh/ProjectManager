@@ -1,0 +1,6 @@
+{
+  "name": "سامانه کارتابل و مصوبات شورای پروژه | Council Flow",
+  "description": "سامانه مدیریت جلسات، کارتابل مصوبات شورا، سیستم ثبت آرا محرمانه، چت شورا و فیلدهای پویای پروژه با رای اکثریت",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
