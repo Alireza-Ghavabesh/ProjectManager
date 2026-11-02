@@ -1,5 +1,49 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: 'Vazirmatn';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('/fonts/vazirmatn/vazirmatn-arabic-400-normal.woff2') format('woff2'),
+       url('/fonts/vazirmatn/vazirmatn-latin-400-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Vazirmatn';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url('/fonts/vazirmatn/vazirmatn-arabic-500-normal.woff2') format('woff2'),
+       url('/fonts/vazirmatn/vazirmatn-latin-500-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Vazirmatn';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url('/fonts/vazirmatn/vazirmatn-arabic-600-normal.woff2') format('woff2'),
+       url('/fonts/vazirmatn/vazirmatn-latin-600-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Vazirmatn';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url('/fonts/vazirmatn/vazirmatn-arabic-700-normal.woff2') format('woff2'),
+       url('/fonts/vazirmatn/vazirmatn-latin-700-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Vazirmatn';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 800;
+  src: url('/fonts/vazirmatn/vazirmatn-arabic-800-normal.woff2') format('woff2'),
+       url('/fonts/vazirmatn/vazirmatn-latin-800-normal.woff2') format('woff2');
+}
 
 @layer base {
   * {
