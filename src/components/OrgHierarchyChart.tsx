@@ -27,6 +27,7 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
   onRefresh,
 }) => {
   const [selectedPosForPerms, setSelectedPosForPerms] = useState<Position | null>(null);
+  const [selectedUserForPerms, setSelectedUserForPerms] = useState<User | null>(null);
   const [showAddEditModal, setShowAddEditModal] = useState(false);
   const [editingPosition, setEditingPosition] = useState<Position | null>(null);
   const [parentPositionId, setParentPositionId] = useState<string | null>(null);
@@ -234,6 +235,13 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
                         {u.name.charAt(0)}
                       </span>
                       <span>{u.name}</span>
+                      <button
+                        onClick={() => setSelectedUserForPerms(u)}
+                        className="mr-1 px-1.5 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 text-[10px] font-bold border border-blue-200 transition cursor-pointer"
+                        title="ویرایش دسترسی‌های این کاربر"
+                      >
+                        دسترسی‌ها
+                      </button>
                     </span>
                   ))}
                 </div>
@@ -309,6 +317,14 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
         <PermissionsTreeModal
           position={selectedPosForPerms}
           onClose={() => setSelectedPosForPerms(null)}
+          onSuccess={onRefresh}
+        />
+      )}
+
+      {selectedUserForPerms && (
+        <PermissionsTreeModal
+          user={selectedUserForPerms}
+          onClose={() => setSelectedUserForPerms(null)}
           onSuccess={onRefresh}
         />
       )}

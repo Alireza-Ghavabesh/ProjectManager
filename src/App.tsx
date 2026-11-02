@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User, Project, DynamicField, Position, DashboardStats, Workflow } from './types';
+import { User, Project, DynamicField, Position, DashboardStats, ProjectStructure } from './types';
 import { api } from './services/api';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -7,10 +7,9 @@ import { ProjectCard } from './components/ProjectCard';
 import { VotingModal } from './components/VotingModal';
 import { CreateProjectModal } from './components/CreateProjectModal';
 import { DynamicFieldsManager } from './components/DynamicFieldsManager';
+import { ProjectStructuresManager } from './components/ProjectStructuresManager';
 import { UsersPositionsManager } from './components/UsersPositionsManager';
 import { OrgHierarchyChart } from './components/OrgHierarchyChart';
-import { WorkflowManager } from './components/WorkflowManager';
-import { WorkflowTransitionModal } from './components/WorkflowTransitionModal';
 import { CouncilChat } from './components/CouncilChat';
 import { StatsView } from './components/StatsView';
 import { LoginModal } from './components/LoginModal';
@@ -26,23 +25,23 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // App Data
   const [projects, setProjects] = useState<Project[]>([]);
   const [dynamicFields, setDynamicFields] = useState<DynamicField[]>([]);
+  const [projectStructures, setProjectStructures] = useState<ProjectStructure[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
-  const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
 
   // Navigation & Filters
-  const [activeTab, setActiveTab] = useState<'projects' | 'fields' | 'users' | 'org' | 'workflow' | 'chat' | 'stats'>('projects');
+  const [activeTab, setActiveTab] = useState<'projects' | 'fields' | 'structures' | 'users' | 'org' | 'chat' | 'stats'>('projects');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING_MY_VOTE' | 'APPROVED' | 'NEEDS_REVISION' | 'REJECTED'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
 
   // Modals
   const [votingProject, setVotingProject] = useState<Project | null>(null);
-  const [workflowProject, setWorkflowProject] = useState<Project | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
 
@@ -61,7 +60,7 @@ export default function App() {
         localStorage.removeItem('council_user');
       }
     } else {
-      // Default to admin for fast evaluation
+      // Auto-authenticate default session if not set
       api.login('admin', 'admin123').then((res) => {
         setCurrentUser(res.user);
       }).catch(() => {});
@@ -74,19 +73,19 @@ export default function App() {
     if (!currentUser) return;
     setLoading(true);
     try {
-      const [prjs, flds, usrs, pos, wfs, st] = await Promise.all([
+      const [prjs, flds, structs, usrs, pos, st] = await Promise.all([
         api.getProjects(),
         api.getDynamicFields(),
+        api.getProjectStructures(),
         api.getUsers(),
         api.getPositions(),
-        api.getWorkflows(),
         api.getDashboardStats(),
       ]);
       setProjects(prjs);
       setDynamicFields(flds);
+      setProjectStructures(structs);
       setUsers(usrs);
       setPositions(pos);
-      setWorkflows(wfs);
       setStats(st);
     } catch (err) {
       console.error('Error refreshing data:', err);
@@ -104,16 +103,6 @@ export default function App() {
   const handleLogout = () => {
     api.logout();
     setCurrentUser(null);
-  };
-
-  const handleSwitchUser = async (username: string) => {
-    try {
-      const pass = username === 'admin' ? 'admin123' : '123456';
-      const data = await api.login(username, pass);
-      setCurrentUser(data.user);
-    } catch (err: any) {
-      alert(err.message || 'خطا در تغییر کاربر');
-    }
   };
 
   const handleDeleteProject = async (projectId: string) => {
@@ -163,22 +152,22 @@ export default function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onLogout={handleLogout}
-        onSwitchUser={handleSwitchUser}
-        allUsers={users}
         pendingVotesCount={pendingVotesCount}
         mobileOpen={mobileMenuOpen}
         setMobileOpen={setMobileMenuOpen}
+        collapsed={sidebarCollapsed}
+        setCollapsed={setSidebarCollapsed}
       />
 
-      {/* Main Content Area (Spaced on the right for fixed sidebar on md+ screens) */}
-      <div className="flex-1 flex flex-col min-w-0 md:mr-72 transition-all duration-300">
+      {/* Main Content Area (Spaced on the right according to sidebar width) */}
+      <div className={`flex-1 flex flex-col min-w-0 transition-all duration-300 ${
+        sidebarCollapsed ? 'md:mr-20' : 'md:mr-72'
+      }`}>
         
         {/* Top Header Bar */}
         <Header
           currentUser={currentUser}
           activeTab={activeTab}
-          onSwitchUser={handleSwitchUser}
-          allUsers={users}
           onOpenMobileMenu={() => setMobileMenuOpen(true)}
         />
 
@@ -319,12 +308,12 @@ export default function App() {
                       currentUser={currentUser}
                       dynamicFields={dynamicFields}
                       onOpenVoteModal={(p) => setVotingProject(p)}
-                      onOpenWorkflowModal={(p) => setWorkflowProject(p)}
                       onEditProject={(p) => {
                         setEditingProject(p);
                         setShowCreateModal(true);
                       }}
                       onDeleteProject={handleDeleteProject}
+                      onRefreshData={refreshData}
                     />
                   ))}
                 </div>
@@ -343,11 +332,12 @@ export default function App() {
             />
           )}
 
-          {/* ===================== TAB: WORKFLOW MANAGER ===================== */}
-          {activeTab === 'workflow' && (
-            <WorkflowManager
-              workflows={workflows}
+          {/* ===================== TAB: PROJECT STRUCTURES (ساختارهای سازمانی) ===================== */}
+          {activeTab === 'structures' && (
+            <ProjectStructuresManager
+              structures={projectStructures}
               positions={positions}
+              users={users}
               currentUser={currentUser}
               onRefresh={refreshData}
             />
@@ -399,16 +389,6 @@ export default function App() {
           project={votingProject}
           onClose={() => setVotingProject(null)}
           onVoteSuccess={refreshData}
-        />
-      )}
-
-      {/* Workflow Transition Modal */}
-      {workflowProject && (
-        <WorkflowTransitionModal
-          project={workflowProject}
-          currentUser={currentUser}
-          onClose={() => setWorkflowProject(null)}
-          onSuccess={refreshData}
         />
       )}
 

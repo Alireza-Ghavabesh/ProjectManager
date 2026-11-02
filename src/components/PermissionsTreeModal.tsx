@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Position, Permission } from '../types';
+import { Position, Permission, User } from '../types';
 import { api } from '../services/api';
 import { 
   ShieldAlert, 
@@ -14,13 +14,15 @@ import {
 } from 'lucide-react';
 
 interface PermissionsTreeModalProps {
-  position: Position;
+  position?: Position | null;
+  user?: User | null;
   onClose: () => void;
   onSuccess: () => void;
 }
 
 export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
   position,
+  user,
   onClose,
   onSuccess,
 }) => {
@@ -31,18 +33,25 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  const targetTitle = user ? user.name : position ? position.title : 'سطح دسترسی';
+  const isUserTarget = Boolean(user);
+
   useEffect(() => {
     async function loadData() {
       setLoading(true);
       try {
-        const [permData, currentPosPerms] = await Promise.all([
-          api.getPermissions(),
-          api.getPositionPermissions(position.id),
-        ]);
+        const permData = await api.getPermissions();
         setTree(permData.tree);
-        setSelectedCodes(new Set(currentPosPerms));
         // Expand all root nodes by default
         setExpandedNodes(new Set(permData.tree.map((r) => r.code)));
+
+        if (user) {
+          const userPermsData = await api.getUserPermissions(user.id);
+          setSelectedCodes(new Set(userPermsData.permissions));
+        } else if (position) {
+          const posPerms = await api.getPositionPermissions(position.id);
+          setSelectedCodes(new Set(posPerms));
+        }
       } catch (err: any) {
         setError(err.message || 'خطا در بارگذاری ماتریس دسترسی‌ها');
       } finally {
@@ -50,7 +59,7 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
       }
     }
     loadData();
-  }, [position.id]);
+  }, [position?.id, user?.id]);
 
   const toggleExpand = (code: string) => {
     setExpandedNodes((prev) => {
@@ -85,7 +94,12 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
     setSaving(true);
     setError('');
     try {
-      await api.updatePositionPermissions(position.id, Array.from(selectedCodes));
+      const codes = Array.from(selectedCodes);
+      if (user) {
+        await api.updateUserPermissions(user.id, codes);
+      } else if (position) {
+        await api.updatePositionPermissions(position.id, codes);
+      }
       onSuccess();
       onClose();
     } catch (err: any) {
@@ -102,16 +116,23 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
         {/* Modal Header */}
         <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/60">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 border border-blue-200 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 border border-indigo-200 flex items-center justify-center">
               <Lock className="w-5 h-5" />
             </div>
             <div>
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <span>ساختار درختی سطح دسترسی‌های سمت:</span>
-                <span className="text-blue-700 font-extrabold">{position.title}</span>
+                <span>{isUserTarget ? 'تنظیم سطح دسترسی‌های کاربر:' : 'ساختار درختی سطح دسترسی‌های سمت:'}</span>
+                <span className="text-indigo-700 font-extrabold">{targetTitle}</span>
+                {user?.positionTitle && (
+                  <span className="text-xs px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 font-normal">
+                    سمت: {user.positionTitle}
+                  </span>
+                )}
               </h3>
               <p className="text-xs text-slate-500">
-                تعیین دقیق مجوزهای کاربری (عدم امکان افزودن ادمین یا تغییر فیلدها مگر با فعال‌سازی گره مربوطه)
+                {isUserTarget
+                  ? 'اعطا یا سلب مجوزهای اختصاصی این فرد در سیستم و چارت ساختار'
+                  : 'تعیین دقیق مجوزهای کاربری این سمت در ماتریس امنیتی شورا'}
               </p>
             </div>
           </div>

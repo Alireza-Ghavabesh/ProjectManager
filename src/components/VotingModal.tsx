@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Project } from '../types';
-import { api } from '../services/api';
+import { api, formatFileSize } from '../services/api';
 import { 
   CheckCircle2, 
   XCircle, 
@@ -9,7 +9,10 @@ import {
   X, 
   MessageSquare, 
   Clock,
-  Sparkles
+  Sparkles,
+  Paperclip,
+  Download,
+  FileText
 } from 'lucide-react';
 
 interface VotingModalProps {
@@ -85,6 +88,43 @@ export const VotingModal: React.FC<VotingModalProps> = ({
           {project.description && (
             <div className="text-xs text-slate-600 leading-relaxed bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
               {project.description}
+            </div>
+          )}
+
+          {/* Attached documents preview */}
+          {project.attachments && project.attachments.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-slate-200">
+              <div className="text-xs font-bold text-slate-800 mb-2 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Paperclip className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>اسناد و فایل‌های پیوست جهت بررسی طرح:</span>
+                </span>
+                <span className="text-[10px] text-slate-500 font-semibold">
+                  {project.attachments.length} فایل پیوست
+                </span>
+              </div>
+              <div className="space-y-1.5">
+                {project.attachments.map((att) => (
+                  <div
+                    key={att.id}
+                    className="p-2.5 rounded-xl bg-white border border-slate-200 hover:border-indigo-300 transition flex items-center justify-between gap-2 text-xs shadow-2xs"
+                  >
+                    <div className="flex items-center gap-2 truncate">
+                      <FileText className="w-4 h-4 text-indigo-600 shrink-0" />
+                      <span className="font-semibold text-slate-900 truncate" dir="ltr">{att.fileName}</span>
+                      <span className="text-[10px] text-slate-400 font-mono">({formatFileSize(att.fileSize)})</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => api.downloadAttachment(att.id, att.fileName)}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition cursor-pointer shrink-0"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>دانلود / مطالعه</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>

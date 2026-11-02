@@ -25,6 +25,23 @@ export interface Position {
   users?: User[];
 }
 
+export interface StructurePositionNode {
+  id: string; // structure_position record ID
+  structureId: string;
+  positionId: string;
+  parentId?: string | null;
+  parentTitle?: string;
+  title: string;
+  description?: string;
+  color?: string;
+  level?: number;
+  orderIndex: number;
+  createdAt?: string;
+  permissions?: string[];
+  users: User[];
+  children?: StructurePositionNode[];
+}
+
 export interface User {
   id: string;
   username: string;
@@ -37,6 +54,22 @@ export interface User {
   phone?: string;
   createdAt?: string;
   permissions?: string[];
+}
+
+export interface ProjectStructure {
+  id: string;
+  title: string;
+  code?: string;
+  description?: string;
+  category?: string;
+  defaultWorkflowId?: string | null;
+  defaultWorkflowTitle?: string;
+  orderIndex: number;
+  isActive: number | boolean;
+  createdAt: string;
+  projectCount?: number;
+  positionCount?: number;
+  userCount?: number;
 }
 
 export interface DynamicField {
@@ -103,6 +136,18 @@ export interface WorkflowLog {
   createdAt: string;
 }
 
+export interface ProjectAttachment {
+  id: string;
+  projectId: string;
+  fileName: string;
+  fileSize: number;
+  fileType?: string;
+  data?: string;
+  uploadedBy?: string;
+  uploaderName?: string;
+  createdAt: string;
+}
+
 export interface Project {
   id: string;
   title: string;
@@ -126,6 +171,10 @@ export interface Project {
   createdAt: string;
   updatedAt: string;
   
+  // Attachments
+  attachments?: ProjectAttachment[];
+  attachmentCount?: number;
+
   // Council Member View
   hasVoted?: boolean;
   userVote?: {

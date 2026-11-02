@@ -20,6 +20,8 @@ import {
   Briefcase
 } from 'lucide-react';
 
+import { ProjectAttachments } from './ProjectAttachments';
+
 interface ProjectCardProps {
   project: Project;
   currentUser: User;
@@ -28,6 +30,7 @@ interface ProjectCardProps {
   onOpenWorkflowModal?: (project: Project) => void;
   onEditProject?: (project: Project) => void;
   onDeleteProject?: (projectId: string) => void;
+  onRefreshData?: () => void;
 }
 
 export const ProjectCard: React.FC<ProjectCardProps> = ({
@@ -38,8 +41,10 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   onOpenWorkflowModal,
   onEditProject,
   onDeleteProject,
+  onRefreshData,
 }) => {
   const [showAdminVotes, setShowAdminVotes] = useState(false);
+  const [showAttachments, setShowAttachments] = useState(false);
   const isAdmin = currentUser.role === 'ADMIN';
 
   // Helper for majority badge
@@ -298,6 +303,19 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             نیاز اختصاصی ثبت نشده است
           </div>
         )}
+      </div>
+
+      {/* Project Attachments & Files Section */}
+      <div className="mb-5 p-4 rounded-2xl bg-slate-50/70 border border-slate-200/90">
+        <ProjectAttachments
+          projectId={project.id}
+          projectTitle={project.title}
+          attachments={project.attachments || []}
+          canManage={isAdmin}
+          onAttachmentChange={() => {
+            if (onRefreshData) onRefreshData();
+          }}
+        />
       </div>
 
       {/* Role-Specific Voting Section */}

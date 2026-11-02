@@ -25,21 +25,50 @@ function getCurrentUser(req: Request) {
   `).get(userId) as any;
 
   if (!user) return null;
+  const permissions = getUserPermissionsList(user);
+  return { ...user, permissions };
+}
 
-  // Resolve user permissions (ADMIN has all, or pull from position_permissions)
-  let permissions: string[] = [];
+// Unified helper to get all effective permissions for a user
+export function getUserPermissionsList(user: { id: string; role: string; positionId?: string | null }): string[] {
   if (user.role === 'ADMIN') {
     const allP = db.prepare('SELECT code FROM permissions').all() as { code: string }[];
-    permissions = allP.map((p) => p.code);
-  } else if (user.positionId) {
+    return allP.map((p) => p.code);
+  }
+
+  const permSet = new Set<string>();
+
+  // 1. Direct primary position permissions
+  if (user.positionId) {
     const posP = db.prepare(`
       SELECT permissionCode FROM position_permissions
       WHERE positionId = ?
     `).all(user.positionId) as { permissionCode: string }[];
-    permissions = posP.map((p) => p.permissionCode);
+    posP.forEach((p) => permSet.add(p.permissionCode));
   }
 
-  return { ...user, permissions };
+  // 2. Permissions from positions held in any project structure
+  try {
+    const structPosP = db.prepare(`
+      SELECT pp.permissionCode
+      FROM structure_position_users spu
+      JOIN structure_positions sp ON spu.structurePositionId = sp.id
+      JOIN position_permissions pp ON sp.positionId = pp.positionId
+      WHERE spu.userId = ?
+    `).all(user.id) as { permissionCode: string }[];
+    structPosP.forEach((p) => permSet.add(p.permissionCode));
+  } catch (e) {}
+
+  // 3. User-specific custom permissions overrides
+  try {
+    const userP = db.prepare(`
+      SELECT permissionCode FROM user_permissions
+      WHERE userId = ?
+    `).all(user.id) as { permissionCode: string }[];
+    userP.forEach((p) => permSet.add(p.permissionCode));
+  } catch (e) {}
+
+  return Array.from(permSet);
 }
 
 // Check permission helper
@@ -113,18 +142,7 @@ apiRouter.post('/auth/login', (req: Request, res: Response) => {
     return res.status(401).json({ error: 'نام کاربری یا رمز عبور اشتباه است.' });
   }
 
-  let permissions: string[] = [];
-  if (user.role === 'ADMIN') {
-    const allP = db.prepare('SELECT code FROM permissions').all() as { code: string }[];
-    permissions = allP.map((p) => p.code);
-  } else if (user.positionId) {
-    const posP = db.prepare(`
-      SELECT permissionCode FROM position_permissions
-      WHERE positionId = ?
-    `).all(user.positionId) as { permissionCode: string }[];
-    permissions = posP.map((p) => p.permissionCode);
-  }
-
+  const permissions = getUserPermissionsList(user);
   const fullUser = { ...user, permissions };
   res.json({ token: user.id, user: fullUser });
 });
@@ -146,19 +164,9 @@ apiRouter.get('/users', (_req: Request, res: Response) => {
     ORDER BY u.role DESC, u.name ASC
   `).all() as any[];
 
-  // Attach permissions for each user
+  // Attach unified permissions for each user
   const result = users.map((u) => {
-    let permissions: string[] = [];
-    if (u.role === 'ADMIN') {
-      const allP = db.prepare('SELECT code FROM permissions').all() as { code: string }[];
-      permissions = allP.map((p) => p.code);
-    } else if (u.positionId) {
-      const posP = db.prepare(`
-        SELECT permissionCode FROM position_permissions
-        WHERE positionId = ?
-      `).all(u.positionId) as { permissionCode: string }[];
-      permissions = posP.map((p) => p.permissionCode);
-    }
+    const permissions = getUserPermissionsList(u);
     return { ...u, permissions };
   });
 
@@ -333,6 +341,56 @@ apiRouter.put('/positions/:id/permissions', (req: Request, res: Response) => {
     deleteStmt.run(positionId);
     for (const code of permissions) {
       insertStmt.run(positionId, code);
+    }
+  });
+
+  tx();
+
+  res.json({ success: true, count: permissions.length });
+});
+
+apiRouter.get('/users/:id/permissions', (req: Request, res: Response) => {
+  const { id: userId } = req.params;
+  const user = db.prepare('SELECT id, name, username, role, positionId FROM users WHERE id = ?').get(userId) as any;
+  if (!user) {
+    return res.status(404).json({ error: 'کاربر یافت نشد.' });
+  }
+
+  const effective = getUserPermissionsList(user);
+  
+  // Custom direct user permissions
+  const custom = db.prepare('SELECT permissionCode FROM user_permissions WHERE userId = ?').all(userId) as { permissionCode: string }[];
+  
+  // Inherited position permissions
+  const inherited = user.positionId ? (db.prepare('SELECT permissionCode FROM position_permissions WHERE positionId = ?').all(user.positionId) as { permissionCode: string }[]).map(p => p.permissionCode) : [];
+
+  res.json({
+    permissions: effective,
+    customPermissions: custom.map((c) => c.permissionCode),
+    inheritedPermissions: inherited,
+  });
+});
+
+apiRouter.put('/users/:id/permissions', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || !hasPermission(currentUser, 'system.permissions.manage')) {
+    return res.status(403).json({ error: 'تنها مدیر ارشد با مجوز مدیریت دسترسی‌ها امکان تغییر مجوزهای کاربر را دارد.' });
+  }
+
+  const { id: userId } = req.params;
+  const { permissions } = req.body as { permissions: string[] };
+
+  if (!Array.isArray(permissions)) {
+    return res.status(400).json({ error: 'لیست مجوزها نامعتبر است.' });
+  }
+
+  const deleteStmt = db.prepare('DELETE FROM user_permissions WHERE userId = ?');
+  const insertStmt = db.prepare('INSERT INTO user_permissions (userId, permissionCode) VALUES (?, ?)');
+
+  const tx = db.transaction(() => {
+    deleteStmt.run(userId);
+    for (const code of permissions) {
+      insertStmt.run(userId, code);
     }
   });
 
@@ -532,6 +590,84 @@ apiRouter.post('/workflows', (req: Request, res: Response) => {
   res.json({ success: true, workflowId: id });
 });
 
+apiRouter.put('/workflows/:id', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || !hasPermission(currentUser, 'workflow.definitions.manage')) {
+    return res.status(403).json({ error: 'شما مجاز به ویرایش فرآیند گردش کار نیستید.' });
+  }
+
+  const { id } = req.params;
+  const { title, description, isDefault, steps } = req.body;
+  if (!title || !title.trim() || !Array.isArray(steps) || steps.length === 0) {
+    return res.status(400).json({ error: 'عنوان گردش کار و حداقل یک مرحله الزامی است.' });
+  }
+
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE workflows SET title = ?, description = ?, isDefault = ? WHERE id = ?')
+      .run(title.trim(), description || '', isDefault ? 1 : 0, id);
+
+    db.prepare('DELETE FROM workflow_steps WHERE workflowId = ?').run(id);
+
+    const insertStep = db.prepare(`
+      INSERT INTO workflow_steps (id, workflowId, stepOrder, title, positionId, actionType, description)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    steps.forEach((s: any, idx: number) => {
+      insertStep.run(
+        s.id && !s.id.startsWith('new-') ? s.id : `st-${randomUUID().substring(0, 8)}`,
+        id,
+        idx + 1,
+        s.title || `گام ${idx + 1}`,
+        s.positionId,
+        s.actionType || 'REVIEW',
+        s.description || ''
+      );
+    });
+  });
+
+  tx();
+
+  res.json({ success: true });
+});
+
+apiRouter.delete('/workflows/:id', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || !hasPermission(currentUser, 'workflow.definitions.manage')) {
+    return res.status(403).json({ error: 'شما مجاز به حذف گردش کار نیستید.' });
+  }
+
+  const { id } = req.params;
+  const activeCount = (db.prepare('SELECT count(*) as count FROM projects WHERE workflowId = ?').get(id) as any)?.count || 0;
+  if (activeCount > 0) {
+    return res.status(400).json({ error: `تعداد ${activeCount} پروژه در حال حاضر از این فرآیند گردش کار استفاده می‌کنند و امکان حذف مستقیم وجود ندارد.` });
+  }
+
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM workflow_steps WHERE workflowId = ?').run(id);
+    db.prepare('DELETE FROM workflows WHERE id = ?').run(id);
+  });
+  tx();
+
+  res.json({ success: true });
+});
+
+apiRouter.post('/workflows/:id/set-default', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || !hasPermission(currentUser, 'workflow.definitions.manage')) {
+    return res.status(403).json({ error: 'شما مجاز به تعیین گردش کار پیش‌فرض نیستید.' });
+  }
+  const { id } = req.params;
+
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE workflows SET isDefault = 0').run();
+    db.prepare('UPDATE workflows SET isDefault = 1 WHERE id = ?').run(id);
+  });
+  tx();
+
+  res.json({ success: true });
+});
+
 apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
   if (!currentUser || !hasPermission(currentUser, 'workflow.forward')) {
@@ -641,6 +777,411 @@ apiRouter.get('/projects/:id/workflow-logs', (req: Request, res: Response) => {
 });
 
 // --------------------------------------------------------------------------
+// 4.5. PROJECT STRUCTURES & TYPES (تعریف انواع و ساختارهای پویا و غیر استاتیک پروژه)
+// --------------------------------------------------------------------------
+
+apiRouter.get('/project-structures', (_req: Request, res: Response) => {
+  const structures = db.prepare(`
+    SELECT ps.*, w.title as defaultWorkflowTitle,
+           (SELECT COUNT(*) FROM projects p WHERE p.productionType = ps.title) as projectCount,
+           (SELECT COUNT(*) FROM structure_positions sp WHERE sp.structureId = ps.id) as positionCount,
+           (SELECT COUNT(DISTINCT spu.userId) FROM structure_positions sp JOIN structure_position_users spu ON sp.id = spu.structurePositionId WHERE sp.structureId = ps.id) as userCount
+    FROM project_structures ps
+    LEFT JOIN workflows w ON ps.defaultWorkflowId = w.id
+    ORDER BY ps.orderIndex ASC, ps.title ASC
+  `).all();
+  res.json({ structures });
+});
+
+apiRouter.post('/project-structures', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'projects.fields.manage'))) {
+    return res.status(403).json({ error: 'شما مجاز به تعریف انواع و ساختارهای جدید پروژه نیستید.' });
+  }
+
+  const { title, code, description, category, defaultWorkflowId, orderIndex, isActive } = req.body;
+  if (!title || !title.trim()) {
+    return res.status(400).json({ error: 'عنوان نوع و ساختار پروژه الزامی است.' });
+  }
+
+  const id = `pstr-${randomUUID().substring(0, 8)}`;
+  const now = new Date().toISOString();
+
+  try {
+    db.prepare(`
+      INSERT INTO project_structures (id, title, code, description, category, defaultWorkflowId, orderIndex, isActive, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      title.trim(),
+      code ? code.trim() : null,
+      description || '',
+      category || 'تولید تلویزیونی',
+      defaultWorkflowId || null,
+      orderIndex || 0,
+      isActive !== undefined ? (isActive ? 1 : 0) : 1,
+      now
+    );
+
+    const created = db.prepare(`
+      SELECT ps.*, w.title as defaultWorkflowTitle, 0 as projectCount, 0 as positionCount, 0 as userCount
+      FROM project_structures ps
+      LEFT JOIN workflows w ON ps.defaultWorkflowId = w.id
+      WHERE ps.id = ?
+    `).get(id);
+
+    res.json({ success: true, structure: created });
+  } catch (err: any) {
+    if (err.message && err.message.includes('UNIQUE')) {
+      return res.status(400).json({ error: 'این ساختار یا عنوان پروژه قبلاً ثبت شده است.' });
+    }
+    res.status(500).json({ error: 'خطا در ثبت ساختار جدید پروژه.' });
+  }
+});
+
+apiRouter.put('/project-structures/:id', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'projects.fields.manage'))) {
+    return res.status(403).json({ error: 'شما مجاز به ویرایش ساختار پروژه نیستید.' });
+  }
+
+  const { id } = req.params;
+  const { title, code, description, category, defaultWorkflowId, orderIndex, isActive } = req.body;
+  if (!title || !title.trim()) {
+    return res.status(400).json({ error: 'عنوان ساختار الزامی است.' });
+  }
+
+  const current = db.prepare('SELECT title FROM project_structures WHERE id = ?').get(id) as any;
+  if (!current) {
+    return res.status(404).json({ error: 'ساختار مورد نظر یافت نشد.' });
+  }
+
+  try {
+    const tx = db.transaction(() => {
+      db.prepare(`
+        UPDATE project_structures
+        SET title = ?, code = ?, description = ?, category = ?, defaultWorkflowId = ?, orderIndex = ?, isActive = ?
+        WHERE id = ?
+      `).run(
+        title.trim(),
+        code ? code.trim() : null,
+        description || '',
+        category || 'تولید تلویزیونی',
+        defaultWorkflowId || null,
+        orderIndex !== undefined ? orderIndex : 0,
+        isActive !== undefined ? (isActive ? 1 : 0) : 1,
+        id
+      );
+
+      // If title changed, sync projects with previous title
+      if (current.title !== title.trim()) {
+        db.prepare('UPDATE projects SET productionType = ? WHERE productionType = ?').run(title.trim(), current.title);
+      }
+    });
+    tx();
+
+    const updated = db.prepare(`
+      SELECT ps.*, w.title as defaultWorkflowTitle,
+             (SELECT COUNT(*) FROM projects p WHERE p.productionType = ps.title) as projectCount,
+             (SELECT COUNT(*) FROM structure_positions sp WHERE sp.structureId = ps.id) as positionCount,
+             (SELECT COUNT(DISTINCT spu.userId) FROM structure_positions sp JOIN structure_position_users spu ON sp.id = spu.structurePositionId WHERE sp.structureId = ps.id) as userCount
+      FROM project_structures ps
+      LEFT JOIN workflows w ON ps.defaultWorkflowId = w.id
+      WHERE ps.id = ?
+    `).get(id);
+
+    res.json({ success: true, structure: updated });
+  } catch (err: any) {
+    if (err.message && err.message.includes('UNIQUE')) {
+      return res.status(400).json({ error: 'این عنوان ساختار تکراری است.' });
+    }
+    res.status(500).json({ error: 'خطا در ویرایش ساختار پروژه.' });
+  }
+});
+
+apiRouter.delete('/project-structures/:id', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'projects.fields.manage'))) {
+    return res.status(403).json({ error: 'شما مجاز به حذف ساختار پروژه نیستید.' });
+  }
+
+  const { id } = req.params;
+  const current = db.prepare('SELECT title FROM project_structures WHERE id = ?').get(id) as any;
+  if (!current) {
+    return res.status(404).json({ error: 'ساختار یافت نشد.' });
+  }
+
+  const count = (db.prepare('SELECT COUNT(*) as c FROM projects WHERE productionType = ?').get(current.title) as any)?.c || 0;
+  if (count > 0) {
+    return res.status(400).json({ error: `این ساختار در ${count} پروژه ثبت شده استفاده شده است و امکان حذف مستقیم ندارد. می‌توانید آن را غیرفعال کنید.` });
+  }
+
+  db.prepare('DELETE FROM project_structures WHERE id = ?').run(id);
+  res.json({ success: true });
+});
+
+// --------------------------------------------------------------------------
+// 4.6. STRUCTURE POSITIONS & TREE (درخت سمت‌ها و انتصاب پرسنل و دسترسی‌ها در ساختار)
+// --------------------------------------------------------------------------
+
+// Get hierarchical positions tree for a specific structure
+apiRouter.get('/project-structures/:id/positions', (req: Request, res: Response) => {
+  const { id: structureId } = req.params;
+  const structure = db.prepare('SELECT * FROM project_structures WHERE id = ?').get(structureId) as any;
+  if (!structure) {
+    return res.status(404).json({ error: 'ساختار مورد نظر یافت نشد.' });
+  }
+
+  // Get all structure positions with underlying position details
+  const rawNodes = db.prepare(`
+    SELECT sp.id, sp.structureId, sp.positionId, sp.parentId, sp.orderIndex, sp.createdAt,
+           p.title, p.description, p.color,
+           parentP.title as parentTitle
+    FROM structure_positions sp
+    JOIN positions p ON sp.positionId = p.id
+    LEFT JOIN structure_positions parentSp ON sp.parentId = parentSp.id
+    LEFT JOIN positions parentP ON parentSp.positionId = parentP.id
+    WHERE sp.structureId = ?
+    ORDER BY sp.orderIndex ASC, sp.createdAt ASC
+  `).all(structureId) as any[];
+
+  // Get all assigned users per structure_position
+  const assignedUsersRaw = db.prepare(`
+    SELECT spu.structurePositionId, u.id, u.username, u.name, u.role, u.positionId, u.avatar, u.phone
+    FROM structure_position_users spu
+    JOIN users u ON spu.userId = u.id
+    WHERE spu.structurePositionId IN (SELECT id FROM structure_positions WHERE structureId = ?)
+  `).all(structureId) as any[];
+
+  // Get position permissions
+  const posPermsRaw = db.prepare(`
+    SELECT pp.positionId, pp.permissionCode
+    FROM position_permissions pp
+    WHERE pp.positionId IN (SELECT positionId FROM structure_positions WHERE structureId = ?)
+  `).all(structureId) as any[];
+
+  // Enrich nodes
+  const nodes = rawNodes.map((n) => {
+    const nodeUsers = assignedUsersRaw
+      .filter((u) => u.structurePositionId === n.id)
+      .map((u) => ({
+        ...u,
+        permissions: getUserPermissionsList(u),
+      }));
+
+    const permissions = posPermsRaw
+      .filter((p) => p.positionId === n.positionId)
+      .map((p) => p.permissionCode);
+
+    return {
+      ...n,
+      users: nodeUsers,
+      permissions,
+    };
+  });
+
+  // Build recursive tree
+  const buildTree = (parentId: string | null = null, depth = 1): any[] => {
+    return nodes
+      .filter((n) => (parentId === null ? !n.parentId : n.parentId === parentId))
+      .map((n) => ({
+        ...n,
+        level: depth,
+        children: buildTree(n.id, depth + 1),
+      }));
+  };
+
+  const tree = buildTree(null, 1);
+
+  res.json({
+    structure,
+    positions: nodes,
+    tree,
+  });
+});
+
+// Add a position to a structure's tree (reusing existing position or creating new)
+apiRouter.post('/project-structures/:id/positions', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'org.positions.manage'))) {
+    return res.status(403).json({ error: 'شما مجاز به تعریف و چینش سمت در ساختار نیستید.' });
+  }
+
+  const { id: structureId } = req.params;
+  const { positionId, title, description, color, parentId, userIds } = req.body;
+
+  let resolvedPositionId = positionId;
+
+  // If no positionId, create position in positions library first
+  if (!resolvedPositionId) {
+    if (!title || !title.trim()) {
+      return res.status(400).json({ error: 'عنوان سمت الزامی است.' });
+    }
+
+    // Check if position already exists by title
+    const existing = db.prepare('SELECT id FROM positions WHERE title = ?').get(title.trim()) as any;
+    if (existing) {
+      resolvedPositionId = existing.id;
+    } else {
+      resolvedPositionId = `pos-${randomUUID().substring(0, 8)}`;
+      db.prepare(`
+        INSERT INTO positions (id, title, description, color, parentId, level, orderIndex, createdAt)
+        VALUES (?, ?, ?, ?, NULL, 1, 0, ?)
+      `).run(resolvedPositionId, title.trim(), description || '', color || 'indigo', new Date().toISOString());
+    }
+  }
+
+  // Prevent duplicate same position in same structure directly
+  const duplicate = db.prepare('SELECT id FROM structure_positions WHERE structureId = ? AND positionId = ?').get(structureId, resolvedPositionId) as any;
+  if (duplicate) {
+    return res.status(400).json({ error: 'این سمت در حال حاضر در درخت این ساختار تعریف شده است.' });
+  }
+
+  const spId = `sp-${randomUUID().substring(0, 8)}`;
+  const now = new Date().toISOString();
+
+  const maxOrder = (db.prepare('SELECT MAX(orderIndex) as mo FROM structure_positions WHERE structureId = ?').get(structureId) as any)?.mo || 0;
+
+  const tx = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO structure_positions (id, structureId, positionId, parentId, orderIndex, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(spId, structureId, resolvedPositionId, parentId || null, maxOrder + 1, now);
+
+    // If initial users assigned
+    if (Array.isArray(userIds) && userIds.length > 0) {
+      const insertSPU = db.prepare('INSERT OR IGNORE INTO structure_position_users (structurePositionId, userId) VALUES (?, ?)');
+      for (const uId of userIds) {
+        insertSPU.run(spId, uId);
+      }
+    }
+  });
+
+  tx();
+
+  res.json({ success: true, structurePositionId: spId });
+});
+
+// Update a position node in a structure (change parent, update position details)
+apiRouter.put('/project-structures/:id/positions/:spId', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'org.positions.manage'))) {
+    return res.status(403).json({ error: 'شما مجاز به ویرایش سمت در ساختار نیستید.' });
+  }
+
+  const { id: structureId, spId } = req.params;
+  const { parentId, orderIndex, title, description, color } = req.body;
+
+  const currentSP = db.prepare('SELECT * FROM structure_positions WHERE id = ? AND structureId = ?').get(spId, structureId) as any;
+  if (!currentSP) {
+    return res.status(404).json({ error: 'گره سمت در این ساختار یافت نشد.' });
+  }
+
+  if (parentId === spId) {
+    return res.status(400).json({ error: 'یک سمت نمی‌تواند والد خودش باشد.' });
+  }
+
+  const tx = db.transaction(() => {
+    // Update node links
+    db.prepare(`
+      UPDATE structure_positions
+      SET parentId = ?, orderIndex = ?
+      WHERE id = ?
+    `).run(
+      parentId !== undefined ? (parentId || null) : currentSP.parentId,
+      orderIndex !== undefined ? orderIndex : currentSP.orderIndex,
+      spId
+    );
+
+    // If title or details updated, update underlying position
+    if (title && title.trim()) {
+      db.prepare(`
+        UPDATE positions
+        SET title = ?, description = ?, color = ?
+        WHERE id = ?
+      `).run(title.trim(), description || '', color || 'indigo', currentSP.positionId);
+    }
+  });
+
+  tx();
+
+  res.json({ success: true });
+});
+
+// Delete position from structure's tree
+apiRouter.delete('/project-structures/:id/positions/:spId', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'org.positions.manage'))) {
+    return res.status(403).json({ error: 'شما مجاز به حذف سمت از این ساختار نیستید.' });
+  }
+
+  const { id: structureId, spId } = req.params;
+  const currentSP = db.prepare('SELECT * FROM structure_positions WHERE id = ? AND structureId = ?').get(spId, structureId) as any;
+  if (!currentSP) {
+    return res.status(404).json({ error: 'گره سمت در این ساختار یافت نشد.' });
+  }
+
+  const tx = db.transaction(() => {
+    // Re-parent children to current parent to preserve tree integrity
+    db.prepare('UPDATE structure_positions SET parentId = ? WHERE parentId = ?').run(currentSP.parentId, spId);
+    // Delete user assignments
+    db.prepare('DELETE FROM structure_position_users WHERE structurePositionId = ?').run(spId);
+    // Delete node
+    db.prepare('DELETE FROM structure_positions WHERE id = ?').run(spId);
+  });
+
+  tx();
+
+  res.json({ success: true });
+});
+
+// Assign user to a structure position
+apiRouter.post('/project-structures/:id/positions/:spId/users', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'org.positions.assign'))) {
+    return res.status(403).json({ error: 'شما مجاز به انتصاب کاربر به این سمت نیستید.' });
+  }
+
+  const { id: structureId, spId } = req.params;
+  const { userId } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ error: 'شناسه کاربر الزامی است.' });
+  }
+
+  const sp = db.prepare('SELECT id FROM structure_positions WHERE id = ? AND structureId = ?').get(spId, structureId);
+  if (!sp) {
+    return res.status(404).json({ error: 'سمت در این ساختار یافت نشد.' });
+  }
+
+  const user = db.prepare('SELECT id, name FROM users WHERE id = ?').get(userId);
+  if (!user) {
+    return res.status(404).json({ error: 'کاربر یافت نشد.' });
+  }
+
+  db.prepare(`
+    INSERT OR IGNORE INTO structure_position_users (structurePositionId, userId)
+    VALUES (?, ?)
+  `).run(spId, userId);
+
+  res.json({ success: true });
+});
+
+// Remove user from a structure position
+apiRouter.delete('/project-structures/:id/positions/:spId/users/:userId', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'org.positions.assign'))) {
+    return res.status(403).json({ error: 'شما مجاز به لغو انتصاب کاربر از این سمت نیستید.' });
+  }
+
+  const { spId, userId } = req.params;
+
+  db.prepare('DELETE FROM structure_position_users WHERE structurePositionId = ? AND userId = ?').run(spId, userId);
+
+  res.json({ success: true });
+});
+
+// --------------------------------------------------------------------------
 // 5. DYNAMIC FIELDS (تعریف پویای فیلدها با کنترل سطح دسترسی)
 // --------------------------------------------------------------------------
 
@@ -735,6 +1276,15 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
 
   const totalCouncilCount = (db.prepare("SELECT count(*) as count FROM users WHERE role = 'COUNCIL'").get() as any)?.count || 0;
 
+  // Pre-fetch all attachments without heavy base64 data
+  const allAttachments = db.prepare(`
+    SELECT a.id, a.projectId, a.fileName, a.fileSize, a.fileType, a.uploadedBy, a.createdAt,
+           u.name as uploaderName
+    FROM project_attachments a
+    LEFT JOIN users u ON a.uploadedBy = u.id
+    ORDER BY a.createdAt DESC
+  `).all() as any[];
+
   // Pre-fetch workflow steps and logs
   const allSteps = db.prepare(`
     SELECT s.*, p.title as positionTitle, p.color as positionColor
@@ -765,6 +1315,7 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
     const majorityInfo = calculateMajorityForProject(prj.id);
     const prjSteps = allSteps.filter((s) => s.workflowId === (prj.workflowId || 'wf-standard'));
     const prjLogs = allLogs.filter((l) => l.projectId === prj.id);
+    const prjAttachments = allAttachments.filter((a) => a.projectId === prj.id);
 
     if (canViewConfidential) {
       // User with confidential voting inspection permission (Admin / Board Chair)
@@ -782,6 +1333,8 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
       return {
         ...prj,
         requirements,
+        attachments: prjAttachments,
+        attachmentCount: prjAttachments.length,
         majorityResult: majorityInfo.majority,
         voteCounts: majorityInfo.counts,
         totalCouncilMembers: totalCouncilCount,
@@ -800,6 +1353,8 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
       return {
         ...prj,
         requirements,
+        attachments: prjAttachments,
+        attachmentCount: prjAttachments.length,
         majorityResult: majorityInfo.majority,
         hasVoted: !!myVote,
         userVote: myVote || null,
@@ -818,7 +1373,7 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
     return res.status(403).json({ error: 'شما مجاز به ایجاد پروژه جدید نیستید.' });
   }
 
-  const { title, code, description, productionType, location, deadline, budgetEstimated, requirements, workflowId } = req.body;
+  const { title, code, description, productionType, location, deadline, budgetEstimated, requirements } = req.body;
   if (!title || !title.trim()) {
     return res.status(400).json({ error: 'نام پروژه الزامی است.' });
   }
@@ -827,40 +1382,39 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
   const prjCode = code && code.trim() ? code.trim() : `PRJ-${Math.floor(1000 + Math.random() * 9000)}`;
   const now = new Date().toISOString();
 
-  // Find first position of workflow
-  const targetWfId = workflowId || 'wf-standard';
-  const firstStep = db.prepare('SELECT positionId FROM workflow_steps WHERE workflowId = ? ORDER BY stepOrder ASC LIMIT 1').get(targetWfId) as any;
-  const firstPosId = firstStep?.positionId || null;
-
   try {
     db.prepare(`
       INSERT INTO projects (
         id, title, code, description, productionType, location, deadline, budgetEstimated,
         status, majorityResult, requirementsJson, createdById, workflowId, currentStepOrder, currentPositionId, createdAt, updatedAt
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'IN_REVIEW', 'PENDING', ?, ?, ?, 1, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'IN_REVIEW', 'PENDING', ?, ?, NULL, 1, NULL, ?, ?)
     `).run(
       id,
       title.trim(),
       prjCode,
       description || '',
-      productionType || 'تولید تلویزیونی',
+      productionType || 'طرح عمومی شورا',
       location || '',
       deadline || '',
       budgetEstimated || '',
       JSON.stringify(requirements || {}),
       currentUser.id,
-      targetWfId,
-      firstPosId,
       now,
       now
     );
 
-    // Initial log
+    // Broadcast notification to Council Chat
     db.prepare(`
-      INSERT INTO workflow_logs (id, projectId, stepOrder, fromUserId, toPositionId, action, comment, createdAt)
-      VALUES (?, ?, 1, ?, ?, 'SUBMITTED', 'پروژه در سیستم ثبت و گردش کار آغاز گردید.', ?)
-    `).run(`log-${randomUUID().substring(0, 8)}`, id, currentUser.id, firstPosId, now);
+      INSERT INTO messages (id, senderId, receiverId, isGroup, content, projectId, createdAt)
+      VALUES (?, ?, NULL, 1, ?, ?, ?)
+    `).run(
+      `msg-${randomUUID().substring(0, 8)}`,
+      currentUser.id,
+      `طرح جدید «${title.trim()}» با کد ${prjCode} ثبت شد و در کارتابل ارزیابی تمامی اعضای شورا قرار گرفت.`,
+      id,
+      now
+    );
 
     res.json({ success: true, projectId: id });
   } catch (err: any) {
@@ -909,11 +1463,182 @@ apiRouter.delete('/projects/:id', (req: Request, res: Response) => {
     return res.status(403).json({ error: 'شما مجاز به حذف پروژه نیستید.' });
   }
   const { id } = req.params;
+  db.prepare('DELETE FROM project_attachments WHERE projectId = ?').run(id);
   db.prepare('DELETE FROM votes WHERE projectId = ?').run(id);
   db.prepare('DELETE FROM messages WHERE projectId = ?').run(id);
   db.prepare('DELETE FROM workflow_logs WHERE projectId = ?').run(id);
   db.prepare('DELETE FROM projects WHERE id = ?').run(id);
   res.json({ success: true });
+});
+
+// --------------------------------------------------------------------------
+// 6.5. PROJECT ATTACHMENTS & FILES (آپلود، حذف، جایگزینی و دانلود فایل‌های پروژه)
+// --------------------------------------------------------------------------
+
+// List attachments for a specific project
+apiRouter.get('/projects/:id/attachments', (req: Request, res: Response) => {
+  const { id: projectId } = req.params;
+  const attachments = db.prepare(`
+    SELECT a.id, a.projectId, a.fileName, a.fileSize, a.fileType, a.uploadedBy, a.createdAt,
+           u.name as uploaderName
+    FROM project_attachments a
+    LEFT JOIN users u ON a.uploadedBy = u.id
+    WHERE a.projectId = ?
+    ORDER BY a.createdAt DESC
+  `).all(projectId);
+
+  res.json({ attachments });
+});
+
+// Get single attachment details (including data)
+apiRouter.get('/projects/:id/attachments/:attachmentId', (req: Request, res: Response) => {
+  const { id: projectId, attachmentId } = req.params;
+  const attachment = db.prepare(`
+    SELECT a.*, u.name as uploaderName
+    FROM project_attachments a
+    LEFT JOIN users u ON a.uploadedBy = u.id
+    WHERE a.id = ? AND a.projectId = ?
+  `).get(attachmentId, projectId);
+
+  if (!attachment) {
+    return res.status(404).json({ error: 'فایل پیوست یافت نشد.' });
+  }
+
+  res.json({ attachment });
+});
+
+// Direct Download endpoint
+apiRouter.get('/attachments/:id/download', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const att = db.prepare('SELECT * FROM project_attachments WHERE id = ?').get(id) as any;
+  if (!att) {
+    return res.status(404).json({ error: 'فایل پیوست یافت نشد.' });
+  }
+
+  let buffer: Buffer;
+  let mimeType = att.fileType || 'application/octet-stream';
+
+  try {
+    if (att.data.startsWith('data:')) {
+      const match = att.data.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        mimeType = match[1] || mimeType;
+        buffer = Buffer.from(match[2], 'base64');
+      } else {
+        const parts = att.data.split(',');
+        buffer = Buffer.from(parts[1] || parts[0], 'base64');
+      }
+    } else {
+      buffer = Buffer.from(att.data, 'base64');
+    }
+
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(att.fileName)}"`);
+    res.setHeader('Content-Length', buffer.length);
+    res.send(buffer);
+  } catch (err: any) {
+    res.status(500).json({ error: 'خطا در بارگیری فایل.' });
+  }
+});
+
+// Upload a new attachment to a project (Admin or project editors)
+apiRouter.post('/projects/:id/attachments', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || (!hasPermission(currentUser, 'projects.edit') && !hasPermission(currentUser, 'projects.create'))) {
+    return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به پیوست فایل برای این پروژه نیستید.' });
+  }
+
+  const { id: projectId } = req.params;
+  const project = db.prepare('SELECT id, title FROM projects WHERE id = ?').get(projectId) as any;
+  if (!project) {
+    return res.status(404).json({ error: 'پروژه مورد نظر یافت نشد.' });
+  }
+
+  const { fileName, fileSize, fileType, data } = req.body;
+  if (!fileName || !fileName.trim() || !data) {
+    return res.status(400).json({ error: 'نام فایل و داده‌های بارگذاری الزامی هستند.' });
+  }
+
+  const id = `att-${randomUUID().substring(0, 8)}`;
+  const now = new Date().toISOString();
+
+  try {
+    db.prepare(`
+      INSERT INTO project_attachments (id, projectId, fileName, fileSize, fileType, data, uploadedBy, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      projectId,
+      fileName.trim(),
+      typeof fileSize === 'number' ? fileSize : parseInt(fileSize, 10) || 0,
+      fileType || 'application/octet-stream',
+      data,
+      currentUser.id,
+      now
+    );
+
+    // Broadcast file addition notification to council chat
+    db.prepare(`
+      INSERT INTO messages (id, senderId, receiverId, isGroup, content, projectId, createdAt)
+      VALUES (?, ?, NULL, 1, ?, ?, ?)
+    `).run(
+      `msg-${randomUUID().substring(0, 8)}`,
+      currentUser.id,
+      `فایل جدید «${fileName.trim()}» توسط ${currentUser.name} به پروژه «${project.title}» پیوست شد.`,
+      projectId,
+      now
+    );
+
+    const created = db.prepare(`
+      SELECT a.id, a.projectId, a.fileName, a.fileSize, a.fileType, a.uploadedBy, a.createdAt,
+             u.name as uploaderName
+      FROM project_attachments a
+      LEFT JOIN users u ON a.uploadedBy = u.id
+      WHERE a.id = ?
+    `).get(id);
+
+    res.json({ success: true, attachment: created });
+  } catch (err: any) {
+    res.status(500).json({ error: 'خطا در ذخیره فایل در پایگاه داده.' });
+  }
+});
+
+// Delete an attachment from a project
+apiRouter.delete('/projects/:id/attachments/:attachmentId', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || !hasPermission(currentUser, 'projects.edit')) {
+    return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به حذف فایل‌های پروژه نیستید.' });
+  }
+
+  const { id: projectId, attachmentId } = req.params;
+  const project = db.prepare('SELECT id, title FROM projects WHERE id = ?').get(projectId) as any;
+  const existing = db.prepare('SELECT * FROM project_attachments WHERE id = ? AND projectId = ?').get(attachmentId, projectId) as any;
+
+  if (!existing) {
+    return res.status(404).json({ error: 'فایل پیوست یافت نشد.' });
+  }
+
+  try {
+    db.prepare('DELETE FROM project_attachments WHERE id = ?').run(attachmentId);
+
+    // Broadcast file deletion notification
+    if (project) {
+      db.prepare(`
+        INSERT INTO messages (id, senderId, receiverId, isGroup, content, projectId, createdAt)
+        VALUES (?, ?, NULL, 1, ?, ?, ?)
+      `).run(
+        `msg-${randomUUID().substring(0, 8)}`,
+        currentUser.id,
+        `فایل «${existing.fileName}» توسط ${currentUser.name} از پروژه «${project.title}» حذف گردید.`,
+        projectId,
+        new Date().toISOString()
+      );
+    }
+
+    res.json({ success: true, deletedId: attachmentId });
+  } catch (err: any) {
+    res.status(500).json({ error: 'خطا در حذف فایل.' });
+  }
 });
 
 // --------------------------------------------------------------------------

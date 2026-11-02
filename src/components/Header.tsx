@@ -12,36 +12,33 @@ import {
   Network, 
   GitBranch,
   Sparkles,
-  ChevronDown
+  ChevronDown,
+  FolderTree
 } from 'lucide-react';
 
 interface HeaderProps {
   currentUser: User;
-  activeTab: 'projects' | 'fields' | 'users' | 'org' | 'workflow' | 'chat' | 'stats';
-  onSwitchUser: (username: string) => void;
-  allUsers: User[];
+  activeTab: 'projects' | 'fields' | 'structures' | 'users' | 'org' | 'chat' | 'stats';
   onOpenMobileMenu: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   currentUser,
   activeTab,
-  onSwitchUser,
-  allUsers,
   onOpenMobileMenu,
 }) => {
   const getTabInfo = () => {
     switch (activeTab) {
       case 'projects':
-        return { title: 'کارتابل مصوبات و پروژه‌ها', icon: Layers, desc: 'مشاهده طرح‌ها، ثبت آرا محرمانه و رای اکثریت' };
+        return { title: 'کارتابل و پروژه‌های شورا', icon: Layers, desc: 'ارزیابی مستقیم تمام طرح‌ها، رای‌گیری ۳ حالته اعضا و تجمیع آرا' };
+      case 'structures':
+        return { title: 'مدیریت ساختارهای سازمانی', icon: FolderTree, desc: 'تعریف ساختارها (ماموریت، مرخصی، مالی)، چیدمان درختی سمت‌ها و انتصاب پرسنل' };
       case 'org':
-        return { title: 'چارت و ساختار درختی شورا', icon: Network, desc: 'سلسله‌مراتب سازمانی، سمت‌ها و ماتریس دسترسی‌ها' };
-      case 'workflow':
-        return { title: 'گردش کار سازمانی', icon: GitBranch, desc: 'طراحی و پیگیری فرآیندهای ارجاع و تصویب' };
+        return { title: 'چارت و سمت‌های سازمانی', icon: Network, desc: 'کتابخانه سمت‌های سازمان، سطوح سلسله‌مراتب و ماتریس دسترسی‌ها' };
+      case 'users':
+        return { title: 'کاربران و پرسنل سیستم', icon: Users, desc: 'مدیریت حساب اعضا، نام کاربری، رمز عبور و نقش‌ها' };
       case 'fields':
         return { title: 'تعریف فیلدهای پویای پروژه', icon: Sliders, desc: 'مدیریت و افزودن فیلدهای دلخواه بدون نیاز به تغییر کد' };
-      case 'users':
-        return { title: 'کاربران و انتصاب سمت‌ها', icon: Users, desc: 'مدیریت اعضا، رمز عبور و انتصاب در چارت شورا' };
       case 'chat':
         return { title: 'تالار گفتگوی شورا', icon: MessageSquare, desc: 'چت گروهی و پیام‌رسانی خصوصی (پی‌وی) بین اعضا' };
       case 'stats':

@@ -14,13 +14,26 @@ const __dirname = path.dirname(__filename);
 // Initialize SQLite database and seed initial data
 initDatabase();
 
+function getPort(): number {
+  const portArgIndex = process.argv.indexOf('--port');
+  if (portArgIndex !== -1 && process.argv[portArgIndex + 1]) {
+    const p = parseInt(process.argv[portArgIndex + 1], 10);
+    if (!isNaN(p)) return p;
+  }
+  if (process.env.PORT) {
+    const p = parseInt(process.env.PORT, 10);
+    if (!isNaN(p) && p !== 8080) return p;
+  }
+  return 3000;
+}
+
+const PRIMARY_PORT = getPort();
+const USER_PORT = 3241;
+
 const app = express();
 
-// User requested port: 3241
-const PORT: number = 3241;
-const PREVIEW_PORT: number = 3000;
-
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // API Routes
 app.use('/api', apiRouter);
@@ -47,19 +60,19 @@ async function startServer() {
     app.use(vite.middlewares);
   }
 
-  // 1. Listen on requested port 3241
-  httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`Council System server running on http://0.0.0.0:${PORT} (Requested: 3241)`);
+  // 1. Listen on Primary Port (Port 3000 for AI Studio environment)
+  httpServer.listen(PRIMARY_PORT, '0.0.0.0', () => {
+    console.log(`Council System server running on http://0.0.0.0:${PRIMARY_PORT}`);
   });
 
-  // 2. Also listen on port 3000 for AI Studio cloud preview environment
-  if (PORT !== PREVIEW_PORT) {
-    const previewServer = http.createServer(app);
-    previewServer.listen(PREVIEW_PORT, '0.0.0.0', () => {
-      console.log(`AI Studio preview listener active on http://0.0.0.0:${PREVIEW_PORT}`);
+  // 2. Also listen on port 3241 (user requested port) if different
+  if (PRIMARY_PORT !== USER_PORT) {
+    const userPortServer = http.createServer(app);
+    userPortServer.listen(USER_PORT, '0.0.0.0', () => {
+      console.log(`User requested port listener active on http://0.0.0.0:${USER_PORT}`);
     }).on('error', (err: any) => {
       if (err.code !== 'EADDRINUSE') {
-        console.warn(`Preview listener warning on port ${PREVIEW_PORT}:`, err.message);
+        console.warn(`Port ${USER_PORT} warning:`, err.message);
       }
     });
   }

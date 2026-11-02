@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { User } from '../types';
 import { PWAInstallButton } from '../pwa/PWAComponents';
 import { 
@@ -7,29 +7,23 @@ import {
   Sliders, 
   Users, 
   MessageSquare, 
-  BarChart3, 
   LogOut, 
-  ChevronDown, 
-  Sparkles, 
-  Network, 
-  GitBranch, 
   ChevronRight, 
   ChevronLeft,
   X,
-  Shield,
-  Briefcase
+  FolderTree
 } from 'lucide-react';
 
 interface SidebarProps {
   currentUser: User;
-  activeTab: 'projects' | 'fields' | 'users' | 'org' | 'workflow' | 'chat' | 'stats';
-  setActiveTab: (tab: 'projects' | 'fields' | 'users' | 'org' | 'workflow' | 'chat' | 'stats') => void;
+  activeTab: 'projects' | 'fields' | 'structures' | 'users' | 'org' | 'chat' | 'stats';
+  setActiveTab: (tab: 'projects' | 'fields' | 'structures' | 'users' | 'org' | 'chat' | 'stats') => void;
   onLogout: () => void;
-  onSwitchUser: (username: string) => void;
-  allUsers: User[];
   pendingVotesCount?: number;
   mobileOpen: boolean;
   setMobileOpen: (open: boolean) => void;
+  collapsed: boolean;
+  setCollapsed: (collapsed: boolean) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -37,15 +31,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   setActiveTab,
   onLogout,
-  onSwitchUser,
-  allUsers,
   pendingVotesCount = 0,
   mobileOpen,
   setMobileOpen,
+  collapsed,
+  setCollapsed,
 }) => {
-  const [collapsed, setCollapsed] = useState(false);
-  const [showSwitchMenu, setShowSwitchMenu] = useState(false);
-
   // Check if current user has permission
   const hasAccess = (permissionCode?: string): boolean => {
     if (!permissionCode) return true;
@@ -54,45 +45,48 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   // Structured menu items with permission gating
+  // Note: 'stats' (داشبورد تحلیلی) and 'org' (چارت درختی) are hidden as requested by user
   const menuGroups = [
     {
-      groupTitle: 'مصوبات و فرآیندها',
+      groupTitle: 'پروژه‌ها و کارتابل شورا',
       items: [
         {
           id: 'projects' as const,
-          title: 'کارتابل مصوبات و پروژه‌ها',
+          title: 'کارتابل و پروژه‌های شورا',
           shortTitle: 'کارتابل',
           icon: Layers,
           badge: pendingVotesCount > 0 ? `${pendingVotesCount} در انتظار` : null,
-          badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
-          permission: undefined, // Available to all council members
-        },
-        {
-          id: 'workflow' as const,
-          title: 'گردش کار سازمانی',
-          shortTitle: 'گردش کار',
-          icon: GitBranch,
-          badge: 'فرآیندها',
-          badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
-          permission: 'workflow.forward',
+          badgeColor: 'bg-amber-500/20 text-amber-700 border-amber-300',
+          permission: undefined,
         },
       ],
     },
     {
-      groupTitle: 'ساختار و پرسنل شورا',
+      groupTitle: 'ساختارها و کاربران سازمانی',
       items: [
         {
+          id: 'structures' as const,
+          title: 'ساختارهای سازمانی',
+          shortTitle: 'ساختارها',
+          icon: FolderTree,
+          badge: null,
+          badgeColor: '',
+          permission: 'projects.fields.manage',
+        },
+        /* 'org' (چارت و ساختار درختی سمت‌ها) - فعلا به درخواست کاربر پنهان شده است
+        {
           id: 'org' as const,
-          title: 'چارت و ساختار درختی شورا',
-          shortTitle: 'چارت درختی',
+          title: 'چارت و سمت‌های سازمانی',
+          shortTitle: 'چارت سمت‌ها',
           icon: Network,
-          badge: 'درختی',
-          badgeColor: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30',
+          badge: null,
+          badgeColor: '',
           permission: 'org.positions.view',
         },
+        */
         {
           id: 'users' as const,
-          title: 'کاربران و انتصاب سمت‌ها',
+          title: 'کاربران و پرسنل سیستم',
           shortTitle: 'کاربران',
           icon: Users,
           badge: null,
@@ -102,31 +96,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ],
     },
     {
-      groupTitle: 'تنظیمات و فیلدهای پویا',
+      groupTitle: 'تنظیمات و نیازمندی‌ها',
       items: [
         {
           id: 'fields' as const,
           title: 'تعریف فیلدهای پویای پروژه',
           shortTitle: 'فیلدها',
           icon: Sliders,
-          badge: 'داینامیک',
-          badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
-          permission: 'projects.fields.manage', // STRICTLY HIDDEN IF NOT AUTHORIZED!
+          badge: null,
+          badgeColor: '',
+          permission: 'projects.fields.manage',
         },
       ],
     },
     {
-      groupTitle: 'ارتباطات و گزارشات',
+      groupTitle: 'ارتباطات سازمانی',
       items: [
         {
           id: 'chat' as const,
-          title: 'گفتگوی شورا (گروهی و پی‌وی)',
+          title: 'گفتگوی شورا (پیام‌رسان)',
           shortTitle: 'چت شورا',
           icon: MessageSquare,
           badge: null,
           badgeColor: '',
           permission: 'chat.group.send',
         },
+        /* 'stats' (داشبورد و آمار تحلیلی) - فعلا به درخواست کاربر پنهان شده است
         {
           id: 'stats' as const,
           title: 'داشبورد و آمار تحلیلی',
@@ -136,6 +131,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           badgeColor: '',
           permission: undefined,
         },
+        */
       ],
     },
   ];
@@ -151,7 +147,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {mobileOpen && (
         <div
           onClick={() => setMobileOpen(false)}
-          className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm md:hidden animate-in fade-in duration-200"
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-xs md:hidden animate-in fade-in duration-200"
         />
       )}
 
@@ -164,10 +160,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }`}
       >
         
+        {/* Sleek Floating Collapse/Expand Button on the Border (Never overlaps top icon!) */}
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="hidden md:flex absolute -left-3.5 top-5.5 w-7 h-7 rounded-full bg-white border border-slate-300 shadow-sm items-center justify-center text-slate-500 hover:text-indigo-600 hover:border-indigo-400 hover:scale-105 transition cursor-pointer z-50"
+          title={collapsed ? 'گسترش منوی سایدبار' : 'کوچک کردن عرض سایدبار'}
+        >
+          {collapsed ? (
+            <ChevronLeft className="w-4 h-4" />
+          ) : (
+            <ChevronRight className="w-4 h-4" />
+          )}
+        </button>
+
         {/* Brand / Header */}
-        <div className="h-18 flex items-center justify-between px-4 border-b border-slate-100 bg-slate-50/80 shrink-0">
-          <div className="flex items-center gap-3 overflow-hidden">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 to-blue-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/25 shrink-0">
+        <div className={`h-18 flex items-center border-b border-slate-100 bg-slate-50/80 shrink-0 ${
+          collapsed ? 'justify-center px-2' : 'justify-between px-4'
+        }`}>
+          <div className={`flex items-center gap-3 overflow-hidden ${collapsed ? 'justify-center' : ''}`}>
+            <div
+              onClick={() => collapsed && setCollapsed(false)}
+              className={`w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 to-blue-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/25 shrink-0 ${
+                collapsed ? 'cursor-pointer hover:scale-105 transition' : ''
+              }`}
+              title={collapsed ? 'شورای تولید و ارزیابی (کلیک جهت باز شدن منو)' : 'شورای تولید و ارزیابی'}
+            >
               <Building2 className="w-5 h-5" />
             </div>
             {!collapsed && (
@@ -182,106 +199,47 @@ export const Sidebar: React.FC<SidebarProps> = ({
             )}
           </div>
 
-          {/* Desktop collapse toggle / Mobile close */}
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setCollapsed(!collapsed)}
-              className="hidden md:flex p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
-              title={collapsed ? 'گسترش منو' : 'جمع‌کردن منو'}
-            >
-              {collapsed ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-            </button>
-            <button
-              onClick={() => setMobileOpen(false)}
-              className="md:hidden p-1.5 rounded-xl text-slate-400 hover:text-slate-700"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+          {/* Mobile close button only */}
+          <button
+            onClick={() => setMobileOpen(false)}
+            className="md:hidden p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
-        {/* User Status Bar */}
+        {/* Current User Status Bar (Clean enterprise view, no test switchers) */}
         <div className={`p-3 border-b border-slate-100 bg-slate-50/40 ${collapsed ? 'text-center' : ''}`}>
           {!collapsed ? (
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2.5 overflow-hidden">
-                <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 font-extrabold text-xs flex items-center justify-center border border-indigo-200 shrink-0">
-                  {currentUser.name.charAt(0)}
+            <div className="flex items-center gap-2.5 overflow-hidden">
+              <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 font-extrabold text-xs flex items-center justify-center border border-indigo-200 shrink-0">
+                {currentUser.name.charAt(0)}
+              </div>
+              <div className="overflow-hidden min-w-0">
+                <div className="text-xs font-bold text-slate-900 truncate flex items-center gap-1.5">
+                  <span className="truncate">{currentUser.name}</span>
+                  {currentUser.role === 'ADMIN' ? (
+                    <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 border border-amber-300 font-bold shrink-0">
+                      مدیر
+                    </span>
+                  ) : (
+                    <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200 font-semibold shrink-0">
+                      شورا
+                    </span>
+                  )}
                 </div>
-                <div className="overflow-hidden">
-                  <div className="text-xs font-bold text-slate-900 truncate flex items-center gap-1.5">
-                    <span>{currentUser.name}</span>
-                    {currentUser.role === 'ADMIN' ? (
-                      <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 border border-amber-300 font-bold">
-                        مدیر
-                      </span>
-                    ) : (
-                      <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200 font-semibold">
-                        شورا
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-[10px] text-slate-500 truncate mt-0.5 font-medium">
-                    {currentUser.positionTitle || 'بدون سمت اختصاصی'}
-                  </div>
+                <div className="text-[10px] text-slate-500 truncate mt-0.5 font-medium">
+                  {currentUser.positionTitle || 'عضو کارتابل شورا'}
                 </div>
               </div>
-
-              {/* Fast switch toggle button */}
-              <button
-                onClick={() => setShowSwitchMenu(!showSwitchMenu)}
-                className="p-1 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-slate-100 transition cursor-pointer"
-                title="تغییر سریع کاربر برای تست دسترسی‌ها"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-              </button>
             </div>
           ) : (
             <div
               onClick={() => setCollapsed(false)}
-              className="w-10 h-10 mx-auto rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs border border-indigo-200 cursor-pointer"
+              className="w-10 h-10 mx-auto rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs border border-indigo-200 cursor-pointer hover:bg-indigo-200 transition"
               title={`${currentUser.name} (${currentUser.positionTitle || 'کاربر'})`}
             >
               {currentUser.name.charAt(0)}
-            </div>
-          )}
-
-          {/* Quick User Switcher Dropdown */}
-          {showSwitchMenu && !collapsed && (
-            <div className="mt-2 p-2 rounded-2xl bg-white border border-slate-200 shadow-2xl z-50 animate-in fade-in slide-in-from-top-1 duration-150">
-              <div className="text-[10px] font-bold text-slate-500 px-2 py-1 border-b border-slate-100 mb-1 flex items-center justify-between">
-                <span>تغییر حساب جهت تست دسترسی‌ها</span>
-                <X
-                  className="w-3.5 h-3.5 text-slate-400 hover:text-slate-600 cursor-pointer"
-                  onClick={() => setShowSwitchMenu(false)}
-                />
-              </div>
-              <div className="max-h-48 overflow-y-auto space-y-1">
-                {allUsers.map((u) => (
-                  <button
-                    key={u.id}
-                    onClick={() => {
-                      onSwitchUser(u.username);
-                      setShowSwitchMenu(false);
-                    }}
-                    className={`w-full text-right p-1.5 rounded-xl text-xs transition flex items-center justify-between cursor-pointer ${
-                      u.id === currentUser.id
-                        ? 'bg-indigo-50 text-indigo-800 border border-indigo-200 font-bold'
-                        : 'hover:bg-slate-50 text-slate-700'
-                    }`}
-                  >
-                    <div>
-                      <div className="font-semibold text-slate-800 flex items-center gap-1">
-                        <span>{u.name}</span>
-                        {u.role === 'ADMIN' && (
-                          <span className="text-[8px] px-1 bg-amber-100 text-amber-800 rounded font-bold">ادمین</span>
-                        )}
-                      </div>
-                      <div className="text-[9px] text-slate-400">{u.positionTitle || 'بدون سمت'}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
             </div>
           )}
         </div>
@@ -289,7 +247,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Navigation Menu List */}
         <div className="flex-1 overflow-y-auto py-3 px-2 sm:px-3 space-y-4">
           {menuGroups.map((group, groupIdx) => {
-            // Filter group items according to user's permissions!
             const visibleItems = group.items.filter((item) => hasAccess(item.permission));
             if (visibleItems.length === 0) return null;
 
@@ -316,7 +273,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       }`}
                       title={collapsed ? item.title : undefined}
                     >
-                      <div className="flex items-center gap-3 overflow-hidden">
+                      <div className={`flex items-center gap-3 overflow-hidden ${collapsed ? 'mx-auto justify-center' : ''}`}>
                         <Icon className={`w-5 h-5 shrink-0 ${isActive ? 'text-white' : 'text-indigo-600 group-hover:text-indigo-700'}`} />
                         {!collapsed && (
                           <span className="text-xs truncate">

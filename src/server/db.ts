@@ -71,6 +71,18 @@ export function initDatabase() {
       createdAt TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS project_structures (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL UNIQUE,
+      code TEXT,
+      description TEXT,
+      category TEXT DEFAULT 'تولید تلویزیونی',
+      defaultWorkflowId TEXT REFERENCES workflows(id) ON DELETE SET NULL,
+      orderIndex INTEGER DEFAULT 0,
+      isActive INTEGER DEFAULT 1,
+      createdAt TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS workflows (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -136,6 +148,27 @@ export function initDatabase() {
       PRIMARY KEY (positionId, permissionCode)
     );
 
+    CREATE TABLE IF NOT EXISTS user_permissions (
+      userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      permissionCode TEXT NOT NULL REFERENCES permissions(code) ON DELETE CASCADE,
+      PRIMARY KEY (userId, permissionCode)
+    );
+
+    CREATE TABLE IF NOT EXISTS structure_positions (
+      id TEXT PRIMARY KEY,
+      structureId TEXT NOT NULL REFERENCES project_structures(id) ON DELETE CASCADE,
+      positionId TEXT NOT NULL REFERENCES positions(id) ON DELETE CASCADE,
+      parentId TEXT REFERENCES structure_positions(id) ON DELETE SET NULL,
+      orderIndex INTEGER DEFAULT 0,
+      createdAt TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS structure_position_users (
+      structurePositionId TEXT NOT NULL REFERENCES structure_positions(id) ON DELETE CASCADE,
+      userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      PRIMARY KEY (structurePositionId, userId)
+    );
+
     CREATE TABLE IF NOT EXISTS votes (
       id TEXT PRIMARY KEY,
       projectId TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -153,6 +186,17 @@ export function initDatabase() {
       isGroup INTEGER DEFAULT 0,
       content TEXT NOT NULL,
       projectId TEXT REFERENCES projects(id) ON DELETE SET NULL,
+      createdAt TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS project_attachments (
+      id TEXT PRIMARY KEY,
+      projectId TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      fileName TEXT NOT NULL,
+      fileSize INTEGER NOT NULL,
+      fileType TEXT,
+      data TEXT NOT NULL,
+      uploadedBy TEXT REFERENCES users(id) ON DELETE SET NULL,
       createdAt TEXT NOT NULL
     );
   `);
@@ -212,6 +256,7 @@ function seedInitialData() {
       // Root: Dynamic Fields & Projects
       ['p-12', 'projects', 'پروژه‌ها و فیلدهای نیاز', 'پروژه‌ها', null, 'مدیریت طرح‌ها، فیلدها و مصوبات', 0],
       ['p-13', 'projects.fields.manage', 'تعریف و مدیریت فیلدهای پویای نیاز پروژه', 'فیلدهای پویا', 'projects', 'افزودن و حذف فیلدهای اختصاصی بدون تغییر کد', 1],
+      ['p-28', 'system.structures.manage', 'تعریف انواع و ساختارهای پروژه', 'ساختارهای پروژه', 'projects', 'مدیریت پویا و بدون کدنویسی انواع ساختار تولید', 1],
       ['p-14', 'projects.create', 'ثبت و ارسال پروژه جدید به کارتابل', 'پروژه‌ها', 'projects', 'ایجاد طرح جدید و ارجاع به گردش کار', 0],
       ['p-15', 'projects.edit', 'ویرایش مشخصات و بودجه پروژه', 'پروژه‌ها', 'projects', 'تغییر عوامل و برآوردها', 0],
       ['p-16', 'projects.delete', 'حذف پروژه از شورا', 'پروژه‌ها', 'projects', 'حذف کامل پروژه از سیستم', 1],
@@ -370,7 +415,56 @@ function seedInitialData() {
     insertStep.run('st-4', 'wf-standard', 4, 'رای‌گیری صحن شورا و صدور مصوبه نهایی', 'pos-1', 'FINAL_COUNCIL_VOTE', 'طرح در صحن شورا، محاسبه اکثریت آرا و صدور ابلاغیه قطعی');
   }
 
-  // 6. Seed Projects & attach to workflow
+  // 6. Seed Organizational Structures (ساختارهای سازمانی مانند مرخصی، ماموریت، مالی، شورا)
+  const isOldDramaStruct = db.prepare("SELECT count(*) as count FROM project_structures WHERE code = 'DRAMA_SERIES'").get() as { count: number };
+  if (isOldDramaStruct.count > 0) {
+    // Migrate to organizational structures
+    db.prepare('DELETE FROM structure_position_users').run();
+    db.prepare('DELETE FROM structure_positions').run();
+    db.prepare('DELETE FROM project_structures').run();
+  }
+
+  // Ensure standard positions exist in library
+  const insertPosIfMissing = db.prepare(`
+    INSERT OR IGNORE INTO positions (id, title, description, color, parentId, level, orderIndex, createdAt)
+    VALUES (?, ?, ?, ?, NULL, 1, 0, ?)
+  `);
+
+  insertPosIfMissing.run('pos-fin', 'مدیر امور مالی و بودجه', 'مسئول تایید و کنترل بودجه، تراکنش‌ها و هزینه‌ها در ساختارهای مختلف', 'amber', now);
+  insertPosIfMissing.run('pos-admin-affairs', 'مدیر امور اداری و پرسنلی', 'رسیدگی به امور کارکنان، مرخصی‌ها، احکام و رفاهیات', 'blue', now);
+  insertPosIfMissing.run('pos-mission-lead', 'سرپرست ماموریت‌ها و اعزام', 'برنامه‌ریزی، تایید و هماهنگی ماموریت‌های کاری و لجستیک', 'purple', now);
+
+  const structCount = (db.prepare('SELECT count(*) as count FROM project_structures').get() as any).count;
+  if (structCount === 0) {
+    const insertStruct = db.prepare(`
+      INSERT INTO project_structures (id, title, code, description, category, defaultWorkflowId, orderIndex, isActive, createdAt)
+      VALUES (?, ?, ?, ?, ?, NULL, ?, 1, ?)
+    `);
+
+    const orgStructures = [
+      ['pstr-org', 'ساختار اصلی و راهبری شورا', 'COUNCIL_MAIN', 'ساختار کلان تصمیم‌گیری، بررسی طرح‌ها و مصوبات عالیه', 'سازمان مرکزی', 1],
+      ['pstr-leave', 'ساختار مرخصی و رفاهی پرسنل', 'LEAVE_AFFAIRS', 'فرآیند ثبت، تایید و گردش درخواست‌های مرخصی و تسهیلات اعضا', 'امور اداری', 2],
+      ['pstr-mission', 'ساختار ماموریت‌ها و اعزام', 'MISSION_AFFAIRS', 'مدیریت و تایید احکام ماموریت‌های درون‌استانی و برون‌استانی', 'اعزام و ماموریت', 3],
+      ['pstr-finance', 'ساختار مالی، بودجه و قراردادها', 'FINANCE_AFFAIRS', 'کنترل اعتبارات، پیش‌پرداخت‌ها و تسویه‌حساب نهایی پروژه‌ها', 'امور مالی', 4],
+      ['pstr-eval', 'ساختار نظارت و ارزیابی کیفی', 'QUALITY_EVAL', 'بررسی‌های فنی، استانداردهای تولید و ارزیابی نهایی خروجی‌ها', 'نظارت و ارزیابی', 5],
+    ];
+
+    for (const s of orgStructures) {
+      insertStruct.run(s[0], s[1], s[2], s[3], s[4], s[5], now);
+    }
+  }
+
+  // Ensure permission p-28 exists even in existing database
+  try {
+    db.prepare(`
+      INSERT OR IGNORE INTO permissions (id, code, title, category, parentCode, description, isDanger)
+      VALUES ('p-28', 'system.structures.manage', 'تعریف و مدیریت ساختارهای سازمانی', 'ساختارهای سازمانی', 'org', 'تعریف ساختارهای اداری، مالی، ماموریت، مرخصی و چیدمان سمت‌ها', 1)
+    `).run();
+    db.prepare("INSERT OR IGNORE INTO position_permissions (positionId, permissionCode) VALUES ('pos-1', 'system.structures.manage')").run();
+    db.prepare("INSERT OR IGNORE INTO position_permissions (positionId, permissionCode) VALUES ('pos-root', 'system.structures.manage')").run();
+  } catch (e) {}
+
+  // 7. Seed Projects (مستقیماً برای تمام اعضای شورا در کارتابل ارسال می‌شود)
   const prjCount = (db.prepare('SELECT count(*) as count FROM projects').get() as any).count;
   if (prjCount === 0) {
     const insertPrj = db.prepare(`
@@ -378,16 +472,16 @@ function seedInitialData() {
         id, title, code, description, productionType, location, deadline, budgetEstimated,
         status, majorityResult, requirementsJson, createdById, workflowId, currentStepOrder, currentPositionId, createdAt, updatedAt
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'wf-standard', ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'IN_REVIEW', 'PENDING', ?, ?, NULL, 1, 'pos-1', ?, ?)
     `);
 
     const req1 = JSON.stringify({ cameraman_count: '3', director_count: '1', producer_count: '1', host_count: '0', lighting_count: '2', sound_count: '2', transport_count: '2', support_count: '3', editor_count: '2', photographer_count: '1' });
     const req2 = JSON.stringify({ cameraman_count: '4', director_count: '1', producer_count: '1', host_count: '2', lighting_count: '3', sound_count: '2', transport_count: '3', support_count: '4', editor_count: '1', photographer_count: '1' });
     const req3 = JSON.stringify({ cameraman_count: '2', director_count: '1', producer_count: '1', host_count: '0', lighting_count: '1', sound_count: '1', transport_count: '1', support_count: '1', editor_count: '1', photographer_count: '1' });
 
-    insertPrj.run('prj-101', 'مستند تاریخی شکوه زاگرس (فصل دوم)', 'PRJ-1403-01', 'مستند فاخر ۱۰ قسمتی پیرامون طبیعت و تاریخ فلات مرکزی.', 'مستند میدانی و هوایی', 'استان لرستان و چهارمحال', '۱۴۰۳/۰۹/۱۵', '۱٬۲۰۰٬۰۰۰٬۰۰۰ تومان', 'IN_REVIEW', 'APPROVED', req1, 'usr-admin', 4, 'pos-1', now, now);
-    insertPrj.run('prj-102', 'برنامه گفتگومحور نگاه نو (ویژه شبکه یک)', 'PRJ-1403-02', 'برنامه ترکیبی زنده هفتگی با حضور کارشناسان ارشد فناوری.', 'برنامه استودیویی زنده', 'استودیو شماره ۱ جام جم', '۱۴۰۳/۰۹/۲۰', '۸۵۰٬۰۰۰٬۰۰۰ تومان', 'IN_REVIEW', 'NEEDS_REVISION', req2, 'usr-admin', 2, 'pos-2', now, now);
-    insertPrj.run('prj-103', 'مجموعه کوتاه داستانی رهسپار', 'PRJ-1403-03', 'مجموعه کوتاه درام با محوریت مهارت‌های زندگی و خانواده ایرانی.', 'سریال کوتاه داستانی', 'تهران و حومه', '۱۴۰۳/۰۹/۲۵', '۶۰۰٬۰۰۰٬۰۰۰ تومان', 'IN_REVIEW', 'PENDING', req3, 'usr-admin', 1, 'pos-3', now, now);
+    insertPrj.run('prj-101', 'مستند تاریخی شکوه زاگرس (فصل دوم)', 'PRJ-1403-01', 'مستند فاخر ۱۰ قسمتی پیرامون طبیعت و تاریخ فلات مرکزی.', 'مستندسازی', 'استان لرستان و چهارمحال', '۱۴۰۳/۰۹/۱۵', '۱٬۲۰۰٬۰۰۰٬۰۰۰ تومان', req1, 'usr-admin', now, now);
+    insertPrj.run('prj-102', 'برنامه گفتگومحور نگاه نو (ویژه شبکه یک)', 'PRJ-1403-02', 'برنامه ترکیبی زنده هفتگی با حضور کارشناسان ارشد فناوری.', 'برنامه استودیویی', 'استودیو شماره ۱ جام جم', '۱۴۰۳/۰۹/۲۰', '۸۵۰٬۰۰۰٬۰۰۰ تومان', req2, 'usr-admin', now, now);
+    insertPrj.run('prj-103', 'مجموعه کوتاه داستانی رهسپار', 'PRJ-1403-03', 'مجموعه کوتاه درام با محوریت مهارت‌های زندگی و خانواده ایرانی.', 'تولید نمایشی', 'تهران و حومه', '۱۴۰۳/۰۹/۲۵', '۶۰۰٬۰۰۰٬۰۰۰ تومان', req3, 'usr-admin', now, now);
 
     // Votes
     const insertVote = db.prepare('INSERT INTO votes (id, projectId, userId, status, reason, votedAt) VALUES (?, ?, ?, ?, ?, ?)');
@@ -398,16 +492,88 @@ function seedInitialData() {
     insertVote.run('vot-4', 'prj-102', 'usr-rezaei', 'NEEDS_REVISION', 'حضور دو مجری همزمان برای این فرمت مناسب نیست؛ درخواست تقلیل به ۱ مجری.', now);
     insertVote.run('vot-5', 'prj-102', 'usr-tehrani', 'NEEDS_REVISION', 'تعداد ۴ تصویربردار برای یک استودیوی گفتگومحور مازاد است.', now);
     insertVote.run('vot-6', 'prj-102', 'usr-moradi', 'REJECTED', 'همپوشانی موضوعی با برنامه قبلی دارد.', now);
+  }
 
-    // Seed Initial Workflow Transition Logs
-    const insertLog = db.prepare(`
-      INSERT INTO workflow_logs (id, projectId, stepOrder, fromUserId, toPositionId, action, comment, createdAt)
+  // 8. Seed Structure Positions and User Assignments per Structure
+  const spCount = (db.prepare('SELECT count(*) as count FROM structure_positions').get() as any).count;
+  if (spCount === 0) {
+    const insertSP = db.prepare(`
+      INSERT INTO structure_positions (id, structureId, positionId, parentId, orderIndex, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    const insertSPU = db.prepare(`
+      INSERT OR IGNORE INTO structure_position_users (structurePositionId, userId)
+      VALUES (?, ?)
+    `);
+
+    // Structure 1: ساختار اصلی و راهبری شورا (pstr-org)
+    insertSP.run('sp-org-root', 'pstr-org', 'pos-1', null, 1, now); // دبیر شورا
+    insertSPU.run('sp-org-root', 'usr-admin');
+
+    insertSP.run('sp-org-c1', 'pstr-org', 'pos-2', 'sp-org-root', 1, now); // ناظر کیفی
+    insertSPU.run('sp-org-c1', 'usr-rezaei');
+
+    insertSP.run('sp-org-c2', 'pstr-org', 'pos-3', 'sp-org-root', 2, now); // مدیر فنی
+    insertSPU.run('sp-org-c2', 'usr-tehrani');
+
+    // Structure 2: ساختار ماموریت‌ها و اعزام (pstr-mission)
+    // Here: مدیر مالی (pos-fin) is assigned in Mission structure!
+    insertSP.run('sp-mis-root', 'pstr-mission', 'pos-mission-lead', null, 1, now); // سرپرست ماموریت‌ها
+    insertSPU.run('sp-mis-root', 'usr-moradi');
+
+    insertSP.run('sp-mis-c1', 'pstr-mission', 'pos-fin', 'sp-mis-root', 1, now); // مدیر مالی در ساختار ماموریت!
+    insertSPU.run('sp-mis-c1', 'usr-hoseini');
+
+    // Structure 3: ساختار مرخصی و رفاهی پرسنل (pstr-leave)
+    // Here: مدیر مالی (pos-fin) is ALSO assigned in Leave structure!
+    insertSP.run('sp-lea-root', 'pstr-leave', 'pos-admin-affairs', null, 1, now); // مدیر امور اداری
+    insertSPU.run('sp-lea-root', 'usr-rezaei');
+
+    insertSP.run('sp-lea-c1', 'pstr-leave', 'pos-fin', 'sp-lea-root', 1, now); // مدیر مالی در ساختار مرخصی!
+    insertSPU.run('sp-lea-c1', 'usr-hoseini');
+
+    // Structure 4: ساختار مالی و بودجه (pstr-finance)
+    insertSP.run('sp-fin-root', 'pstr-finance', 'pos-fin', null, 1, now);
+    insertSPU.run('sp-fin-root', 'usr-hoseini');
+  }
+
+  // 9. Seed Sample Project Attachments
+  const attCount = (db.prepare('SELECT count(*) as count FROM project_attachments').get() as any).count;
+  if (attCount === 0) {
+    const sampleTextPdf = `data:text/plain;charset=utf-8;base64,${Buffer.from(
+      'پیوست مستند شکوه زاگرس:\nطرح فیلم‌نامه، سیناپس ۱۰ قسمتی و برآورد تجهیزات تصویربرداری و کوهستانی.'
+    ).toString('base64')}`;
+
+    const sampleTextExcel = `data:text/plain;charset=utf-8;base64,${Buffer.from(
+      'جدول ریز هزینه‌ها و دستمزد عوامل تولید مستند شکوه زاگرس فصل دوم - پاییز ۱۴۰۳'
+    ).toString('base64')}`;
+
+    const insertAtt = db.prepare(`
+      INSERT INTO project_attachments (id, projectId, fileName, fileSize, fileType, data, uploadedBy, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    insertLog.run('log-1', 'prj-101', 1, 'usr-tehrani', 'pos-2', 'FORWARDED', 'تجهیزات و عوامل فنی بازبینی و تایید اولیه شد. ارجاع به ناظر محتوایی.', now);
-    insertLog.run('log-2', 'prj-101', 2, 'usr-rezaei', 'pos-5', 'FORWARDED', 'چارچوب محتوایی و فیلمنامه ۱۰ قسمت تایید گردید. ارجاع به امور مالی.', now);
-    insertLog.run('log-3', 'prj-101', 3, 'usr-hoseini', 'pos-1', 'FORWARDED', 'برآورد کلی بررسی و جهت رای‌گیری نهایی به دبیرخانه شورا ارسال شد.', now);
+    insertAtt.run(
+      'att-101',
+      'prj-101',
+      'طرح_فیلم‌نامه_و_سیناپس_زاگرس.pdf',
+      2457600, // ~2.4 MB
+      'application/pdf',
+      sampleTextPdf,
+      'usr-admin',
+      now
+    );
+
+    insertAtt.run(
+      'att-102',
+      'prj-101',
+      'جدول_برآورد_بودجه_عوامل.xlsx',
+      1048576, // 1 MB
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      sampleTextExcel,
+      'usr-admin',
+      now
+    );
   }
 }
 
