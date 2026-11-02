@@ -6,16 +6,11 @@ import {
   Network, 
   Plus, 
   Users, 
-  Shield, 
   Edit3, 
   Trash2, 
-  ChevronRight, 
   Lock, 
-  Sparkles, 
   X,
-  Briefcase,
-  Layers,
-  ArrowDown
+  Briefcase
 } from 'lucide-react';
 
 interface OrgHierarchyChartProps {
@@ -132,12 +127,12 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
         
         {/* Node Box */}
         <div
-          className={`p-4 sm:p-5 rounded-2xl border transition shadow-lg relative group ${
+          className={`p-4 sm:p-5 rounded-2xl border transition shadow-sm relative group ${
             depth === 0
-              ? 'bg-gradient-to-r from-slate-900 to-indigo-950/60 border-indigo-500/50 shadow-indigo-950/40 ring-1 ring-indigo-500/20'
+              ? 'bg-gradient-to-r from-blue-50/80 to-indigo-50/80 border-blue-200 ring-1 ring-blue-500/10'
               : depth === 1
-              ? 'bg-slate-900/95 border-cyan-500/30 shadow-slate-950'
-              : 'bg-slate-900/80 border-slate-800'
+              ? 'bg-white border-cyan-200'
+              : 'bg-white border-slate-200'
           }`}
           style={{ marginRight: `${depth * 28}px` }}
         >
@@ -146,24 +141,24 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
             <div className="flex items-center gap-2.5">
               <span className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-xs border ${
                 depth === 0
-                  ? 'bg-indigo-600/30 text-indigo-300 border-indigo-500/40'
-                  : 'bg-cyan-600/20 text-cyan-300 border-cyan-500/30'
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                  : 'bg-cyan-50 text-cyan-700 border-cyan-200'
               }`}>
                 {depth + 1}
               </span>
 
               <div>
-                <h4 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                <h4 className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-2">
                   <span>{node.title}</span>
                   {depth === 0 && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold">
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 font-bold">
                       سطح عالیه (ریشه چارت)
                     </span>
                   )}
                 </h4>
                 {node.parentTitle && (
-                  <span className="text-[10px] text-slate-400">
-                    مستقر زیرمجموعه: <strong className="text-cyan-400">{node.parentTitle}</strong>
+                  <span className="text-[11px] text-slate-500">
+                    مستقر زیرمجموعه: <strong className="text-blue-700 font-bold">{node.parentTitle}</strong>
                   </span>
                 )}
               </div>
@@ -174,12 +169,12 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
               {/* Permission Tree Button */}
               <button
                 onClick={() => setSelectedPosForPerms(node)}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-cyan-300 text-xs font-medium transition cursor-pointer"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 text-slate-700 hover:text-blue-700 text-xs font-medium transition cursor-pointer"
                 title="مشاهده و ویرایش درخت دسترسی‌های این سمت"
               >
-                <Lock className="w-3.5 h-3.5 text-cyan-400" />
+                <Lock className="w-3.5 h-3.5 text-blue-600" />
                 <span className="hidden sm:inline">درخت دسترسی‌ها</span>
-                <span className="text-[10px] px-1 bg-cyan-950 text-cyan-400 rounded">
+                <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded-md font-bold">
                   {node.permissions?.length || 0}
                 </span>
               </button>
@@ -188,14 +183,14 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
                 <>
                   <button
                     onClick={() => openAddChildModal(node)}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-cyan-300 hover:bg-slate-800 transition cursor-pointer"
+                    className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition cursor-pointer"
                     title="افزودن سمت زیرمجموعه به این گره"
                   >
                     <Plus className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => openEditModal(node)}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                    className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition cursor-pointer"
                     title="ویرایش سمت"
                   >
                     <Edit3 className="w-4 h-4" />
@@ -203,7 +198,7 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
                   {depth > 0 && (
                     <button
                       onClick={() => handleDelete(node.id, node.title)}
-                      className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-950/30 transition cursor-pointer"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
                       title="حذف سمت"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -216,16 +211,16 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
 
           {/* Description */}
           {node.description && (
-            <p className="text-xs text-slate-400 mb-3 leading-relaxed">
+            <p className="text-xs text-slate-600 mb-3 leading-relaxed">
               {node.description}
             </p>
           )}
 
           {/* Appointed Users in this Node */}
-          <div className="pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
+          <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <span className="text-[11px] text-slate-400 flex items-center gap-1">
-                <Users className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="text-[11px] text-slate-500 flex items-center gap-1">
+                <Users className="w-3.5 h-3.5 text-blue-600" />
                 پرسنل منتصب در این گره:
               </span>
               {nodeUsers.length > 0 ? (
@@ -233,9 +228,9 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
                   {nodeUsers.map((u) => (
                     <span
                       key={u.id}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-950 border border-slate-800 text-xs font-semibold text-white"
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-800"
                     >
-                      <span className="w-4 h-4 rounded-full bg-cyan-600/30 text-cyan-300 text-[10px] flex items-center justify-center font-bold">
+                      <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-700 text-[10px] flex items-center justify-center font-bold">
                         {u.name.charAt(0)}
                       </span>
                       <span>{u.name}</span>
@@ -243,13 +238,13 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
                   ))}
                 </div>
               ) : (
-                <span className="text-[11px] text-slate-500 italic">
+                <span className="text-[11px] text-slate-400 italic">
                   (هیچ کاربری هنوز به این سمت منتصب نشده است)
                 </span>
               )}
             </div>
 
-            <span className="text-[10px] text-slate-500">
+            <span className="text-[10px] text-slate-400 font-medium">
               سطح سلسله‌مراتب: رده {node.level || depth + 1}
             </span>
           </div>
@@ -258,7 +253,7 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
 
         {/* Recursive Children with connector lines */}
         {hasChildren && node.children && (
-          <div className="relative mt-3 space-y-3 pr-4 border-r-2 border-indigo-500/20">
+          <div className="relative mt-3 space-y-3 pr-4 border-r-2 border-blue-200">
             {node.children.map((child: any) => renderTreeNode(child, depth + 1))}
           </div>
         )}
@@ -271,17 +266,17 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
     <div className="space-y-6">
       
       {/* Top Banner */}
-      <div className="p-5 sm:p-6 rounded-3xl bg-slate-900 border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="p-5 sm:p-6 rounded-3xl bg-white border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 mb-1.5">
-            <span className="p-1 rounded-lg bg-cyan-500/20 text-cyan-400">
+          <div className="flex items-center gap-2.5 mb-1.5">
+            <span className="p-2 rounded-xl bg-blue-50 text-blue-600">
               <Network className="w-5 h-5" />
             </span>
-            <h2 className="text-lg font-bold text-white">
+            <h2 className="text-lg font-bold text-slate-900">
               ساختار درختی چارت سازمانی شورا و سطوح دسترسی
             </h2>
           </div>
-          <p className="text-xs text-slate-400 max-w-2xl leading-relaxed">
+          <p className="text-xs text-slate-500 max-w-2xl leading-relaxed">
             تعریف سلسله‌مراتب سازمانی، گره‌های والد و فرزند، و انتصاب فرآیندهای گردش کار بر پایه این ساختار سازمانی
           </p>
         </div>
@@ -289,7 +284,7 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
         {isAdmin && (
           <button
             onClick={() => openAddChildModal()}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-xs font-bold text-white shadow-lg shadow-cyan-600/20 transition cursor-pointer"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-blue-600 hover:bg-blue-700 text-xs font-bold text-white shadow-sm transition cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             <span>تعریف سمت جدید در ریشه</span>
@@ -298,10 +293,10 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
       </div>
 
       {/* Organizational Tree View */}
-      <div className="p-4 sm:p-6 rounded-3xl bg-slate-950/60 border border-slate-800/80 space-y-6">
-        <div className="text-xs font-bold text-slate-400 mb-2 flex items-center justify-between">
+      <div className="p-4 sm:p-6 rounded-3xl bg-white border border-slate-200 shadow-sm space-y-6">
+        <div className="text-xs font-bold text-slate-600 mb-2 flex items-center justify-between pb-3 border-b border-slate-100">
           <span>نمودار سلسله‌مراتب سازمانی شورا:</span>
-          <span className="text-[11px] text-cyan-400">
+          <span className="text-[11px] text-blue-600 font-bold bg-blue-50 px-2.5 py-1 rounded-lg">
             {positions.length} سمت سازمانی تعریف شده
           </span>
         </div>
@@ -320,31 +315,31 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
 
       {/* Add / Edit Position Modal */}
       {showAddEditModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-          <div className="w-full max-w-md rounded-3xl bg-slate-900 border border-slate-700/80 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             
-            <div className="flex items-center justify-between p-5 border-b border-slate-800 bg-slate-950/50">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <Briefcase className="w-5 h-5 text-cyan-400" />
+            <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/50">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Briefcase className="w-5 h-5 text-blue-600" />
                 {editingPosition ? 'ویرایش گره در چارت سازمانی' : 'تعریف سمت سازمانی جدید در چارت'}
               </h3>
               <button
                 onClick={() => setShowAddEditModal(false)}
-                className="p-1 text-slate-400 hover:text-white"
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {error && (
-              <div className="m-4 p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs">
+              <div className="m-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs">
                 {error}
               </div>
             )}
 
             <form onSubmit={handleSave} className="p-5 space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
                   عنوان سمت سازمانی *
                 </label>
                 <input
@@ -352,20 +347,20 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   placeholder="مثال: ناظر فنی و تجهیزات، مدیر تولید، کارشناس برآورد..."
-                  className="w-full rounded-xl bg-slate-950 border border-slate-700 px-4 py-2 text-sm text-white focus:outline-none focus:border-cyan-500"
+                  className="w-full rounded-xl bg-slate-50 border border-slate-300 px-4 py-2 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white transition"
                   required
                 />
               </div>
 
               {/* Parent Position Dropdown */}
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
                   سمت بالادست (والد در ساختار درختی چارت)
                 </label>
                 <select
                   value={parentPositionId || ''}
                   onChange={(e) => setParentPositionId(e.target.value || null)}
-                  className="w-full rounded-xl bg-slate-950 border border-slate-700 px-4 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 cursor-pointer"
+                  className="w-full rounded-xl bg-slate-50 border border-slate-300 px-4 py-2 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white cursor-pointer transition"
                 >
                   <option value="">-- بدون والد (گره ریشه / سطح عالیه) --</option>
                   {positions
@@ -379,7 +374,7 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
                   شرح وظایف و مسئولیت‌ها در شورا
                 </label>
                 <textarea
@@ -387,7 +382,7 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="شرح اختیارات و حیطه وظایف در ارزیابی پروژه‌ها..."
-                  className="w-full rounded-xl bg-slate-950 border border-slate-700 px-4 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 leading-relaxed"
+                  className="w-full rounded-xl bg-slate-50 border border-slate-300 px-4 py-2 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white leading-relaxed transition"
                 />
               </div>
 
@@ -395,14 +390,14 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowAddEditModal(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-700 text-xs text-slate-300 hover:bg-slate-800"
+                  className="px-4 py-2 rounded-xl border border-slate-300 text-xs text-slate-600 hover:bg-slate-100 transition cursor-pointer"
                 >
                   انصراف
                 </button>
                 <button
                   type="submit"
                   disabled={loading}
-                  className="px-5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-xs font-bold text-white shadow-md disabled:opacity-50"
+                  className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-xs font-bold text-white shadow-sm disabled:opacity-50 transition cursor-pointer"
                 >
                   {loading ? 'در حال ذخیره...' : 'ذخیره در چارت سازمانی'}
                 </button>

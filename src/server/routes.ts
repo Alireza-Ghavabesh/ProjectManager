@@ -1,5 +1,5 @@
 import express, { Request, Response } from 'express';
-import { db } from './db.js';
+import { db, generateOfflineAvatarSvg } from './db.js';
 import { randomUUID } from 'crypto';
 
 export const apiRouter = express.Router();
@@ -184,7 +184,7 @@ apiRouter.post('/users', (req: Request, res: Response) => {
   }
 
   const id = `usr-${randomUUID().substring(0, 8)}`;
-  const avatar = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name)}&backgroundColor=0284c7,1e293b,6366f1`;
+  const avatar = generateOfflineAvatarSvg(name, id);
 
   try {
     db.prepare(`

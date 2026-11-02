@@ -9,10 +9,8 @@ import {
   ChevronLeft, 
   X, 
   Sparkles, 
-  AlertTriangle,
   Lock,
-  Save,
-  Layers
+  Save
 } from 'lucide-react';
 
 interface PermissionsTreeModalProps {
@@ -98,35 +96,35 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto">
-      <div className="w-full max-w-2xl rounded-3xl bg-slate-900 border border-slate-700/80 shadow-2xl overflow-hidden my-6 animate-in fade-in zoom-in-95 duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm overflow-y-auto">
+      <div className="w-full max-w-2xl rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden my-6 animate-in fade-in zoom-in-95 duration-150">
         
         {/* Modal Header */}
-        <div className="flex items-center justify-between p-5 border-b border-slate-800 bg-slate-950/60">
+        <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/60">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-cyan-600/20 text-cyan-400 border border-cyan-500/30 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 border border-blue-200 flex items-center justify-center">
               <Lock className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <span>ساختار درختی سطح دسترسی‌های سمت:</span>
-                <span className="text-cyan-400 font-extrabold">{position.title}</span>
+                <span className="text-blue-700 font-extrabold">{position.title}</span>
               </h3>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-500">
                 تعیین دقیق مجوزهای کاربری (عدم امکان افزودن ادمین یا تغییر فیلدها مگر با فعال‌سازی گره مربوطه)
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800"
+            className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {error && (
-          <div className="m-5 p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs">
+          <div className="m-5 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs">
             {error}
           </div>
         )}
@@ -134,7 +132,7 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
         {/* Tree Content */}
         <div className="p-5 max-h-[500px] overflow-y-auto space-y-4">
           {loading ? (
-            <div className="text-center py-10 text-slate-400 text-xs">
+            <div className="text-center py-10 text-slate-500 text-xs">
               در حال بارگذاری درخت دسترسی‌ها...
             </div>
           ) : (
@@ -147,20 +145,20 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
               return (
                 <div
                   key={root.code}
-                  className="rounded-2xl border border-slate-800 bg-slate-950/50 overflow-hidden"
+                  className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-2xs"
                 >
                   {/* Root Branch */}
-                  <div className="flex items-center justify-between p-3.5 bg-slate-900/90 hover:bg-slate-900 transition">
+                  <div className="flex items-center justify-between p-3.5 bg-slate-50 hover:bg-blue-50/40 transition">
                     <div className="flex items-center gap-2.5">
                       <button
                         type="button"
                         onClick={() => toggleExpand(root.code)}
-                        className="text-slate-400 hover:text-white cursor-pointer"
+                        className="text-slate-400 hover:text-slate-700 cursor-pointer"
                       >
                         {isExpanded ? (
-                          <ChevronDown className="w-4 h-4 text-cyan-400" />
+                          <ChevronDown className="w-4 h-4 text-blue-600" />
                         ) : (
-                          <ChevronLeft className="w-4 h-4 text-slate-500" />
+                          <ChevronLeft className="w-4 h-4 text-slate-400" />
                         )}
                       </button>
 
@@ -170,15 +168,15 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
                         className="flex items-center gap-2 cursor-pointer text-right"
                       >
                         {isRootSelected ? (
-                          <CheckSquare className="w-4 h-4 text-cyan-400 shrink-0" />
+                          <CheckSquare className="w-4 h-4 text-blue-600 shrink-0" />
                         ) : (
-                          <Square className="w-4 h-4 text-slate-600 shrink-0" />
+                          <Square className="w-4 h-4 text-slate-400 shrink-0" />
                         )}
                         <div>
-                          <span className="text-xs font-bold text-white block">
+                          <span className="text-xs font-bold text-slate-900 block">
                             {root.title}
                           </span>
-                          <span className="text-[10px] text-slate-400 font-mono">
+                          <span className="text-[10px] text-slate-500 font-mono">
                             {root.code}
                           </span>
                         </div>
@@ -186,7 +184,7 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-medium">
+                      <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-slate-200 text-slate-700 font-semibold">
                         {selectedChildrenCount} از {children.length} مجوز فعال
                       </span>
                     </div>
@@ -194,7 +192,7 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
 
                   {/* Children Nodes (Indented Tree Leaves) */}
                   {isExpanded && children.length > 0 && (
-                    <div className="p-3 pr-8 space-y-2 border-t border-slate-800/80 bg-slate-950/30">
+                    <div className="p-3 pr-8 space-y-2 border-t border-slate-100 bg-slate-50/50">
                       {children.map((child) => {
                         const isChildSelected = selectedCodes.has(child.code);
                         return (
@@ -202,8 +200,8 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
                             key={child.code}
                             className={`p-2.5 rounded-xl border transition flex items-center justify-between gap-3 ${
                               isChildSelected
-                                ? 'bg-cyan-950/30 border-cyan-500/30 text-white'
-                                : 'bg-slate-900/50 border-slate-800/80 text-slate-300'
+                                ? 'bg-blue-50/80 border-blue-200 text-slate-900'
+                                : 'bg-white border-slate-200 text-slate-700'
                             }`}
                           >
                             <button
@@ -213,30 +211,30 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
                             >
                               <div className="mt-0.5">
                                 {isChildSelected ? (
-                                  <CheckSquare className="w-3.5 h-3.5 text-cyan-400" />
+                                  <CheckSquare className="w-3.5 h-3.5 text-blue-600" />
                                 ) : (
-                                  <Square className="w-3.5 h-3.5 text-slate-600" />
+                                  <Square className="w-3.5 h-3.5 text-slate-400" />
                                 )}
                               </div>
                               <div>
                                 <div className="text-xs font-semibold leading-tight flex items-center gap-2">
                                   <span>{child.title}</span>
                                   {child.isDanger ? (
-                                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1 font-bold">
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1 font-bold">
                                       <ShieldAlert className="w-2.5 h-2.5" />
                                       اختیار حساس
                                     </span>
                                   ) : null}
                                 </div>
                                 {child.description && (
-                                  <div className="text-[10px] text-slate-400 mt-0.5">
+                                  <div className="text-[10px] text-slate-500 mt-0.5">
                                     {child.description}
                                   </div>
                                 )}
                               </div>
                             </button>
 
-                            <span className="text-[9px] text-slate-500 font-mono shrink-0 hidden sm:inline" dir="ltr">
+                            <span className="text-[9px] text-slate-400 font-mono shrink-0 hidden sm:inline" dir="ltr">
                               {child.code}
                             </span>
                           </div>
@@ -251,9 +249,9 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
         </div>
 
         {/* Modal Actions */}
-        <div className="flex items-center justify-between p-4 border-t border-slate-800 bg-slate-950/60">
-          <div className="text-xs text-slate-400 flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+        <div className="flex items-center justify-between p-4 border-t border-slate-100 bg-slate-50/60">
+          <div className="text-xs text-slate-600 flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-amber-500" />
             <span>مجموع مجوزهای انتخاب‌شده: <strong>{selectedCodes.size}</strong> گره</span>
           </div>
 
@@ -261,7 +259,7 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl border border-slate-700 text-xs text-slate-300 hover:bg-slate-800 cursor-pointer"
+              className="px-4 py-2 rounded-xl border border-slate-300 text-xs text-slate-600 hover:bg-slate-100 cursor-pointer transition"
             >
               انصراف
             </button>
@@ -269,7 +267,7 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
               type="button"
               onClick={handleSave}
               disabled={saving || loading}
-              className="px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-xs font-bold text-white shadow-md flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-xs font-bold text-white shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-50 transition"
             >
               <Save className="w-3.5 h-3.5" />
               <span>{saving ? 'در حال ذخیره...' : 'ذخیره ماتریس دسترسی‌ها'}</span>

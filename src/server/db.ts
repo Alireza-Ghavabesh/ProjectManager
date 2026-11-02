@@ -9,6 +9,27 @@ const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+export function generateOfflineAvatarSvg(name: string, seed: string): string {
+  const initial = (name || '?').trim().charAt(0);
+  const palettes = [
+    ['#4f46e5', '#3730a3'], // Indigo
+    ['#0284c7', '#0369a1'], // Sky
+    ['#059669', '#047857'], // Emerald
+    ['#d97706', '#b45309'], // Amber
+    ['#7c3aed', '#6d28d9'], // Violet
+    ['#e11d48', '#be123c'], // Rose
+    ['#0891b2', '#0e7490'], // Cyan
+  ];
+  let hash = 0;
+  for (let i = 0; i < (seed || name || 'x').length; i++) {
+    hash = (hash << 5) - hash + (seed || name).charCodeAt(i);
+    hash |= 0;
+  }
+  const [c1, c2] = palettes[Math.abs(hash) % palettes.length];
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" width="80" height="80"><defs><linearGradient id="g_${Math.abs(hash)}" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="${c1}"/><stop offset="100%" stop-color="${c2}"/></linearGradient></defs><rect width="80" height="80" rx="40" fill="url(#g_${Math.abs(hash)})"/><text x="40" y="47" font-family="system-ui, sans-serif" font-size="34" font-weight="bold" fill="#ffffff" text-anchor="middle" dominant-baseline="middle">${initial}</text></svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
 export function initDatabase() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS positions (
@@ -288,11 +309,20 @@ function seedInitialData() {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    insertUser.run('usr-admin', 'admin', 'admin123', 'مهندس علیرضا علوی', 'ADMIN', 'pos-1', 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150', '09121112233', now);
-    insertUser.run('usr-rezaei', 'rezaei', '123456', 'دکتر فاطمه رضایی', 'COUNCIL', 'pos-2', 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150', '09122223344', now);
-    insertUser.run('usr-tehrani', 'tehrani', '123456', 'مهندس سهراب تهرانی', 'COUNCIL', 'pos-3', 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150', '09123334455', now);
-    insertUser.run('usr-moradi', 'moradi', '123456', 'پیمان مرادی', 'COUNCIL', 'pos-4', 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150', '09124445566', now);
-    insertUser.run('usr-hoseini', 'hoseini', '123456', 'مریم سادات حسینی', 'COUNCIL', 'pos-5', 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=150', '09125556677', now);
+    insertUser.run('usr-admin', 'admin', 'admin123', 'مهندس علیرضا علوی', 'ADMIN', 'pos-1', generateOfflineAvatarSvg('مهندس علیرضا علوی', 'usr-admin'), '09121112233', now);
+    insertUser.run('usr-rezaei', 'rezaei', '123456', 'دکتر فاطمه رضایی', 'COUNCIL', 'pos-2', generateOfflineAvatarSvg('دکتر فاطمه رضایی', 'usr-rezaei'), '09122223344', now);
+    insertUser.run('usr-tehrani', 'tehrani', '123456', 'مهندس سهراب تهرانی', 'COUNCIL', 'pos-3', generateOfflineAvatarSvg('مهندس سهراب تهرانی', 'usr-tehrani'), '09123334455', now);
+    insertUser.run('usr-moradi', 'moradi', '123456', 'پیمان مرادی', 'COUNCIL', 'pos-4', generateOfflineAvatarSvg('پیمان مرادی', 'usr-moradi'), '09124445566', now);
+    insertUser.run('usr-hoseini', 'hoseini', '123456', 'مریم سادات حسینی', 'COUNCIL', 'pos-5', generateOfflineAvatarSvg('مریم سادات حسینی', 'usr-hoseini'), '09125556677', now);
+  } else {
+    // Offline Migration: convert any external URLs in database to offline SVG data URIs
+    const existingUsers = db.prepare("SELECT id, name, avatar FROM users WHERE avatar LIKE 'http%'").all() as any[];
+    for (const u of existingUsers) {
+      db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(
+        generateOfflineAvatarSvg(u.name, u.id),
+        u.id
+      );
+    }
   }
 
   // 4. Seed Dynamic Fields

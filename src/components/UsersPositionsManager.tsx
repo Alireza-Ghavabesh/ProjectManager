@@ -193,24 +193,24 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
     <div className="space-y-6">
       
       {/* Top Bar with Sub-Tabs */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-5 rounded-3xl bg-slate-900 border border-slate-800">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-5 rounded-3xl bg-white border border-slate-200/90 shadow-xs">
         <div>
-          <h2 className="text-lg font-bold text-white flex items-center gap-2">
-            <Users className="w-5 h-5 text-cyan-400" />
+          <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+            <Users className="w-5 h-5 text-indigo-600" />
             مدیریت اعضای شورا، تعریف سمت‌ها و انتصاب‌ها
           </h2>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="text-xs text-slate-500 mt-1">
             تعریف سمت‌های تخصصی در شورا و انتصاب اعضا به سمت‌ها با نام کاربری و رمز اختصاصی
           </p>
         </div>
 
-        <div className="flex items-center gap-2 bg-slate-950 p-1.5 rounded-2xl border border-slate-800 self-stretch sm:self-auto">
+        <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 self-stretch sm:self-auto">
           <button
             onClick={() => setSubTab('users')}
             className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
               subTab === 'users'
-                ? 'bg-cyan-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             کاربران شورا ({users.length})
@@ -219,8 +219,8 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
             onClick={() => setSubTab('positions')}
             className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
               subTab === 'positions'
-                ? 'bg-cyan-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             سمت‌های سازمانی ({positions.length})
@@ -232,13 +232,13 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
       {subTab === 'users' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-300">
+            <span className="text-xs font-bold text-slate-800">
               لیست کاربران ثبت شده با نام کاربری، رمز عبور، کارتابل و سمت:
             </span>
             {isAdmin && (
               <button
                 onClick={() => openUserModal()}
-                className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-xs font-bold text-white shadow-md transition cursor-pointer"
+                className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
                 <span>تعریف کاربر جدید</span>
@@ -250,19 +250,19 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
             {users.map((u) => (
               <div
                 key={u.id}
-                className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-slate-700/80 shadow-xl transition flex flex-col justify-between"
+                className="p-5 rounded-2xl bg-white border border-slate-200/90 hover:border-slate-300 shadow-2xs hover:shadow-xs transition flex flex-col justify-between text-slate-800"
               >
                 <div>
                   <div className="flex items-start justify-between gap-3 mb-3">
                     <div className="flex items-center gap-3">
-                      <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-cyan-600/30 to-indigo-600/30 text-cyan-300 font-extrabold text-sm flex items-center justify-center border border-cyan-500/30">
+                      <div className="w-11 h-11 rounded-2xl bg-indigo-100 text-indigo-700 font-extrabold text-sm flex items-center justify-center border border-indigo-200">
                         {u.name.charAt(0)}
                       </div>
                       <div>
-                        <h4 className="text-sm font-bold text-white leading-tight">
+                        <h4 className="text-sm font-bold text-slate-900 leading-tight">
                           {u.name}
                         </h4>
-                        <span className="text-[11px] text-slate-400 font-mono" dir="ltr">
+                        <span className="text-[11px] text-slate-500 font-mono" dir="ltr">
                           @{u.username}
                         </span>
                       </div>
@@ -270,38 +270,38 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
 
                     {/* Role badge */}
                     {u.role === 'ADMIN' ? (
-                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
                         مدیر جلسه
                       </span>
                     ) : (
-                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200">
                         عضو شورا
                       </span>
                     )}
                   </div>
 
                   {/* Assigned Position Pill */}
-                  <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 mb-3">
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 mb-3">
                     <div className="text-[10px] text-slate-500 mb-0.5">سمت انتصاب یافته:</div>
-                    <div className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
-                      <Briefcase className="w-3.5 h-3.5 text-cyan-400" />
+                    <div className="text-xs font-bold text-indigo-700 flex items-center gap-1.5">
+                      <Briefcase className="w-3.5 h-3.5 text-indigo-600" />
                       {u.positionTitle || 'بدون سمت (انتصاب نشده)'}
                     </div>
                   </div>
 
                   {u.phone && (
-                    <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mb-2">
-                      <Phone className="w-3.5 h-3.5 text-slate-500" />
+                    <div className="flex items-center gap-1.5 text-[11px] text-slate-500 mb-2">
+                      <Phone className="w-3.5 h-3.5 text-slate-400" />
                       <span>{u.phone}</span>
                     </div>
                   )}
                 </div>
 
                 {isAdmin && (
-                  <div className="pt-3 border-t border-slate-800/80 flex items-center justify-end gap-2">
+                  <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
                     <button
                       onClick={() => openUserModal(u)}
-                      className="px-2.5 py-1.5 rounded-lg text-xs text-slate-300 hover:text-white hover:bg-slate-800 transition flex items-center gap-1 cursor-pointer"
+                      className="px-2.5 py-1.5 rounded-lg text-xs text-slate-700 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
                     >
                       <Edit3 className="w-3.5 h-3.5" />
                       <span>تغییر سمت / مشخصات</span>
@@ -309,7 +309,7 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                     {u.id !== currentUser.id && (
                       <button
                         onClick={() => handleDeleteUser(u.id, u.name)}
-                        className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-950/30 transition cursor-pointer"
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
                         title="حذف کاربر"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -327,13 +327,13 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
       {subTab === 'positions' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-300">
+            <span className="text-xs font-bold text-slate-800">
               سمت‌های سازمانی و شورایی (قابل انتصاب به کاربران):
             </span>
             {isAdmin && (
               <button
                 onClick={() => openPosModal()}
-                className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-xs font-bold text-white shadow-md transition cursor-pointer"
+                className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
                 <span>تعریف سمت جدید</span>
@@ -345,38 +345,38 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
             {positions.map((p) => (
               <div
                 key={p.id}
-                className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-slate-700/80 shadow-xl transition flex flex-col justify-between"
+                className="p-5 rounded-2xl bg-white border border-slate-200/90 hover:border-slate-300 shadow-2xs hover:shadow-xs transition flex flex-col justify-between text-slate-800"
               >
                 <div>
                   <div className="flex items-start justify-between gap-2 mb-2">
-                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                      <Briefcase className="w-4 h-4 text-cyan-400" />
+                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                      <Briefcase className="w-4 h-4 text-indigo-600" />
                       {p.title}
                     </h3>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
                       {p.userCount || 0} نفر منتصب
                     </span>
                   </div>
 
                   {p.description && (
-                    <p className="text-xs text-slate-400 leading-relaxed mt-2 bg-slate-950/50 p-2.5 rounded-xl border border-slate-800/80">
+                    <p className="text-xs text-slate-600 leading-relaxed mt-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
                       {p.description}
                     </p>
                   )}
                 </div>
 
                 {isAdmin && (
-                  <div className="pt-3 border-t border-slate-800/80 flex items-center justify-end gap-2 mt-4">
+                  <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2 mt-4">
                     <button
                       onClick={() => openPosModal(p)}
-                      className="px-2.5 py-1.5 rounded-lg text-xs text-slate-300 hover:text-white hover:bg-slate-800 transition flex items-center gap-1 cursor-pointer"
+                      className="px-2.5 py-1.5 rounded-lg text-xs text-slate-700 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
                     >
                       <Edit3 className="w-3.5 h-3.5" />
                       <span>ویرایش سمت</span>
                     </button>
                     <button
                       onClick={() => handleDeletePosition(p.id, p.title)}
-                      className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-950/30 transition cursor-pointer"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
                       title="حذف سمت"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -391,30 +391,30 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
 
       {/* MODAL: CREATE / EDIT USER */}
       {showUserModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-          <div className="w-full max-w-md rounded-3xl bg-slate-900 border border-slate-700/80 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between p-5 border-b border-slate-800 bg-slate-950/50">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <UserCheck className="w-5 h-5 text-cyan-400" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-slate-800">
+            <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/80">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <UserCheck className="w-5 h-5 text-indigo-600" />
                 {editingUser ? 'ویرایش مشخصات و انتصاب سمت' : 'تعریف کاربر جدید شورا'}
               </h3>
               <button
                 onClick={() => setShowUserModal(false)}
-                className="p-1 text-slate-400 hover:text-white"
+                className="p-1 text-slate-400 hover:text-slate-700"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {error && (
-              <div className="m-4 p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs">
+              <div className="m-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs">
                 {error}
               </div>
             )}
 
             <form onSubmit={handleSaveUser} className="p-5 space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                <label className="block text-xs font-bold text-slate-800 mb-1.5">
                   نام و نام خانوادگی *
                 </label>
                 <input
@@ -422,13 +422,13 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                   value={userName}
                   onChange={(e) => setUserName(e.target.value)}
                   placeholder="مثال: مهندس فرهاد کاظمی"
-                  className="w-full rounded-xl bg-slate-950 border border-slate-700 px-4 py-2 text-sm text-white focus:outline-none focus:border-cyan-500"
+                  className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 shadow-2xs"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                <label className="block text-xs font-bold text-slate-800 mb-1.5">
                   نام کاربری (جهت ورود به کارتابل) *
                 </label>
                 <input
@@ -437,14 +437,14 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                   onChange={(e) => setUserUsername(e.target.value)}
                   placeholder="مثال: kazemi"
                   disabled={!!editingUser}
-                  className="w-full rounded-xl bg-slate-950 border border-slate-700 px-4 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 font-mono disabled:opacity-50"
+                  className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono disabled:opacity-50 shadow-2xs"
                   dir="ltr"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                <label className="block text-xs font-bold text-slate-800 mb-1.5">
                   {editingUser ? 'رمز عبور جدید (اختیاری جهت تغییر)' : 'رمز عبور *'}
                 </label>
                 <input
@@ -452,20 +452,20 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                   value={userPassword}
                   onChange={(e) => setUserPassword(e.target.value)}
                   placeholder="••••••"
-                  className="w-full rounded-xl bg-slate-950 border border-slate-700 px-4 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 font-mono"
+                  className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono shadow-2xs"
                   dir="ltr"
                 />
               </div>
 
               {/* Position Assignment Dropdown */}
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                <label className="block text-xs font-bold text-slate-800 mb-1.5">
                   انتصاب سمت سازمانی در شورا *
                 </label>
                 <select
                   value={userPositionId}
                   onChange={(e) => setUserPositionId(e.target.value)}
-                  className="w-full rounded-xl bg-slate-950 border border-slate-700 px-4 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 cursor-pointer"
+                  className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2 text-sm text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 cursor-pointer shadow-2xs"
                 >
                   <option value="">-- بدون سمت --</option>
                   {positions.map((pos) => (
@@ -478,7 +478,7 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
 
               {/* Role */}
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                <label className="block text-xs font-bold text-slate-800 mb-1.5">
                   نقش دسترسی در سامانه
                 </label>
                 <div className="grid grid-cols-2 gap-3">
@@ -487,8 +487,8 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                     onClick={() => setUserRole('COUNCIL')}
                     className={`p-2.5 rounded-xl border text-xs font-bold transition cursor-pointer ${
                       userRole === 'COUNCIL'
-                        ? 'bg-cyan-950/60 border-cyan-500 text-cyan-300'
-                        : 'bg-slate-950 border-slate-800 text-slate-400'
+                        ? 'bg-indigo-50 border-indigo-500 text-indigo-800 shadow-2xs'
+                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
                     }`}
                   >
                     عضو شورا (کارتابل و رای)
@@ -498,8 +498,8 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                     onClick={() => setUserRole('ADMIN')}
                     className={`p-2.5 rounded-xl border text-xs font-bold transition cursor-pointer ${
                       userRole === 'ADMIN'
-                        ? 'bg-amber-950/60 border-amber-500 text-amber-300'
-                        : 'bg-slate-950 border-slate-800 text-slate-400'
+                        ? 'bg-amber-100 border-amber-400 text-amber-900 shadow-2xs'
+                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
                     }`}
                   >
                     مدیر جلسه (ثبت پروژه و ناظر آرا)
@@ -508,7 +508,7 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                <label className="block text-xs font-bold text-slate-800 mb-1.5">
                   شماره تماس
                 </label>
                 <input
@@ -516,7 +516,7 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                   value={userPhone}
                   onChange={(e) => setUserPhone(e.target.value)}
                   placeholder="0912xxxxxxx"
-                  className="w-full rounded-xl bg-slate-950 border border-slate-700 px-4 py-2 text-sm text-white focus:outline-none focus:border-cyan-500"
+                  className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 shadow-2xs"
                   dir="ltr"
                 />
               </div>
@@ -525,14 +525,14 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowUserModal(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-700 text-xs text-slate-300 hover:bg-slate-800"
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-xs text-slate-700 bg-white hover:bg-slate-100"
                 >
                   انصراف
                 </button>
                 <button
                   type="submit"
                   disabled={loading}
-                  className="px-5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-xs font-bold text-white shadow-md disabled:opacity-50"
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 disabled:opacity-50"
                 >
                   {loading ? 'در حال ذخیره...' : 'ذخیره کاربر'}
                 </button>
@@ -544,30 +544,30 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
 
       {/* MODAL: CREATE / EDIT POSITION */}
       {showPosModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-          <div className="w-full max-w-md rounded-3xl bg-slate-900 border border-slate-700/80 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between p-5 border-b border-slate-800 bg-slate-950/50">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <Briefcase className="w-5 h-5 text-cyan-400" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-slate-800">
+            <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/80">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Briefcase className="w-5 h-5 text-indigo-600" />
                 {editingPos ? 'ویرایش سمت سازمانی' : 'تعریف سمت سازمانی جدید'}
               </h3>
               <button
                 onClick={() => setShowPosModal(false)}
-                className="p-1 text-slate-400 hover:text-white"
+                className="p-1 text-slate-400 hover:text-slate-700"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {error && (
-              <div className="m-4 p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs">
+              <div className="m-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs">
                 {error}
               </div>
             )}
 
             <form onSubmit={handleSavePosition} className="p-5 space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                <label className="block text-xs font-bold text-slate-800 mb-1.5">
                   عنوان سمت *
                 </label>
                 <input
@@ -575,13 +575,13 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                   value={posTitle}
                   onChange={(e) => setPosTitle(e.target.value)}
                   placeholder="مثال: ناظر فنی و کیفی، مدیر تدارکات، نماینده مالی..."
-                  className="w-full rounded-xl bg-slate-950 border border-slate-700 px-4 py-2 text-sm text-white focus:outline-none focus:border-cyan-500"
+                  className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 shadow-2xs"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                <label className="block text-xs font-bold text-slate-800 mb-1.5">
                   شرح وظایف و حیطه اختیارات
                 </label>
                 <textarea
@@ -589,7 +589,7 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                   value={posDesc}
                   onChange={(e) => setPosDesc(e.target.value)}
                   placeholder="شرح وظایف محوله در جلسات شورا..."
-                  className="w-full rounded-xl bg-slate-950 border border-slate-700 px-4 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 leading-relaxed"
+                  className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 leading-relaxed shadow-2xs"
                 />
               </div>
 
@@ -597,14 +597,14 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowPosModal(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-700 text-xs text-slate-300 hover:bg-slate-800"
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-xs text-slate-700 bg-white hover:bg-slate-100"
                 >
                   انصراف
                 </button>
                 <button
                   type="submit"
                   disabled={loading}
-                  className="px-5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-xs font-bold text-white shadow-md disabled:opacity-50"
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 disabled:opacity-50"
                 >
                   {loading ? 'در حال ذخیره...' : 'ذخیره سمت'}
                 </button>

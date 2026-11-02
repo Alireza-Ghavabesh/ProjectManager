@@ -127,7 +127,7 @@ export default function App() {
 
   if (!authChecked) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-sm">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-500 text-sm">
         در حال بارگذاری سامانه شورا...
       </div>
     );
@@ -155,7 +155,7 @@ export default function App() {
   const pendingVotesCount = projects.filter((p) => !p.hasVoted).length;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex selection:bg-cyan-500 selection:text-white">
+    <div className="min-h-screen bg-slate-50 text-slate-800 flex selection:bg-indigo-600 selection:text-white">
       
       {/* Right-Hand Navigation Drawer with Permission-Based Dynamic Menu */}
       <Sidebar
@@ -190,13 +190,13 @@ export default function App() {
             <div className="space-y-6">
               
               {/* Top Action Bar */}
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 p-5 rounded-3xl bg-slate-900 border border-slate-800">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 p-5 rounded-3xl bg-white border border-slate-200/90 shadow-xs">
                 <div>
-                  <h2 className="text-lg font-extrabold text-white flex items-center gap-2">
-                    <Layers className="w-5 h-5 text-cyan-400" />
+                  <h2 className="text-lg font-extrabold text-slate-900 flex items-center gap-2">
+                    <Layers className="w-5 h-5 text-indigo-600" />
                     {currentUser.role === 'ADMIN' ? 'مدیریت و کارتابل مصوبات پروژه‌ها' : 'کارتابل ارزیابی پروژه‌های شورا'}
                   </h2>
-                  <p className="text-xs text-slate-400 mt-0.5">
+                  <p className="text-xs text-slate-500 mt-0.5">
                     {currentUser.role === 'ADMIN'
                       ? 'مشاهده وضعیت تجمیعی آرا، گردش کار سازمانی، ارجاعات و محاسبه خودکار اکثریت'
                       : 'مشاهده پروژه‌های ارجاع شده، ثبت رای محرمانه ۳ حالته (تایید، رد، اصلاح) و پیگیری گردش کار'}
@@ -207,10 +207,10 @@ export default function App() {
                   <button
                     onClick={refreshData}
                     disabled={loading}
-                    className="p-2.5 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-300 transition cursor-pointer"
+                    className="p-2.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 transition cursor-pointer"
                     title="بروزرسانی کارتابل"
                   >
-                    <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-cyan-400' : ''}`} />
+                    <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-indigo-600' : ''}`} />
                   </button>
 
                   {currentUser.role === 'ADMIN' && (
@@ -219,7 +219,7 @@ export default function App() {
                         setEditingProject(null);
                         setShowCreateModal(true);
                       }}
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-xs font-bold text-white shadow-lg shadow-cyan-600/25 transition cursor-pointer"
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
                     >
                       <Plus className="w-4 h-4" />
                       <span>ثبت پروژه جدید</span>
@@ -236,9 +236,9 @@ export default function App() {
                     placeholder="جستجو در نام پروژه، کد رهگیری، نوع ساختار..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full rounded-2xl bg-slate-900 border border-slate-800 px-4 py-2.5 pr-10 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition"
+                    className="w-full rounded-2xl bg-white border border-slate-200 px-4 py-2.5 pr-10 text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-xs"
                   />
-                  <Search className="w-4 h-4 text-slate-500 absolute right-3.5 top-3 pointer-events-none" />
+                  <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-3 pointer-events-none" />
                 </div>
 
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
@@ -246,8 +246,8 @@ export default function App() {
                     onClick={() => setStatusFilter('ALL')}
                     className={`px-3 py-1.5 rounded-xl font-semibold transition whitespace-nowrap cursor-pointer ${
                       statusFilter === 'ALL'
-                        ? 'bg-slate-800 text-white border border-slate-700 shadow-sm'
-                        : 'text-slate-400 hover:text-white'
+                        ? 'bg-slate-900 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                     }`}
                   >
                     همه پروژه‌ها ({projects.length})
@@ -258,8 +258,8 @@ export default function App() {
                       onClick={() => setStatusFilter('PENDING_MY_VOTE')}
                       className={`px-3 py-1.5 rounded-xl font-semibold transition whitespace-nowrap cursor-pointer ${
                         statusFilter === 'PENDING_MY_VOTE'
-                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                          : 'text-slate-400 hover:text-white'
+                          ? 'bg-amber-100 text-amber-800 border border-amber-300 font-bold'
+                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                       }`}
                     >
                       در انتظار رای من ({pendingVotesCount})
@@ -270,8 +270,8 @@ export default function App() {
                     onClick={() => setStatusFilter('APPROVED')}
                     className={`px-3 py-1.5 rounded-xl font-semibold transition whitespace-nowrap cursor-pointer ${
                       statusFilter === 'APPROVED'
-                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                        : 'text-slate-400 hover:text-white'
+                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                     }`}
                   >
                     اکثریت موافق (تایید)
@@ -281,8 +281,8 @@ export default function App() {
                     onClick={() => setStatusFilter('NEEDS_REVISION')}
                     className={`px-3 py-1.5 rounded-xl font-semibold transition whitespace-nowrap cursor-pointer ${
                       statusFilter === 'NEEDS_REVISION'
-                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                        : 'text-slate-400 hover:text-white'
+                        ? 'bg-amber-100 text-amber-800 border border-amber-300 font-bold'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                     }`}
                   >
                     اکثریت نیازمند اصلاح
@@ -292,8 +292,8 @@ export default function App() {
                     onClick={() => setStatusFilter('REJECTED')}
                     className={`px-3 py-1.5 rounded-xl font-semibold transition whitespace-nowrap cursor-pointer ${
                       statusFilter === 'REJECTED'
-                        ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                        : 'text-slate-400 hover:text-white'
+                        ? 'bg-rose-100 text-rose-800 border border-rose-300 font-bold'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                     }`}
                   >
                     اکثریت مخالف (رد)
@@ -303,9 +303,9 @@ export default function App() {
 
               {/* Projects List */}
               {filteredProjects.length === 0 ? (
-                <div className="p-12 text-center rounded-3xl bg-slate-900/60 border border-slate-800 text-slate-400 space-y-3">
-                  <Layers className="w-12 h-12 text-slate-700 mx-auto" />
-                  <h3 className="text-base font-bold text-white">پروژه‌ای با این مشخصات یافت نشد</h3>
+                <div className="p-12 text-center rounded-3xl bg-white border border-slate-200 text-slate-500 space-y-3 shadow-xs">
+                  <Layers className="w-12 h-12 text-slate-300 mx-auto" />
+                  <h3 className="text-base font-bold text-slate-800">پروژه‌ای با این مشخصات یافت نشد</h3>
                   <p className="text-xs text-slate-500 max-w-sm mx-auto">
                     می‌توانید فیلترهای جستجو را تغییر دهید یا با حساب کاربری مدیر، پروژه جدیدی را ثبت فرمایید.
                   </p>

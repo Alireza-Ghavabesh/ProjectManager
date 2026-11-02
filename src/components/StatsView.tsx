@@ -5,7 +5,6 @@ import {
   CheckCircle2, 
   AlertTriangle, 
   XCircle, 
-  Clock, 
   Users, 
   FileText, 
   ShieldCheck, 
@@ -26,7 +25,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
 }) => {
   if (!stats) {
     return (
-      <div className="p-8 text-center text-slate-400 text-xs">
+      <div className="p-8 text-center text-slate-500 text-xs">
         در حال بارگذاری آمار و تحلیل شورا...
       </div>
     );
@@ -41,13 +40,15 @@ export const StatsView: React.FC<StatsViewProps> = ({
     <div className="space-y-6">
       
       {/* Top Banner */}
-      <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 flex items-center justify-between">
+      <div className="p-6 rounded-3xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-bold text-white flex items-center gap-2">
-            <BarChart3 className="w-5 h-5 text-cyan-400" />
+          <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2.5">
+            <span className="p-2 rounded-xl bg-blue-50 text-blue-600">
+              <BarChart3 className="w-5 h-5" />
+            </span>
             داشبورد تحلیلی و گزارش مصوبات جلسات شورا
           </h2>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="text-xs text-slate-500 mt-1">
             بررسی آماری آرا، تجمیع رای اکثریت و گزارش پیشرفت مصوبات در کارتابل
           </p>
         </div>
@@ -57,56 +58,56 @@ export const StatsView: React.FC<StatsViewProps> = ({
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         
         {/* Total Projects */}
-        <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 flex flex-col justify-between">
-          <span className="text-xs text-slate-400 font-medium">کل پروژه‌ها</span>
+        <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col justify-between">
+          <span className="text-xs text-slate-500 font-medium">کل پروژه‌ها</span>
           <div className="flex items-baseline justify-between mt-2">
-            <span className="text-2xl font-extrabold text-white">{stats.totalProjects}</span>
-            <Layers className="w-4 h-4 text-cyan-400" />
+            <span className="text-2xl font-extrabold text-slate-900">{stats.totalProjects}</span>
+            <Layers className="w-4 h-4 text-blue-600" />
           </div>
         </div>
 
         {/* Approved by Majority */}
-        <div className="p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 flex flex-col justify-between">
-          <span className="text-xs text-emerald-400 font-medium">اکثریت موافق (تایید)</span>
+        <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 shadow-xs flex flex-col justify-between">
+          <span className="text-xs text-emerald-700 font-semibold">اکثریت موافق (تایید)</span>
           <div className="flex items-baseline justify-between mt-2">
-            <span className="text-2xl font-extrabold text-emerald-300">{stats.approvedMajority}</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <span className="text-2xl font-extrabold text-emerald-800">{stats.approvedMajority}</span>
+            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
           </div>
         </div>
 
         {/* Needs Revision by Majority */}
-        <div className="p-4 rounded-2xl bg-amber-950/40 border border-amber-500/30 flex flex-col justify-between">
-          <span className="text-xs text-amber-400 font-medium">اکثریت نیازمند اصلاح</span>
+        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 shadow-xs flex flex-col justify-between">
+          <span className="text-xs text-amber-700 font-semibold">اکثریت نیازمند اصلاح</span>
           <div className="flex items-baseline justify-between mt-2">
-            <span className="text-2xl font-extrabold text-amber-300">{stats.revisionMajority}</span>
-            <AlertTriangle className="w-4 h-4 text-amber-400" />
+            <span className="text-2xl font-extrabold text-amber-800">{stats.revisionMajority}</span>
+            <AlertTriangle className="w-4 h-4 text-amber-600" />
           </div>
         </div>
 
         {/* Rejected by Majority */}
-        <div className="p-4 rounded-2xl bg-rose-950/40 border border-rose-500/30 flex flex-col justify-between">
-          <span className="text-xs text-rose-400 font-medium">اکثریت مخالف (رد)</span>
+        <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 shadow-xs flex flex-col justify-between">
+          <span className="text-xs text-rose-700 font-semibold">اکثریت مخالف (رد)</span>
           <div className="flex items-baseline justify-between mt-2">
-            <span className="text-2xl font-extrabold text-rose-300">{stats.rejectedMajority}</span>
-            <XCircle className="w-4 h-4 text-rose-400" />
+            <span className="text-2xl font-extrabold text-rose-800">{stats.rejectedMajority}</span>
+            <XCircle className="w-4 h-4 text-rose-600" />
           </div>
         </div>
 
         {/* Total Votes Cast */}
-        <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 flex flex-col justify-between">
-          <span className="text-xs text-slate-400 font-medium">آرای ثبت شده</span>
+        <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col justify-between">
+          <span className="text-xs text-slate-500 font-medium">آرای ثبت شده</span>
           <div className="flex items-baseline justify-between mt-2">
-            <span className="text-2xl font-extrabold text-cyan-300">{stats.totalVotesCast}</span>
-            <FileText className="w-4 h-4 text-cyan-400" />
+            <span className="text-2xl font-extrabold text-blue-700">{stats.totalVotesCast}</span>
+            <FileText className="w-4 h-4 text-blue-600" />
           </div>
         </div>
 
         {/* Council Turnout */}
-        <div className="p-4 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 flex flex-col justify-between">
-          <span className="text-xs text-indigo-300 font-medium">نرخ مشارکت شورا</span>
+        <div className="p-4 rounded-2xl bg-indigo-50 border border-indigo-200 shadow-xs flex flex-col justify-between">
+          <span className="text-xs text-indigo-700 font-semibold">نرخ مشارکت شورا</span>
           <div className="flex items-baseline justify-between mt-2">
-            <span className="text-2xl font-extrabold text-indigo-300">{participationRate}%</span>
-            <Users className="w-4 h-4 text-indigo-400" />
+            <span className="text-2xl font-extrabold text-indigo-900">{participationRate}%</span>
+            <Users className="w-4 h-4 text-indigo-600" />
           </div>
         </div>
 
@@ -115,45 +116,45 @@ export const StatsView: React.FC<StatsViewProps> = ({
       {/* Rules and Workflow Card */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         
-        <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800">
-          <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-cyan-400" />
+        <div className="p-6 rounded-3xl bg-white border border-slate-200 shadow-sm">
+          <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-blue-600" />
             اصول رای‌گیری و محرمانگی سامانه شورا
           </h3>
-          <ul className="space-y-3 text-xs text-slate-300 leading-relaxed">
+          <ul className="space-y-3 text-xs text-slate-600 leading-relaxed">
             <li className="flex items-start gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0 mt-1.5" />
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-600 shrink-0 mt-1.5" />
               <span><strong>محرمانگی کامل:</strong> هیچ‌یک از اعضای شورا در کارتابل خود قادر به دیدن رای یا شرح ادله سایر اعضا نیستند؛ نظرات مستقیماً و منحصراً در پنل مدیر جلسه قرار می‌گیرد.</span>
             </li>
             <li className="flex items-start gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 mt-1.5" />
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0 mt-1.5" />
               <span><strong>قاعده رای اکثریت:</strong> نتیجه نهایی هر پروژه به‌طور سیستمی بر پایه بیشترین تعداد آرا از میان ۳ حالت (تایید، رد، نیاز به اصلاح) تعیین می‌گردد.</span>
             </li>
             <li className="flex items-start gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 mt-1.5" />
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 shrink-0 mt-1.5" />
               <span><strong>شرح اجباری برای اصلاحات:</strong> هرگاه عضوی گزینه «نیاز به اصلاح» را برگزیند، سامانه ملزم می‌کند که علل فنی، مالی یا محتوایی را قید نماید.</span>
             </li>
           </ul>
         </div>
 
-        <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800">
-          <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
-            <PieChart className="w-4 h-4 text-indigo-400" />
+        <div className="p-6 rounded-3xl bg-white border border-slate-200 shadow-sm">
+          <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center gap-2">
+            <PieChart className="w-4 h-4 text-indigo-600" />
             ترکیب اعضای فعال شورا و سمت‌ها
           </h3>
           <div className="space-y-2">
             {users.map((u) => (
               <div
                 key={u.id}
-                className="flex items-center justify-between p-2 rounded-xl bg-slate-950/60 border border-slate-800/80 text-xs"
+                className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs"
               >
                 <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-full bg-slate-800 text-cyan-400 font-bold text-[10px] flex items-center justify-center">
+                  <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 font-bold text-[10px] flex items-center justify-center">
                     {u.name.charAt(0)}
                   </div>
-                  <span className="font-semibold text-white">{u.name}</span>
+                  <span className="font-semibold text-slate-800">{u.name}</span>
                 </div>
-                <span className="text-[11px] text-cyan-400 font-medium">
+                <span className="text-[11px] text-blue-700 font-semibold bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
                   {u.positionTitle || 'بدون سمت'}
                 </span>
               </div>

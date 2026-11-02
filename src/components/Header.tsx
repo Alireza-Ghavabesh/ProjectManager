@@ -55,7 +55,7 @@ export const Header: React.FC<HeaderProps> = ({
   const Icon = currentInfo.icon;
 
   return (
-    <header className="sticky top-0 z-30 bg-slate-900/90 backdrop-blur-xl border-b border-slate-800">
+    <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-xl border-b border-slate-200/90 shadow-xs">
       <div className="px-4 sm:px-6 lg:px-8 py-3.5 sm:py-4 flex items-center justify-between">
         
         {/* Left / Center: Current Active View Title & Breadcrumb */}
@@ -64,21 +64,21 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Mobile hamburger button to open right sidebar */}
           <button
             onClick={onOpenMobileMenu}
-            className="md:hidden p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer"
+            className="md:hidden p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer"
             title="باز کردن منوی ناوبری"
           >
             <Menu className="w-5 h-5" />
           </button>
 
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-cyan-600/15 text-cyan-400 border border-cyan-500/25 flex items-center justify-center">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-indigo-50 text-indigo-600 border border-indigo-200/60 flex items-center justify-center">
               <Icon className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
             <div>
-              <h1 className="text-sm sm:text-base font-extrabold text-white leading-tight">
+              <h1 className="text-sm sm:text-base font-extrabold text-slate-900 leading-tight">
                 {currentInfo.title}
               </h1>
-              <p className="text-[11px] text-slate-400 hidden sm:block">
+              <p className="text-[11px] text-slate-500 hidden sm:block">
                 {currentInfo.desc}
               </p>
             </div>
@@ -89,20 +89,20 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center gap-2 sm:gap-3">
           <PWAInstallButton />
 
-          <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-slate-950/70 border border-slate-800">
-            <div className="w-7 h-7 rounded-xl bg-cyan-600/30 text-cyan-300 font-bold text-xs flex items-center justify-center">
+          <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-slate-50 border border-slate-200/80">
+            <div className="w-7 h-7 rounded-xl bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center">
               {currentUser.name.charAt(0)}
             </div>
             <div className="text-right hidden sm:block">
-              <div className="text-xs font-bold text-white flex items-center gap-1">
+              <div className="text-xs font-bold text-slate-900 flex items-center gap-1">
                 <span>{currentUser.name}</span>
                 {currentUser.role === 'ADMIN' ? (
-                  <span className="text-[8px] px-1 bg-amber-500/20 text-amber-300 rounded font-semibold">ادمین</span>
+                  <span className="text-[8px] px-1 bg-amber-100 text-amber-800 rounded font-bold">ادمین</span>
                 ) : (
-                  <span className="text-[8px] px-1 bg-cyan-500/20 text-cyan-300 rounded font-semibold">شورا</span>
+                  <span className="text-[8px] px-1 bg-indigo-100 text-indigo-700 rounded font-semibold">شورا</span>
                 )}
               </div>
-              <div className="text-[10px] text-cyan-400 font-medium">
+              <div className="text-[10px] text-indigo-600 font-medium">
                 {currentUser.positionTitle || 'عضو شورا'}
               </div>
             </div>
