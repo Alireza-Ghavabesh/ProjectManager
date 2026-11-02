@@ -557,14 +557,14 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
             </span>
             <h2 className="text-lg font-bold text-slate-900">
               {viewMode === 'list' 
-                ? 'مدیریت انواع و ساختارهای پروژه و چارت اختصاصی'
+                ? 'مدیریت ساختار سازمانی'
                 : `چارت سازمانی، سمت‌ها و پرسنل ساختار: ${currentStructureDetail?.title || ''}`
               }
             </h2>
           </div>
           <p className="text-xs text-slate-500 max-w-2xl leading-relaxed">
             {viewMode === 'list'
-              ? 'تعریف پویا و بدون کدنویسی انواع ساختار تولید، طراحی درخت سمت‌های هر ساختار، انتصاب پرسنل و تنظیم دسترسی‌های فردی بدون محدودیت استاتیک.'
+              ? 'تعریف ساختارهای سازمانی (مانند اداری، مالی، ماموریت، مرخصی و...)، چینش درختی سمت‌ها، انتصاب پرسنل و تنظیم دسترسی‌های فردی.'
               : 'طراحی درخت سلسله‌مراتب سمت‌ها در این ساختار، انتصاب کاربران به هر سمت و ویرایش مستقیم سطوح دسترسی هر فرد.'
             }
           </p>
@@ -606,7 +606,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
                 className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-sm transition cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
-                <span>تعریف نوع و ساختار جدید</span>
+                <span>تعریف ساختار سازمانی جدید</span>
               </button>
             )
           )}
@@ -734,17 +734,13 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
                       </div>
 
                       {/* Stats Badges */}
-                      <div className="grid grid-cols-3 gap-1.5 pt-2 mt-2 border-t border-slate-100 text-center">
-                        <div className="p-2 rounded-xl bg-slate-50 border border-slate-100">
-                          <div className="text-[10px] text-slate-400">پروژه‌ها</div>
-                          <div className="text-xs font-bold text-slate-800">{struct.projectCount || 0}</div>
-                        </div>
+                      <div className="grid grid-cols-2 gap-2 pt-2 mt-2 border-t border-slate-100 text-center">
                         <div className="p-2 rounded-xl bg-indigo-50/60 border border-indigo-100">
-                          <div className="text-[10px] text-indigo-500">سمت‌ها</div>
+                          <div className="text-[10px] text-indigo-500 font-medium">سمت‌های ساختار</div>
                           <div className="text-xs font-bold text-indigo-700">{struct.positionCount || 0}</div>
                         </div>
                         <div className="p-2 rounded-xl bg-emerald-50/60 border border-emerald-100">
-                          <div className="text-[10px] text-emerald-600">پرسنل</div>
+                          <div className="text-[10px] text-emerald-600 font-medium">پرسنل منصوب‌شده</div>
                           <div className="text-xs font-bold text-emerald-700">{struct.userCount || 0}</div>
                         </div>
                       </div>
@@ -798,7 +794,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
             <div className="p-8 text-center bg-white rounded-2xl border border-slate-200">
               <AlertCircle className="w-8 h-8 text-slate-300 mx-auto mb-2" />
               <p className="text-sm font-semibold text-slate-600">ساختاری با مشخصات فوق یافت نشد.</p>
-              <p className="text-xs text-slate-400 mt-1">می‌توانید با زدن دکمه «تعریف نوع و ساختار جدید» گزینه مورد نظرتان را اضافه کنید.</p>
+              <p className="text-xs text-slate-400 mt-1">می‌توانید با زدن دکمه «تعریف ساختار سازمانی جدید» گزینه مورد نظرتان را اضافه کنید.</p>
             </div>
           )}
 
@@ -900,10 +896,10 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
                 </span>
                 <div>
                   <h3 className="text-base font-bold text-slate-900">
-                    {editingStructure ? 'ویرایش مشخصات ساختار' : 'تعریف نوع و ساختار جدید پروژه'}
+                    {editingStructure ? 'ویرایش مشخصات ساختار سازمانی' : 'تعریف ساختار سازمانی جدید'}
                   </h3>
                   <p className="text-[11px] text-slate-500">
-                    تعریف بدون کدنویسی و اتصال به گردش کار
+                    تعریف ساختار سازمانی و چیدمان درختی سمت‌ها و پرسنل
                   </p>
                 </div>
               </div>
@@ -924,14 +920,14 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
             <form onSubmit={handleSaveStructure} className="p-5 space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  عنوان ساختار / نوع تولید *
+                  عنوان ساختار سازمانی *
                 </label>
                 <input
                   type="text"
                   required
                   value={structTitle}
                   onChange={(e) => setStructTitle(e.target.value)}
-                  placeholder="مثال: سریال داستانی الف، برنامه زنده، مستند و..."
+                  placeholder="مثال: ساختار ماموریت‌ها، ساختار مرخصی و رفاهی، ساختار مالی و بودجه..."
                   className="w-full px-3.5 py-2.5 text-xs sm:text-sm rounded-xl bg-slate-50 border border-slate-200 text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white transition"
                 />
               </div>
@@ -945,7 +941,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
                     type="text"
                     value={structCode}
                     onChange={(e) => setStructCode(e.target.value)}
-                    placeholder="مثال: DRAMA_SERIES"
+                    placeholder="مثال: MISSION_AFFAIRS"
                     className="w-full px-3.5 py-2 text-xs rounded-xl bg-slate-50 border border-slate-200 text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white transition text-left"
                     dir="ltr"
                   />
@@ -953,13 +949,13 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    دسته‌بندی کلی
+                    حوزه / دسته‌بندی
                   </label>
                   <input
                     type="text"
                     value={structCategory}
                     onChange={(e) => setStructCategory(e.target.value)}
-                    placeholder="تولید نمایشی، استودیویی..."
+                    placeholder="امور اداری، منابع انسانی، مالی..."
                     className="w-full px-3.5 py-2 text-xs rounded-xl bg-slate-50 border border-slate-200 text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white transition"
                   />
                 </div>
@@ -987,7 +983,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
                   className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
                 />
                 <label htmlFor="structActiveCheckbox" className="text-xs text-slate-700 font-semibold cursor-pointer">
-                  این ساختار در سامانه فعال بوده و در زمان ثبت پروژه قابل انتخاب باشد.
+                  این ساختار سازمانی در سامانه فعال باشد.
                 </label>
               </div>
 

@@ -32,7 +32,7 @@ export const Header: React.FC<HeaderProps> = ({
       case 'projects':
         return { title: 'کارتابل و پروژه‌های شورا', icon: Layers, desc: 'ارزیابی مستقیم تمام طرح‌ها، رای‌گیری ۳ حالته اعضا و تجمیع آرا' };
       case 'structures':
-        return { title: 'مدیریت ساختارهای سازمانی', icon: FolderTree, desc: 'تعریف ساختارها (ماموریت، مرخصی، مالی)، چیدمان درختی سمت‌ها و انتصاب پرسنل' };
+        return { title: 'مدیریت ساختار سازمانی', icon: FolderTree, desc: 'تعریف ساختارها (مانند ماموریت، مرخصی، مالی)، چیدمان درختی سمت‌ها و انتصاب پرسنل' };
       case 'org':
         return { title: 'چارت و سمت‌های سازمانی', icon: Network, desc: 'کتابخانه سمت‌های سازمان، سطوح سلسله‌مراتب و ماتریس دسترسی‌ها' };
       case 'users':

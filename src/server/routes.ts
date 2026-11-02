@@ -796,12 +796,12 @@ apiRouter.get('/project-structures', (_req: Request, res: Response) => {
 apiRouter.post('/project-structures', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
   if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'projects.fields.manage'))) {
-    return res.status(403).json({ error: 'شما مجاز به تعریف انواع و ساختارهای جدید پروژه نیستید.' });
+    return res.status(403).json({ error: 'شما مجاز به تعریف ساختار سازمانی جدید نیستید.' });
   }
 
   const { title, code, description, category, defaultWorkflowId, orderIndex, isActive } = req.body;
   if (!title || !title.trim()) {
-    return res.status(400).json({ error: 'عنوان نوع و ساختار پروژه الزامی است.' });
+    return res.status(400).json({ error: 'عنوان ساختار سازمانی الزامی است.' });
   }
 
   const id = `pstr-${randomUUID().substring(0, 8)}`;
@@ -816,7 +816,7 @@ apiRouter.post('/project-structures', (req: Request, res: Response) => {
       title.trim(),
       code ? code.trim() : null,
       description || '',
-      category || 'تولید تلویزیونی',
+      category || 'امور اداری و سازمانی',
       defaultWorkflowId || null,
       orderIndex || 0,
       isActive !== undefined ? (isActive ? 1 : 0) : 1,
@@ -833,16 +833,16 @@ apiRouter.post('/project-structures', (req: Request, res: Response) => {
     res.json({ success: true, structure: created });
   } catch (err: any) {
     if (err.message && err.message.includes('UNIQUE')) {
-      return res.status(400).json({ error: 'این ساختار یا عنوان پروژه قبلاً ثبت شده است.' });
+      return res.status(400).json({ error: 'این ساختار سازمانی قبلاً ثبت شده است.' });
     }
-    res.status(500).json({ error: 'خطا در ثبت ساختار جدید پروژه.' });
+    res.status(500).json({ error: 'خطا در ثبت ساختار سازمانی جدید.' });
   }
 });
 
 apiRouter.put('/project-structures/:id', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
   if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'projects.fields.manage'))) {
-    return res.status(403).json({ error: 'شما مجاز به ویرایش ساختار پروژه نیستید.' });
+    return res.status(403).json({ error: 'شما مجاز به ویرایش این ساختار سازمانی نیستید.' });
   }
 
   const { id } = req.params;
@@ -895,14 +895,14 @@ apiRouter.put('/project-structures/:id', (req: Request, res: Response) => {
     if (err.message && err.message.includes('UNIQUE')) {
       return res.status(400).json({ error: 'این عنوان ساختار تکراری است.' });
     }
-    res.status(500).json({ error: 'خطا در ویرایش ساختار پروژه.' });
+    res.status(500).json({ error: 'خطا در ویرایش ساختار سازمانی.' });
   }
 });
 
 apiRouter.delete('/project-structures/:id', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
   if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'projects.fields.manage'))) {
-    return res.status(403).json({ error: 'شما مجاز به حذف ساختار پروژه نیستید.' });
+    return res.status(403).json({ error: 'شما مجاز به حذف این ساختار سازمانی نیستید.' });
   }
 
   const { id } = req.params;

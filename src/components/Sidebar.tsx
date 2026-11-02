@@ -66,7 +66,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       items: [
         {
           id: 'structures' as const,
-          title: 'ساختارهای سازمانی',
+          title: 'مدیریت ساختار سازمانی',
           shortTitle: 'ساختارها',
           icon: FolderTree,
           badge: null,
