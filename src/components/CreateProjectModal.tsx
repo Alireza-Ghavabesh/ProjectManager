@@ -2,10 +2,10 @@ import React, { useState, useRef, useEffect } from 'react';
 import { DynamicField, Project, ProjectAttachment } from '../types';
 import { api, fileToBase64, formatFileSize } from '../services/api';
 import { ProjectAttachments } from './ProjectAttachments';
+import { PersianDatePicker } from './PersianDatePicker';
 import { 
   X, 
   Calendar, 
-  MapPin, 
   Coins, 
   FileText, 
   Minus, 
@@ -38,7 +38,6 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     editProject?.code || `PRJ-1403-${Math.floor(10 + Math.random() * 90)}`
   );
   const [productionType, setProductionType] = useState(editProject?.productionType || 'طرح عمومی شورا');
-  const [location, setLocation] = useState(editProject?.location || '');
   const [deadline, setDeadline] = useState(editProject?.deadline || '۱۴۰۳/۰۹/۳۰');
   const [budgetEstimated, setBudgetEstimated] = useState(editProject?.budgetEstimated || '');
   const [description, setDescription] = useState(editProject?.description || '');
@@ -130,7 +129,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         title: title.trim(),
         code: code.trim(),
         productionType: productionType.trim() || 'طرح عمومی شورا',
-        location: location.trim(),
+        location: editProject?.location || '',
         deadline: deadline.trim(),
         budgetEstimated: budgetEstimated.trim(),
         description: description.trim(),
@@ -168,21 +167,21 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs overflow-y-auto">
-      <div className="w-full max-w-3xl rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden my-8 animate-in fade-in zoom-in-95 duration-150 text-slate-800">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 md:p-6 bg-slate-900/50 backdrop-blur-xs">
+      <div className="w-full max-w-4xl max-h-[90vh] flex flex-col rounded-3xl bg-white border border-slate-200/90 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-slate-800">
         
-        {/* Modal Header */}
-        <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/80">
+        {/* Modal Header (Fixed at top) */}
+        <div className="shrink-0 flex items-center justify-between px-5 sm:px-6 py-3.5 border-b border-slate-100 bg-slate-50/90">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 border border-indigo-200/60 flex items-center justify-center">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-indigo-50 text-indigo-600 border border-indigo-200/60 flex items-center justify-center shrink-0">
               <Layers className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base sm:text-lg font-bold text-slate-900">
+              <h3 className="text-base sm:text-lg font-bold text-slate-900 leading-tight">
                 {editProject ? 'ویرایش مشخصات پروژه' : 'ثبت پروژه جدید در شورا'}
               </h3>
-              <p className="text-xs text-slate-500">
-                طرح پس از ثبت مستقیماً در کارتابل ارزیابی تمامی اعضای شورا قرار گرفته و اخذ آرا آغاز می‌شود.
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                طرح پس از ثبت مستقیماً در کارتابل ارزیابی تمامی اعضای شورا قرار می‌گیرد.
               </p>
             </div>
           </div>
@@ -194,288 +193,282 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
           </button>
         </div>
 
-        {error && (
-          <div className="m-5 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs">
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="p-5 sm:p-6 space-y-6">
+        <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0 overflow-hidden">
           
-          {/* General Project Info */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Scrollable Form Body */}
+          <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-4 sm:py-5 space-y-5">
             
-            {/* Title */}
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-bold text-slate-800 mb-1.5">
-                نام و عنوان پروژه *
-              </label>
-              <input
-                type="text"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="مثال: مستند تاریخی شکوه زاگرس، برنامه ویژه جوانان..."
-                className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs"
-                required
-              />
-            </div>
-
-            {/* Code */}
-            <div>
-              <label className="block text-xs font-bold text-slate-800 mb-1.5">
-                کد رهگیری پروژه
-              </label>
-              <input
-                type="text"
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition font-mono shadow-2xs"
-                dir="ltr"
-              />
-            </div>
-
-            {/* Category / Subject */}
-            <div>
-              <label className="block text-xs font-bold text-slate-800 mb-1.5">
-                موضوع / زمینه طرح
-              </label>
-              <input
-                type="text"
-                value={productionType}
-                onChange={(e) => setProductionType(e.target.value)}
-                placeholder="مثال: تولید نمایشی، استودیویی، مستند، اداری..."
-                className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2.5 text-sm text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs"
-              />
-            </div>
-
-            {/* Location */}
-            <div>
-              <label className="block text-xs font-bold text-slate-800 mb-1.5 flex items-center gap-1.5">
-                <MapPin className="w-3.5 h-3.5 text-slate-500" />
-                محل / استودیو / لوکیشن اجرا
-              </label>
-              <input
-                type="text"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                placeholder="مثال: استودیو شماره یک، استان اصفهان..."
-                className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs"
-              />
-            </div>
-
-            {/* Deadline */}
-            <div>
-              <label className="block text-xs font-bold text-slate-800 mb-1.5 flex items-center gap-1.5">
-                <Calendar className="w-3.5 h-3.5 text-slate-500" />
-                مهلت بررسی و اعلام نظر نهایی
-              </label>
-              <input
-                type="text"
-                value={deadline}
-                onChange={(e) => setDeadline(e.target.value)}
-                placeholder="مثال: ۱۴۰۳/۰۹/۳۰"
-                className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs text-left"
-                dir="ltr"
-              />
-            </div>
-
-            {/* Budget */}
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-bold text-slate-800 mb-1.5 flex items-center gap-1.5">
-                <Coins className="w-3.5 h-3.5 text-slate-500" />
-                برآورد بودجه پیشنهادی
-              </label>
-              <input
-                type="text"
-                value={budgetEstimated}
-                onChange={(e) => setBudgetEstimated(e.target.value)}
-                placeholder="مثال: ۷۵۰٬۰۰۰٬۰۰۰ تومان"
-                className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs"
-              />
-            </div>
-
-            {/* Description */}
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-bold text-slate-800 mb-1.5 flex items-center gap-1.5">
-                <FileText className="w-3.5 h-3.5 text-slate-500" />
-                خلاصه طرح و اهداف پروژه
-              </label>
-              <textarea
-                rows={3}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="توضیحات کلی درباره اهداف، گروه مخاطب، ویژگی‌های فنی یا محتوایی..."
-                className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition resize-none shadow-2xs leading-relaxed"
-              />
-            </div>
-
-          </div>
-
-          {/* Dynamic Requirements Fields Section */}
-          <div className="pt-4 border-t border-slate-200">
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <h4 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-                  <Users className="w-4 h-4 text-indigo-600" />
-                  <span>نیازمندی‌ها و عوامل اجرایی طرح</span>
-                </h4>
-                <p className="text-xs text-slate-500">
-                  فیلدهای تعریف‌شده به صورت پویا در بخش تنظیمات
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-              {dynamicFields.map((field) => (
-                <div
-                  key={field.key}
-                  className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/90 flex flex-col justify-between hover:border-slate-300 transition"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-bold text-slate-800 truncate">
-                      {field.name}
-                    </span>
-                    <span className="text-[11px] text-slate-400">
-                      {field.unit || 'نفر'}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleDecrement(field.key)}
-                      className="w-8 h-8 rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 flex items-center justify-center transition cursor-pointer shadow-2xs"
-                    >
-                      <Minus className="w-3.5 h-3.5" />
-                    </button>
-                    <input
-                      type="number"
-                      min="0"
-                      value={requirements[field.key] || '0'}
-                      onChange={(e) => handleRequirementChange(field.key, e.target.value)}
-                      className="flex-1 text-center font-bold text-sm bg-white border border-slate-200 rounded-xl py-1.5 text-slate-900 focus:outline-none focus:border-indigo-500 shadow-2xs"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => handleIncrement(field.key)}
-                      className="w-8 h-8 rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 flex items-center justify-center transition cursor-pointer shadow-2xs"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Project Attachments Section */}
-          <div className="pt-4 border-t border-slate-200">
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <h4 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-                  <Paperclip className="w-4 h-4 text-indigo-600" />
-                  <span>اسناد و فایل‌های پیوست پروژه</span>
-                </h4>
-                <p className="text-xs text-slate-500">
-                  بارگذاری فیلم‌نامه، سیناپس، برآورد مالی یا فایل‌های اجرایی (حداکثر ۳۰ مگابایت)
-                </p>
-              </div>
-            </div>
-
-            {/* If editing existing project: Show ProjectAttachments component for full management */}
-            {editProject && (
-              <div className="mb-4 p-4 rounded-2xl bg-slate-50 border border-slate-200">
-                <ProjectAttachments
-                  projectId={editProject.id}
-                  projectTitle={editProject.title}
-                  attachments={existingAttachments}
-                  canManage={true}
-                  onAttachmentChange={fetchAttachments}
-                />
+            {error && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs">
+                {error}
               </div>
             )}
 
-            {/* Add more files or initial files picker */}
-            <div>
-              <input
-                ref={newFileInputRef}
-                type="file"
-                multiple
-                className="hidden"
-                onChange={handleFileSelect}
-              />
-
-              <div
-                onClick={() => newFileInputRef.current?.click()}
-                className="p-4 rounded-2xl border-2 border-dashed border-slate-200 hover:border-indigo-400 bg-slate-50/70 hover:bg-indigo-50/30 transition cursor-pointer text-center"
-              >
-                <div className="flex flex-col items-center justify-center gap-1 text-slate-600">
-                  <Upload className="w-5 h-5 text-indigo-600" />
-                  <span className="text-xs font-bold text-slate-800">
-                    {editProject ? 'افزودن فایل‌های پیوست جدید به این پروژه' : 'انتخاب یا رها کردن فایل‌های پروژه'}
-                  </span>
-                  <span className="text-[10px] text-slate-400">
-                    فرمت‌های PDF، Word، Excel، عکس یا ZIP
-                  </span>
-                </div>
+            {/* General Project Info - Responsive 3-column Grid on Desktop */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+              
+              {/* Title */}
+              <div className="md:col-span-2 lg:col-span-2">
+                <label className="block text-xs font-bold text-slate-800 mb-1">
+                  نام و عنوان پروژه *
+                </label>
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="مثال: مستند تاریخی شکوه زاگرس، برنامه ویژه جوانان..."
+                  className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs"
+                  required
+                />
               </div>
 
-              {/* Selected files pending upload */}
-              {selectedFiles.length > 0 && (
-                <div className="mt-3 space-y-2">
-                  <div className="text-[11px] font-bold text-slate-700">
-                    فایل‌های آماده بارگذاری ({selectedFiles.length}):
-                  </div>
-                  {selectedFiles.map((file, idx) => (
+              {/* Code */}
+              <div>
+                <label className="block text-xs font-bold text-slate-800 mb-1">
+                  کد رهگیری پروژه
+                </label>
+                <input
+                  type="text"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition font-mono shadow-2xs"
+                  dir="ltr"
+                />
+              </div>
+
+              {/* Category / Subject */}
+              <div>
+                <label className="block text-xs font-bold text-slate-800 mb-1">
+                  موضوع / زمینه طرح
+                </label>
+                <input
+                  type="text"
+                  value={productionType}
+                  onChange={(e) => setProductionType(e.target.value)}
+                  placeholder="مثال: تولید نمایشی، استودیویی، مستند..."
+                  className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs"
+                />
+              </div>
+
+              {/* Deadline - Persian Jalali Date Picker */}
+              <div>
+                <PersianDatePicker
+                  value={deadline}
+                  onChange={setDeadline}
+                  label="مهلت بررسی و اعلام نظر"
+                  placeholder="انتخاب تاریخ شمسی..."
+                />
+              </div>
+
+              {/* Budget */}
+              <div>
+                <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1.5">
+                  <Coins className="w-3.5 h-3.5 text-slate-500" />
+                  برآورد بودجه پیشنهادی
+                </label>
+                <input
+                  type="text"
+                  value={budgetEstimated}
+                  onChange={(e) => setBudgetEstimated(e.target.value)}
+                  placeholder="مثال: ۷۵۰٬۰۰۰٬۰۰۰ تومان"
+                  className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs"
+                />
+              </div>
+
+              {/* Description */}
+              <div className="md:col-span-2 lg:col-span-3">
+                <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-slate-500" />
+                  خلاصه طرح و اهداف پروژه
+                </label>
+                <textarea
+                  rows={2}
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="توضیحات کلی درباره اهداف، ویژگی‌های فنی یا محتوایی..."
+                  className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-1.5 text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition resize-none shadow-2xs leading-relaxed"
+                />
+              </div>
+
+            </div>
+
+            {/* Dynamic Requirements Fields Section */}
+            {dynamicFields.length > 0 && (
+              <div className="pt-3 border-t border-slate-200">
+                <div className="flex items-center justify-between mb-2.5">
+                  <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>نیازمندی‌ها و عوامل اجرایی طرح</span>
+                  </h4>
+                  <span className="text-[11px] text-slate-400">
+                    تعریف‌شده در تنظیمات فیلدهای پویا
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
+                  {dynamicFields.map((field) => (
                     <div
-                      key={idx}
-                      className="p-2.5 rounded-xl bg-indigo-50/60 border border-indigo-200 flex items-center justify-between gap-2 text-xs"
+                      key={field.key}
+                      className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/90 flex flex-col justify-between hover:border-slate-300 transition"
                     >
-                      <div className="flex items-center gap-2 truncate">
-                        <File className="w-4 h-4 text-indigo-600 shrink-0" />
-                        <span className="font-bold text-slate-800 truncate" dir="ltr">{file.name}</span>
-                        <span className="text-[10px] text-slate-500 font-mono">({formatFileSize(file.size)})</span>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs font-bold text-slate-800 truncate" title={field.name}>
+                          {field.name}
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          {field.unit || 'نفر'}
+                        </span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveSelectedFile(idx)}
-                        className="p-1 rounded-lg text-rose-500 hover:bg-rose-100 transition cursor-pointer"
-                        title="حذف از لیست"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleDecrement(field.key)}
+                          className="w-7 h-7 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 flex items-center justify-center transition cursor-pointer shadow-2xs"
+                        >
+                          <Minus className="w-3 h-3" />
+                        </button>
+                        <input
+                          type="number"
+                          min="0"
+                          value={requirements[field.key] || '0'}
+                          onChange={(e) => handleRequirementChange(field.key, e.target.value)}
+                          className="flex-1 text-center font-bold text-xs bg-white border border-slate-200 rounded-lg py-1 text-slate-900 focus:outline-none focus:border-indigo-500 shadow-2xs"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleIncrement(field.key)}
+                          className="w-7 h-7 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 flex items-center justify-center transition cursor-pointer shadow-2xs"
+                        >
+                          <Plus className="w-3 h-3" />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Project Attachments Section */}
+            <div className="pt-3 border-t border-slate-200">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                  <Paperclip className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>اسناد و فایل‌های پیوست پروژه</span>
+                </h4>
+                <span className="text-[10px] text-slate-400">
+                  PDF، Word، Excel یا تصاویر تا ۳۰ مگابایت
+                </span>
+              </div>
+
+              {/* If editing existing project: Show ProjectAttachments component for full management */}
+              {editProject && (
+                <div className="mb-3 p-3 rounded-2xl bg-slate-50 border border-slate-200">
+                  <ProjectAttachments
+                    projectId={editProject.id}
+                    projectTitle={editProject.title}
+                    attachments={existingAttachments}
+                    canManage={true}
+                    onAttachmentChange={fetchAttachments}
+                  />
+                </div>
               )}
+
+              {/* Add more files or initial files picker */}
+              <div>
+                <input
+                  ref={newFileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={handleFileSelect}
+                />
+
+                <div
+                  onClick={() => newFileInputRef.current?.click()}
+                  className="px-4 py-2.5 rounded-2xl border border-dashed border-slate-300 hover:border-indigo-500 bg-slate-50/70 hover:bg-indigo-50/30 transition cursor-pointer flex items-center justify-between gap-3 text-slate-600"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="p-1.5 rounded-xl bg-indigo-100/70 text-indigo-600 shrink-0">
+                      <Upload className="w-4 h-4" />
+                    </span>
+                    <div>
+                      <div className="text-xs font-bold text-slate-800">
+                        {editProject ? 'افزودن فایل‌های پیوست جدید به این پروژه' : 'انتخاب فایل‌های پیوست طرح (کلیک یا انتخاب فایل)'}
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        فیلم‌نامه، طرح توجیهی، بودجه‌بندی یا مستندات فنی
+                      </div>
+                    </div>
+                  </div>
+                  <span className="shrink-0 px-3 py-1 rounded-xl bg-white border border-slate-200 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 transition">
+                    انتخاب فایل
+                  </span>
+                </div>
+
+                {/* Selected files pending upload */}
+                {selectedFiles.length > 0 && (
+                  <div className="mt-2.5 space-y-1.5">
+                    <div className="text-[11px] font-bold text-slate-700">
+                      فایل‌های انتخاب‌شده ({selectedFiles.length}):
+                    </div>
+                    {selectedFiles.map((file, idx) => (
+                      <div
+                        key={idx}
+                        className="p-2 rounded-xl bg-indigo-50/60 border border-indigo-200 flex items-center justify-between gap-2 text-xs"
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <File className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                          <span className="font-bold text-slate-800 truncate" dir="ltr">{file.name}</span>
+                          <span className="text-[10px] text-slate-500 font-mono">({formatFileSize(file.size)})</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveSelectedFile(idx)}
+                          className="p-1 rounded-lg text-rose-500 hover:bg-rose-100 transition cursor-pointer"
+                          title="حذف از لیست"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
+
+            {/* Cartable Distribution Info Banner */}
+            <div className="p-3 rounded-2xl bg-indigo-50/70 border border-indigo-200/70 text-xs text-indigo-900 flex items-center gap-2.5 leading-relaxed">
+              <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0" />
+              <span className="text-[11px] leading-relaxed">
+                <strong>توزیع هوشمند:</strong> این طرح بلافاصله پس از ثبت در کارتابل ارزیابی تمامی اعضای شورا برای ثبت آرای سه‌حالته قرار می‌گیرد.
+              </span>
+            </div>
+
           </div>
 
-          {/* Cartable Distribution Info Banner */}
-          <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-200 text-xs text-indigo-900 flex items-start gap-2.5 leading-relaxed">
-            <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
-            <div>
-              <strong className="block font-bold">توزیع خودکار در کارتابل شورا:</strong>
-              پس از ثبت، این طرح فوراً در کارتابل ارزیابی تمامی اعضای شورا قرار خواهد گرفت و اعضا می‌توانند نسبت به ثبت رای ۳ حالته (موافق، مخالف، نیازمند اصلاح) اقدام فرمایند.
+          {/* Form Actions Footer (Always visible without scrolling) */}
+          <div className="shrink-0 px-5 sm:px-6 py-3 border-t border-slate-200/90 bg-slate-50/95 flex items-center justify-between gap-3">
+            <div className="text-[11px] text-slate-500 hidden sm:flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+              <span>آماده ثبت و ارسال مستقیم به شورا</span>
             </div>
-          </div>
-
-          {/* Form Actions */}
-          <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-5 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition cursor-pointer"
-            >
-              انصراف
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 disabled:opacity-50 transition cursor-pointer flex items-center gap-2"
-            >
-              {loading ? 'در حال ثبت...' : editProject ? 'ذخیره تغییرات' : 'ثبت و ارسال به کارتابل اعضا'}
-            </button>
+            <div className="flex items-center gap-2.5 mr-auto">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+              >
+                انصراف
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 disabled:opacity-50 transition cursor-pointer flex items-center gap-2"
+              >
+                {loading ? 'در حال ثبت...' : editProject ? 'ذخیره تغییرات' : 'ثبت و ارسال به کارتابل اعضا'}
+              </button>
+            </div>
           </div>
 
         </form>

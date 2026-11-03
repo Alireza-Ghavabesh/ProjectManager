@@ -60,11 +60,11 @@ export const VotingModal: React.FC<VotingModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs overflow-y-auto">
-      <div className="w-full max-w-xl rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-slate-800">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/50 backdrop-blur-xs">
+      <div className="w-full max-w-xl max-h-[90vh] flex flex-col rounded-3xl bg-white border border-slate-200/90 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-slate-800">
         
-        {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/80">
+        {/* Header (Fixed at top) */}
+        <div className="shrink-0 flex items-center justify-between px-5 sm:px-6 py-4 border-b border-slate-100 bg-slate-50/90">
           <div>
             <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
               کد پروژه: {project.code}
@@ -81,8 +81,9 @@ export const VotingModal: React.FC<VotingModalProps> = ({
           </button>
         </div>
 
-        {/* Project info preview */}
-        <div className="p-5 border-b border-slate-100 bg-slate-50/40">
+        <form onSubmit={handleSubmitVote} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          {/* Scrollable Body */}
+          <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-4 space-y-4">
           <div className="text-xs text-slate-500 mb-1">نام پروژه:</div>
           <div className="text-sm font-bold text-slate-900 mb-2">{project.title}</div>
           {project.description && (
@@ -130,17 +131,17 @@ export const VotingModal: React.FC<VotingModalProps> = ({
         </div>
 
         {/* Confidentiality Notice */}
-        <div className="mx-5 mt-4 p-3.5 rounded-2xl bg-indigo-50/70 border border-indigo-200 text-indigo-950 text-xs flex items-start gap-3">
-          <ShieldCheck className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
-          <div className="leading-relaxed">
+        <div className="p-3 rounded-2xl bg-indigo-50/70 border border-indigo-200 text-indigo-950 text-xs flex items-start gap-2.5">
+          <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+          <div className="leading-relaxed text-[11px]">
             <span className="font-bold text-indigo-800">اصل محرمانگی آرا: </span>
-            رای و توضیحات ثبت شده شما صرفاً برای مدیر و دبیر جلسه شورا قابل رویت خواهد بود و سایر اعضای شورا به هیچ وجه از رای شما مطلع نخواهند شد.
+            رای و توضیحات ثبت شده شما صرفاً برای مدیر و دبیر جلسه شورا قابل رویت خواهد بود.
           </div>
         </div>
 
-        <form onSubmit={handleSubmitVote} className="p-5 space-y-5">
+        <div className="space-y-4">
           {error && (
-            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
               <span>{error}</span>
             </div>
@@ -251,22 +252,29 @@ export const VotingModal: React.FC<VotingModalProps> = ({
             </div>
           )}
 
-          {/* Actions */}
-          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 transition cursor-pointer"
-            >
-              انصراف
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer disabled:opacity-50 flex items-center gap-2"
-            >
-              {loading ? 'در حال ثبت در کارتابل...' : 'ثبت قطعی رای شورا'}
-            </button>
+          </div>
+
+          {/* Sticky Actions Footer */}
+          <div className="shrink-0 px-5 sm:px-6 py-3 border-t border-slate-200/90 bg-slate-50/95 flex items-center justify-between gap-3">
+            <div className="text-[11px] text-slate-500 hidden sm:block">
+              رای شما پس از ثبت قطعی و در آمار شورا اعمال خواهد شد.
+            </div>
+            <div className="flex items-center gap-2.5 mr-auto">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 transition cursor-pointer"
+              >
+                انصراف
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer disabled:opacity-50 flex items-center gap-2"
+              >
+                {loading ? 'در حال ثبت در کارتابل...' : 'ثبت قطعی رای شورا'}
+              </button>
+            </div>
           </div>
         </form>
 

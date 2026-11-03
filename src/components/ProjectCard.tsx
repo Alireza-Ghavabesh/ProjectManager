@@ -10,7 +10,6 @@ import {
   Edit3, 
   ShieldCheck, 
   Calendar, 
-  MapPin, 
   Coins, 
   GitBranch,
   ChevronDown,
@@ -240,20 +239,13 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
         </div>
       )}
 
-      {/* Meta details: Deadline, Location, Budget */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-5 p-3 rounded-2xl bg-slate-50 border border-slate-200/70 text-xs">
+      {/* Meta details: Deadline, Budget */}
+      <div className="flex flex-wrap items-center gap-4 mb-5 p-3 rounded-2xl bg-slate-50 border border-slate-200/70 text-xs">
         {project.deadline && (
           <div className="flex items-center gap-2 text-slate-700">
             <Calendar className="w-4 h-4 text-indigo-600 shrink-0" />
             <span className="text-slate-500">مهلت ارزیابی:</span>
             <span className="font-semibold text-slate-900">{project.deadline}</span>
-          </div>
-        )}
-        {project.location && (
-          <div className="flex items-center gap-2 text-slate-700">
-            <MapPin className="w-4 h-4 text-emerald-600 shrink-0" />
-            <span className="text-slate-500">محل/استودیو:</span>
-            <span className="font-semibold text-slate-900 truncate">{project.location}</span>
           </div>
         )}
         {project.budgetEstimated && (
