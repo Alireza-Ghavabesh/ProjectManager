@@ -1,13 +1,71 @@
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
 
-// Database file path in root directory as requested: council.db
+// Database file path in root directory: council.db
 const dbDir = path.resolve(process.cwd());
 const dbPath = path.join(dbDir, 'council.db');
 
-const db = new Database(dbPath);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+const rawDb = new DatabaseSync(dbPath);
+rawDb.exec('PRAGMA journal_mode = WAL;');
+rawDb.exec('PRAGMA foreign_keys = ON;');
+
+function normalizeArgs(args: any[]): any[] {
+  const flatArgs = (args.length === 1 && Array.isArray(args[0])) ? args[0] : args;
+  return flatArgs.map(val => {
+    if (val === undefined) return null;
+    if (typeof val === 'boolean') return val ? 1 : 0;
+    return val;
+  });
+}
+
+export interface StatementWrapper {
+  run(...args: any[]): { lastInsertRowid: number | bigint; changes: number | bigint };
+  get(...args: any[]): any;
+  all(...args: any[]): any[];
+}
+
+export interface DatabaseWrapper {
+  exec(sql: string): void;
+  pragma(sql: string): void;
+  prepare(sql: string): StatementWrapper;
+  transaction<T>(fn: (...args: any[]) => T): (...args: any[]) => T;
+}
+
+const db: DatabaseWrapper = {
+  exec(sql: string) {
+    return rawDb.exec(sql);
+  },
+  pragma(str: string) {
+    return rawDb.exec(`PRAGMA ${str};`);
+  },
+  prepare(sql: string): StatementWrapper {
+    const stmt = rawDb.prepare(sql);
+    return {
+      run(...args: any[]) {
+        return stmt.run(...normalizeArgs(args));
+      },
+      get(...args: any[]) {
+        return stmt.get(...normalizeArgs(args));
+      },
+      all(...args: any[]) {
+        return stmt.all(...normalizeArgs(args));
+      },
+    };
+  },
+  transaction<T>(fn: (...args: any[]) => T) {
+    return (...args: any[]): T => {
+      rawDb.exec('BEGIN');
+      try {
+        const res = fn(...args);
+        rawDb.exec('COMMIT');
+        return res;
+      } catch (err) {
+        rawDb.exec('ROLLBACK');
+        throw err;
+      }
+    };
+  },
+};
 
 export function generateOfflineAvatarSvg(name: string, seed: string): string {
   const initial = (name || '?').trim().charAt(0);
