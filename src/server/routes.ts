@@ -3,6 +3,20 @@ import { db, generateOfflineAvatarSvg } from './db.js';
 import { randomUUID } from 'crypto';
 import { createJwtToken, verifyJwtToken } from './jwt.js';
 import { isDeadlineExpired } from '../utils/formatters.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { pipeline } from 'stream/promises';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const projectRoot = path.resolve(__dirname, '../../');
+const uploadsDir = path.resolve(projectRoot, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  try {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  } catch (e) {}
+}
 
 export const apiRouter = express.Router();
 
@@ -1556,7 +1570,7 @@ apiRouter.get('/projects/:id/attachments/:attachmentId', (req: Request, res: Res
   res.json({ attachment });
 });
 
-// Direct Download endpoint
+// Direct Download endpoint (supports disk streaming for files up to 10GB and legacy base64)
 apiRouter.get('/attachments/:id/download', (req: Request, res: Response) => {
   const { id } = req.params;
   const att = db.prepare('SELECT * FROM project_attachments WHERE id = ?').get(id) as any;
@@ -1564,33 +1578,164 @@ apiRouter.get('/attachments/:id/download', (req: Request, res: Response) => {
     return res.status(404).json({ error: 'فایل پیوست یافت نشد.' });
   }
 
-  let buffer: Buffer;
-  let mimeType = att.fileType || 'application/octet-stream';
+  const mimeType = att.fileType || 'application/octet-stream';
+  const safeFileName = encodeURIComponent(att.fileName);
+
+  // 1. If stored on disk, stream directly to response (O(1) memory for up to 10GB)
+  if (att.filePath) {
+    const fullPath = path.resolve(uploadsDir, att.filePath);
+    if (fs.existsSync(fullPath)) {
+      try {
+        const stat = fs.statSync(fullPath);
+        res.setHeader('Content-Type', mimeType);
+        res.setHeader('Content-Disposition', `attachment; filename="${safeFileName}"`);
+        res.setHeader('Content-Length', stat.size);
+        const stream = fs.createReadStream(fullPath);
+        stream.pipe(res);
+        return;
+      } catch (err: any) {
+        return res.status(500).json({ error: 'خطا در خواندن فایل از دیسک.' });
+      }
+    }
+  }
+
+  // 2. Fallback to legacy in-database base64 data
+  if (att.data) {
+    try {
+      let buffer: Buffer;
+      if (att.data.startsWith('data:')) {
+        const match = att.data.match(/^data:([^;]+);base64,(.+)$/);
+        if (match) {
+          buffer = Buffer.from(match[2], 'base64');
+        } else {
+          const parts = att.data.split(',');
+          buffer = Buffer.from(parts[1] || parts[0], 'base64');
+        }
+      } else {
+        buffer = Buffer.from(att.data, 'base64');
+      }
+
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Content-Disposition', `attachment; filename="${safeFileName}"`);
+      res.setHeader('Content-Length', buffer.length);
+      res.send(buffer);
+      return;
+    } catch (err: any) {
+      return res.status(500).json({ error: 'خطا در بارگیری فایل.' });
+    }
+  }
+
+  res.status(404).json({ error: 'داده‌های فایل پیوست در سرور یافت نشد.' });
+});
+
+// Binary Streaming Upload endpoint (supports huge files up to 10GB without memory buffer)
+apiRouter.post('/projects/:id/attachments/stream', async (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || (!hasPermission(currentUser, 'projects.edit') && !hasPermission(currentUser, 'projects.create'))) {
+    return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به پیوست فایل برای این پروژه نیستید.' });
+  }
+
+  const { id: projectId } = req.params;
+  const project = db.prepare('SELECT id, title FROM projects WHERE id = ?').get(projectId) as any;
+  if (!project) {
+    return res.status(404).json({ error: 'پروژه مورد نظر یافت نشد.' });
+  }
+
+  const rawFileName = (req.query.fileName as string) || (req.headers['x-file-name'] as string) || 'attachment.dat';
+  const fileName = decodeURIComponent(rawFileName);
+  const fileType = (req.headers['content-type'] as string) || 'application/octet-stream';
+
+  // Read configurable max file size limit from system settings (default: 1024 MB = 1 GB, configurable up to 10240 MB = 10 GB)
+  const maxSetting = db.prepare("SELECT value FROM system_settings WHERE key = 'max_file_size_mb'").get() as any;
+  const maxMb = parseInt(maxSetting?.value || '1024', 10);
+  const maxBytes = maxMb * 1024 * 1024;
+
+  const headerContentLength = parseInt(req.headers['content-length'] || '0', 10);
+  if (headerContentLength > maxBytes) {
+    const sizeDisplay = (headerContentLength / (1024 * 1024)).toFixed(1);
+    const maxDisplay = maxMb >= 1024 ? `${(maxMb / 1024).toFixed(1)} گیگابایت` : `${maxMb} مگابایت`;
+    return res.status(413).json({
+      error: `حجم فایل ارسالی (${sizeDisplay} مگابایت) بیش از سقف مجاز تعریف‌شده در تنظیمات سیستم (${maxDisplay}) است.`,
+    });
+  }
+
+  const ext = path.extname(fileName) || '';
+  const id = `att-${randomUUID().substring(0, 8)}`;
+  const diskFileName = `${id}${ext}`;
+  const diskFilePath = path.join(uploadsDir, diskFileName);
 
   try {
-    if (att.data.startsWith('data:')) {
-      const match = att.data.match(/^data:([^;]+);base64,(.+)$/);
-      if (match) {
-        mimeType = match[1] || mimeType;
-        buffer = Buffer.from(match[2], 'base64');
-      } else {
-        const parts = att.data.split(',');
-        buffer = Buffer.from(parts[1] || parts[0], 'base64');
+    let bytesWritten = 0;
+    let limitExceeded = false;
+    const fileWriteStream = fs.createWriteStream(diskFilePath);
+
+    req.on('data', (chunk) => {
+      bytesWritten += chunk.length;
+      if (bytesWritten > maxBytes && !limitExceeded) {
+        limitExceeded = true;
+        fileWriteStream.destroy();
+        try { if (fs.existsSync(diskFilePath)) fs.unlinkSync(diskFilePath); } catch (e) {}
       }
-    } else {
-      buffer = Buffer.from(att.data, 'base64');
+    });
+
+    await pipeline(req, fileWriteStream);
+
+    if (limitExceeded) {
+      const maxDisplay = maxMb >= 1024 ? `${(maxMb / 1024).toFixed(1)} گیگابایت` : `${maxMb} مگابایت`;
+      return res.status(413).json({
+        error: `حجم فایل ارسالی از سقف مجاز تعریف‌شده در سیستم (${maxDisplay}) فراتر رفت.`,
+      });
     }
 
-    res.setHeader('Content-Type', mimeType);
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(att.fileName)}"`);
-    res.setHeader('Content-Length', buffer.length);
-    res.send(buffer);
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO project_attachments (id, projectId, fileName, fileSize, fileType, data, filePath, uploadedBy, createdAt)
+      VALUES (?, ?, ?, ?, ?, '', ?, ?, ?)
+    `).run(
+      id,
+      projectId,
+      fileName.trim(),
+      bytesWritten,
+      fileType,
+      diskFileName,
+      currentUser.id,
+      now
+    );
+
+    const sizeFormatted = bytesWritten >= 1024 * 1024 * 1024
+      ? `${(bytesWritten / (1024 * 1024 * 1024)).toFixed(2)} گیگابایت`
+      : `${(bytesWritten / (1024 * 1024)).toFixed(1)} مگابایت`;
+
+    // Broadcast file addition notification to council chat
+    db.prepare(`
+      INSERT INTO messages (id, senderId, receiverId, isGroup, content, projectId, createdAt)
+      VALUES (?, ?, NULL, 1, ?, ?, ?)
+    `).run(
+      `msg-${randomUUID().substring(0, 8)}`,
+      currentUser.id,
+      `فایل پیوست «${fileName.trim()}» با حجم ${sizeFormatted} توسط ${currentUser.name} اضافه گردید.`,
+      projectId,
+      now
+    );
+
+    const created = db.prepare(`
+      SELECT a.id, a.projectId, a.fileName, a.fileSize, a.fileType, a.uploadedBy, a.createdAt,
+             u.name as uploaderName
+      FROM project_attachments a
+      LEFT JOIN users u ON a.uploadedBy = u.id
+      WHERE a.id = ?
+    `).get(id);
+
+    res.json({ success: true, attachment: created });
   } catch (err: any) {
-    res.status(500).json({ error: 'خطا در بارگیری فایل.' });
+    try { if (fs.existsSync(diskFilePath)) fs.unlinkSync(diskFilePath); } catch (e) {}
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'خطا در بارگذاری و ذخیره فایل بر روی سرور: ' + err.message });
+    }
   }
 });
 
-// Upload a new attachment to a project (Admin or project editors)
+// Upload a new attachment to a project (JSON fallback)
 apiRouter.post('/projects/:id/attachments', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
   if (!currentUser || (!hasPermission(currentUser, 'projects.edit') && !hasPermission(currentUser, 'projects.create'))) {
@@ -1608,6 +1753,20 @@ apiRouter.post('/projects/:id/attachments', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'نام فایل و داده‌های بارگذاری الزامی هستند.' });
   }
 
+  const parsedSize = typeof fileSize === 'number' ? fileSize : parseInt(fileSize, 10) || 0;
+
+  // Validate against system max file size
+  const maxSetting = db.prepare("SELECT value FROM system_settings WHERE key = 'max_file_size_mb'").get() as any;
+  const maxMb = parseInt(maxSetting?.value || '1024', 10);
+  const maxBytes = maxMb * 1024 * 1024;
+
+  if (parsedSize > maxBytes) {
+    const maxDisplay = maxMb >= 1024 ? `${(maxMb / 1024).toFixed(1)} گیگابایت` : `${maxMb} مگابایت`;
+    return res.status(413).json({
+      error: `حجم فایل ارسالی بیش از سقف مجاز تعریف‌شده در سیستم (${maxDisplay}) است.`,
+    });
+  }
+
   const id = `att-${randomUUID().substring(0, 8)}`;
   const now = new Date().toISOString();
 
@@ -1619,7 +1778,7 @@ apiRouter.post('/projects/:id/attachments', (req: Request, res: Response) => {
       id,
       projectId,
       fileName.trim(),
-      typeof fileSize === 'number' ? fileSize : parseInt(fileSize, 10) || 0,
+      parsedSize,
       fileType || 'application/octet-stream',
       data,
       currentUser.id,
@@ -1668,7 +1827,17 @@ apiRouter.delete('/projects/:id/attachments/:attachmentId', (req: Request, res: 
   }
 
   try {
-    db.prepare('DELETE FROM project_attachments WHERE id = ?').run(attachmentId);
+    // Delete physical file from disk if present
+    if (existing.filePath) {
+      const fullPath = path.resolve(uploadsDir, existing.filePath);
+      try {
+        if (fs.existsSync(fullPath)) {
+          fs.unlinkSync(fullPath);
+        }
+      } catch (e) {}
+    }
+
+    db.prepare('DELETE FROM project_attachments WHERE id = ? AND projectId = ?').run(attachmentId, projectId);
 
     // Broadcast file deletion notification
     if (project) {

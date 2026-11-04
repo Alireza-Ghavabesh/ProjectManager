@@ -297,6 +297,9 @@ export function initDatabase() {
   try {
     db.prepare('ALTER TABLE workflow_steps ADD COLUMN structureId TEXT REFERENCES project_structures(id) ON DELETE SET NULL').run();
   } catch (e) {}
+  try {
+    db.prepare('ALTER TABLE project_attachments ADD COLUMN filePath TEXT').run();
+  } catch (e) {}
 
   seedInitialData();
 }
@@ -667,6 +670,18 @@ function seedInitialData() {
     insertSetting.run('enforce_deadline', 'true', 'جلوگیری از ثبت رای پس از اتمام مهلت ارزیابی', now);
     insertSetting.run('default_deadline_days', '14', 'مدت زمان پیش‌فرض مهلت ارزیابی پروژه‌ها (روز)', now);
     insertSetting.run('allow_creator_extension', 'true', 'امکان تمدید مهلت و بازگشایی مجدد رای‌گیری توسط ثبت‌کننده یا مدیر', now);
+    insertSetting.run('max_file_size_mb', '1024', 'حداکثر حجم مجاز فایل‌های پیوست پروژه به مگابایت (تا ۱۰۲۴۰ مگابایت / ۱۰ گیگابایت)', now);
+  } else {
+    // Ensure max_file_size_mb exists even if settings were seeded previously
+    const maxFileSizeSetting = db.prepare("SELECT value FROM system_settings WHERE key = 'max_file_size_mb'").get() as any;
+    if (!maxFileSizeSetting) {
+      db.prepare('INSERT INTO system_settings (key, value, description, updatedAt) VALUES (?, ?, ?, ?)').run(
+        'max_file_size_mb',
+        '1024',
+        'حداکثر حجم مجاز فایل‌های پیوست پروژه به مگابایت (تا ۱۰۲۴۰ مگابایت / ۱۰ گیگابایت)',
+        now
+      );
+    }
   }
 }
 

@@ -435,9 +435,9 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                   type="text"
                   value={userUsername}
                   onChange={(e) => setUserUsername(e.target.value)}
-                  placeholder="مثال: kazemi"
+                  placeholder="kazemi"
                   disabled={!!editingUser}
-                  className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono disabled:opacity-50 shadow-2xs"
+                  className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono disabled:opacity-50 shadow-2xs"
                   dir="ltr"
                   required
                 />
@@ -451,9 +451,9 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                   type="password"
                   value={userPassword}
                   onChange={(e) => setUserPassword(e.target.value)}
-                  placeholder="••••••"
-                  className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono shadow-2xs"
-                  dir="ltr"
+                  placeholder="حداقل ۶ کاراکتر"
+                  className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 shadow-2xs"
+                  dir="rtl"
                 />
               </div>
 

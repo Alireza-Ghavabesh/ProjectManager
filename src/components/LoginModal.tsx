@@ -61,7 +61,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onSuccess }) => {
           </div>
         )}
 
-        <form onSubmit={handleLogin} className="space-y-4">
+        <form onSubmit={handleLogin} className="space-y-4.5">
+          {/* Username Field */}
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1.5">
               نام کاربری
@@ -71,16 +72,17 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onSuccess }) => {
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="نام کاربری سازمانی"
+                placeholder="نام کاربری (مثلاً: admin)"
                 autoComplete="username"
-                className="w-full rounded-xl bg-slate-50 border border-slate-300 px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs"
-                dir="ltr"
+                className="w-full rounded-xl bg-slate-50 border border-slate-300 pr-10 pl-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition shadow-2xs text-right"
+                dir="rtl"
                 required
               />
-              <UserCheck className="absolute left-3 top-3 w-4 h-4 text-slate-400 pointer-events-none" />
+              <UserCheck className="absolute right-3.5 top-3.5 w-4 h-4 text-slate-400 pointer-events-none" />
             </div>
           </div>
 
+          {/* Password Field */}
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1.5">
               رمز عبور
@@ -90,16 +92,17 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onSuccess }) => {
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="رمز عبور"
+                placeholder="رمز عبور (مثلاً: admin123)"
                 autoComplete="current-password"
-                className="w-full rounded-xl bg-slate-50 border border-slate-300 px-4 py-2.5 pl-10 text-sm text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs"
-                dir="ltr"
+                className="w-full rounded-xl bg-slate-50 border border-slate-300 pr-10 pl-10 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition shadow-2xs text-right"
+                dir="rtl"
                 required
               />
+              <Key className="absolute right-3.5 top-3.5 w-4 h-4 text-slate-400 pointer-events-none" />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute left-3 top-3 text-slate-400 hover:text-slate-600 transition cursor-pointer"
+                className="absolute left-3.5 top-3.5 text-slate-400 hover:text-slate-600 transition cursor-pointer"
                 title={showPassword ? 'مخفی‌سازی رمز' : 'نمایش رمز'}
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -107,10 +110,24 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onSuccess }) => {
             </div>
           </div>
 
+          {/* Quick-fill helper for default admin credentials */}
+          <div className="flex items-center justify-between text-xs pt-0.5">
+            <button
+              type="button"
+              onClick={() => {
+                setUsername('admin');
+                setPassword('admin123');
+              }}
+              className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 transition cursor-pointer hover:underline flex items-center gap-1"
+            >
+              <span>درج خودکار مشخصات مدیر پیش‌فرض (admin)</span>
+            </button>
+          </div>
+
           <button
             type="submit"
             disabled={loading}
-            className="w-full mt-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 py-3 text-xs sm:text-sm font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+            className="w-full mt-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-98 py-3 text-xs sm:text-sm font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
           >
             <Lock className="w-4 h-4" />
             <span>{loading ? 'در حال بررسی...' : 'ورود به سامانه کارتابل'}</span>

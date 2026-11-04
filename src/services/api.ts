@@ -541,6 +541,63 @@ class ApiService {
     return data.attachment;
   }
 
+  // Streaming binary upload with live progress tracking (supports large files up to 10GB with O(1) memory)
+  async uploadProjectAttachmentStream(
+    projectId: string,
+    file: File,
+    onProgress?: (percent: number) => void
+  ): Promise<ProjectAttachment> {
+    const token = this.getToken();
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const targetUrl = `/api/projects/${projectId}/attachments/stream?fileName=${encodeURIComponent(file.name)}`;
+      xhr.open('POST', targetUrl);
+      
+      xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+      xhr.setRequestHeader('x-file-name', encodeURIComponent(file.name));
+      if (token) {
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      }
+
+      if (xhr.upload && onProgress) {
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable && event.total > 0) {
+            const percent = Math.min(100, Math.round((event.loaded / event.total) * 100));
+            onProgress(percent);
+          }
+        };
+      }
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            resolve(data.attachment);
+          } catch (e) {
+            reject(new Error('خطا در تجزیه پاسخ سرور'));
+          }
+        } else {
+          try {
+            const err = JSON.parse(xhr.responseText);
+            reject(new Error(err.error || `خطا در بارگذاری فایل (${xhr.status})`));
+          } catch (e) {
+            reject(new Error(`خطای آپلود (کد وضعیت سرور: ${xhr.status})`));
+          }
+        }
+      };
+
+      xhr.onerror = () => {
+        reject(new Error('خطای ارتباط شبکه با سرور در زمان آپلود فایل'));
+      };
+
+      xhr.ontimeout = () => {
+        reject(new Error('زمان مجاز ارسال فایل به سرور به پایان رسید (Timeout)'));
+      };
+
+      xhr.send(file);
+    });
+  }
+
   async deleteProjectAttachment(projectId: string, attachmentId: string): Promise<void> {
     const res = await fetch(`/api/projects/${projectId}/attachments/${attachmentId}`, {
       method: 'DELETE',

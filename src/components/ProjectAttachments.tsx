@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { ProjectAttachment } from '../types';
 import { api, fileToBase64, formatFileSize } from '../services/api';
 import { 
@@ -37,6 +37,8 @@ export const ProjectAttachments: React.FC<ProjectAttachmentsProps> = ({
   compact = false,
 }) => {
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [maxFileSizeMb, setMaxFileSizeMb] = useState<number>(1024);
   const [replacingId, setReplacingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -45,6 +47,25 @@ export const ProjectAttachments: React.FC<ProjectAttachmentsProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
   const pendingReplaceAttachmentRef = useRef<ProjectAttachment | null>(null);
+
+  // Load configured max upload size from system settings
+  useEffect(() => {
+    api.getSettings().then((res) => {
+      if (res?.settings?.max_file_size_mb) {
+        const parsed = parseInt(res.settings.max_file_size_mb, 10);
+        if (!isNaN(parsed) && parsed > 0) {
+          setMaxFileSizeMb(parsed);
+        }
+      }
+    }).catch(() => {});
+  }, []);
+
+  const formatMaxLimitDisplay = () => {
+    if (maxFileSizeMb >= 1024) {
+      return `${(maxFileSizeMb / 1024).toFixed(maxFileSizeMb % 1024 === 0 ? 0 : 1)} گیگابایت`;
+    }
+    return `${maxFileSizeMb} مگابایت`;
+  };
 
   // Helper to get matching icon based on file type or extension
   const getFileIcon = (fileName: string, fileType?: string) => {
@@ -68,31 +89,33 @@ export const ProjectAttachments: React.FC<ProjectAttachmentsProps> = ({
   };
 
   const handleUploadFile = async (file: File) => {
-    // Max 30MB check
-    if (file.size > 30 * 1024 * 1024) {
-      setStatusMessage({ type: 'error', text: 'حجم فایل انتخاب شده بیش از حد مجاز (حداکثر ۳۰ مگابایت) است.' });
+    const maxBytes = maxFileSizeMb * 1024 * 1024;
+    if (file.size > maxBytes) {
+      const fileMb = (file.size / (1024 * 1024)).toFixed(1);
+      setStatusMessage({ 
+        type: 'error', 
+        text: `حجم فایل «${file.name}» (${fileMb}MB) بیش از سقف مجاز سامانه (${formatMaxLimitDisplay()}) است.` 
+      });
       return;
     }
 
     setUploading(true);
+    setUploadProgress(0);
     setStatusMessage(null);
 
     try {
-      const base64Data = await fileToBase64(file);
-      await api.uploadProjectAttachment(projectId, {
-        fileName: file.name,
-        fileSize: file.size,
-        fileType: file.type || 'application/octet-stream',
-        data: base64Data,
+      await api.uploadProjectAttachmentStream(projectId, file, (percent) => {
+        setUploadProgress(percent);
       });
 
-      setStatusMessage({ type: 'success', text: `فایل «${file.name}» با موفقیت به پروژه پیوست گردید.` });
+      setStatusMessage({ type: 'success', text: `فایل «${file.name}» با موفقیت پیوست گردید.` });
       onAttachmentChange();
       setTimeout(() => setStatusMessage(null), 4000);
     } catch (err: any) {
       setStatusMessage({ type: 'error', text: err.message || 'خطا در بارگذاری فایل' });
     } finally {
       setUploading(false);
+      setUploadProgress(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
@@ -130,22 +153,24 @@ export const ProjectAttachments: React.FC<ProjectAttachmentsProps> = ({
     if (!files || !files[0] || !oldAttachment) return;
 
     const newFile = files[0];
-    if (newFile.size > 30 * 1024 * 1024) {
-      setStatusMessage({ type: 'error', text: 'حجم فایل انتخاب شده بیش از حد مجاز (حداکثر ۳۰ مگابایت) است.' });
+    const maxBytes = maxFileSizeMb * 1024 * 1024;
+    if (newFile.size > maxBytes) {
+      const fileMb = (newFile.size / (1024 * 1024)).toFixed(1);
+      setStatusMessage({ 
+        type: 'error', 
+        text: `حجم فایل جدید (${fileMb}MB) بیش از سقف مجاز سامانه (${formatMaxLimitDisplay()}) است.` 
+      });
       return;
     }
 
     setReplacingId(oldAttachment.id);
+    setUploadProgress(0);
     setStatusMessage(null);
 
     try {
-      // 1. Upload new attachment
-      const base64Data = await fileToBase64(newFile);
-      await api.uploadProjectAttachment(projectId, {
-        fileName: newFile.name,
-        fileSize: newFile.size,
-        fileType: newFile.type || 'application/octet-stream',
-        data: base64Data,
+      // 1. Upload new attachment with direct streaming
+      await api.uploadProjectAttachmentStream(projectId, newFile, (percent) => {
+        setUploadProgress(percent);
       });
 
       // 2. Delete old attachment
@@ -153,7 +178,7 @@ export const ProjectAttachments: React.FC<ProjectAttachmentsProps> = ({
 
       setStatusMessage({
         type: 'success',
-        text: `فایل «${oldAttachment.fileName}» با فایل جدید «${newFile.name}» جایگزین شد.`,
+        text: `فایل «${oldAttachment.fileName}» با فایل جدید «${newFile.name}» با موفقیت جایگزین شد.`,
       });
       onAttachmentChange();
       setTimeout(() => setStatusMessage(null), 4000);
@@ -161,6 +186,7 @@ export const ProjectAttachments: React.FC<ProjectAttachmentsProps> = ({
       setStatusMessage({ type: 'error', text: err.message || 'خطا در جایگزینی فایل' });
     } finally {
       setReplacingId(null);
+      setUploadProgress(null);
       pendingReplaceAttachmentRef.current = null;
     }
   };
@@ -240,6 +266,28 @@ export const ProjectAttachments: React.FC<ProjectAttachmentsProps> = ({
           </button>
         )}
       </div>
+
+      {/* Upload Progress Bar for Large Files */}
+      {uploading && uploadProgress !== null && (
+        <div className="p-3.5 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-950 text-xs space-y-2 animate-in fade-in">
+          <div className="flex items-center justify-between font-bold text-xs">
+            <span className="flex items-center gap-2">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+              <span>در حال ارسال مستقیم و استریم فایل روی سرور...</span>
+            </span>
+            <span className="font-mono font-bold text-indigo-700">{uploadProgress}%</span>
+          </div>
+          <div className="w-full h-2.5 rounded-full bg-indigo-200/70 overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-l from-indigo-600 to-blue-600 transition-all duration-150 rounded-full"
+              style={{ width: `${uploadProgress}%` }}
+            />
+          </div>
+          <p className="text-[10px] text-slate-500">
+            فایل‌های حجیم به صورت تکه‌تکه (Stream) مستقیماً روی دیسک ذخیره می‌شوند تا به حافظه سرور فشار وارد نشود.
+          </p>
+        </div>
+      )}
 
       {/* Status Alert Banner */}
       {statusMessage && (
@@ -375,8 +423,8 @@ export const ProjectAttachments: React.FC<ProjectAttachmentsProps> = ({
             <div className="text-xs font-bold text-slate-800">
               کلیک برای انتخاب فایل یا رها کردن فایل در این کادر
             </div>
-            <div className="text-[10px] text-slate-400">
-              پشتیبانی از فرمت‌های PDF، Word، Excel، تصاویر و فایل‌های فشرده (حداکثر ۳۰ مگابایت)
+            <div className="text-[10px] text-slate-500 font-medium">
+              پشتیبانی از انواع اسناد، فایل‌های ویدیو و فشرده (سقف مجاز: حداکثر {formatMaxLimitDisplay()})
             </div>
           </div>
         </div>

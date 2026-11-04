@@ -11,7 +11,9 @@ import {
   Save, 
   RefreshCw,
   Calendar,
-  Sparkles
+  Sparkles,
+  UploadCloud,
+  HardDrive
 } from 'lucide-react';
 
 interface SystemSettingsViewProps {
@@ -23,6 +25,7 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
     enforce_deadline: 'true',
     default_deadline_days: '14',
     allow_creator_extension: 'true',
+    max_file_size_mb: '1024',
   });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -264,6 +267,92 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
             </div>
           </div>
 
+        </div>
+
+        {/* Section 2: File Upload Limits (سقف حجم فایل‌های پیوست تا ۱۰ گیگابایت) */}
+        <div className="p-6 rounded-3xl bg-white border border-slate-200/90 shadow-xs space-y-5">
+          <div className="flex items-center justify-between pb-4 border-b border-slate-100 flex-wrap gap-2">
+            <div className="flex items-center gap-2.5">
+              <UploadCloud className="w-5 h-5 text-indigo-600" />
+              <h3 className="text-sm font-bold text-slate-900">
+                سقف مجاز حجم فایل‌های پیوست و اسناد طرح‌ها
+              </h3>
+            </div>
+            <span className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl">
+              سقف فعلی: {(() => {
+                const mb = parseInt(settings.max_file_size_mb || '1024', 10);
+                if (mb >= 1024) {
+                  const gb = (mb / 1024).toFixed(mb % 1024 === 0 ? 0 : 1);
+                  return `${gb} گیگابایت (${mb.toLocaleString('fa-IR')} MB)`;
+                }
+                return `${mb.toLocaleString('fa-IR')} مگابایت`;
+              })()}
+            </span>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-200/80 space-y-4">
+            <div className="space-y-1">
+              <span className="text-xs sm:text-sm font-bold text-slate-900 block">
+                حداکثر اندازه مجاز برای هر فایل (از ۳۰ مگابایت تا ۱۰ گیگابایت)
+              </span>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                می‌توانید برای پروژه‌ها و مستندات سنگین (ویدیو، فوتیج راش، خروجی‌های مستر تدوین، آرشیو زیپ و PDFهای حجیم) سقف دلخواه را تا ۱۰ گیگابایت (۱۰٬۲۴۰ مگابایت) افزایش دهید.
+              </p>
+            </div>
+
+            {/* Quick Presets */}
+            <div>
+              <div className="text-[11px] font-bold text-slate-600 mb-2">
+                انتخاب سریع مقادیر پیشنهادی:
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {[
+                  { label: '۵۰ مگابایت', val: '50' },
+                  { label: '۱۰۰ مگابایت', val: '100' },
+                  { label: '۵۰۰ مگابایت', val: '500' },
+                  { label: '۱ گیگابایت', val: '1024' },
+                  { label: '۲ گیگابایت', val: '2048' },
+                  { label: '۵ گیگابایت', val: '5120' },
+                  { label: '۱۰ گیگابایت (حداکثر)', val: '10240' },
+                ].map((preset) => {
+                  const isSelected = settings.max_file_size_mb === preset.val;
+                  return (
+                    <button
+                      key={preset.val}
+                      type="button"
+                      onClick={() => handleTextChange('max_file_size_mb', preset.val)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                        isSelected
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 hover:border-slate-300'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Custom Input */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-200/60">
+              <div className="text-xs text-slate-600">
+                یا وارد کردن عدد دلخواه به مگابایت (MB):
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min="10"
+                  max="10240"
+                  value={settings.max_file_size_mb || '1024'}
+                  onChange={(e) => handleTextChange('max_file_size_mb', e.target.value)}
+                  className="w-28 rounded-xl bg-white border border-slate-300 px-3 py-2 text-center text-sm font-bold text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs"
+                />
+                <span className="text-xs font-bold text-slate-600">مگابایت</span>
+              </div>
+            </div>
+
+          </div>
         </div>
 
         {/* Informative Guidance Card */}

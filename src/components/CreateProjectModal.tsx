@@ -19,7 +19,8 @@ import {
   Upload,
   Trash2,
   File,
-  GitBranch
+  GitBranch,
+  RefreshCw
 } from 'lucide-react';
 
 interface CreateProjectModalProps {
@@ -102,12 +103,28 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     }
   };
 
+  const [maxFileSizeMb, setMaxFileSizeMb] = useState<number>(1024);
+  const [uploadStatusText, setUploadStatusText] = useState<string | null>(null);
+
   useEffect(() => {
     fetchAttachments();
+    api.getSettings().then((res) => {
+      if (res?.settings?.max_file_size_mb) {
+        const val = parseInt(res.settings.max_file_size_mb, 10);
+        if (!isNaN(val) && val > 0) setMaxFileSizeMb(val);
+      }
+    }).catch(() => {});
   }, [editProject?.id]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const formatMaxLimitDisplay = () => {
+    if (maxFileSizeMb >= 1024) {
+      return `${(maxFileSizeMb / 1024).toFixed(maxFileSizeMb % 1024 === 0 ? 0 : 1)} گیگابایت`;
+    }
+    return `${maxFileSizeMb} مگابایت`;
+  };
 
   const handleRequirementChange = (key: string, value: string) => {
     setRequirements((prev) => ({
@@ -131,9 +148,11 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const filesArray = Array.from(e.target.files);
+      const maxBytes = maxFileSizeMb * 1024 * 1024;
       const validFiles = filesArray.filter((f) => {
-        if (f.size > 30 * 1024 * 1024) {
-          alert(`فایل «${f.name}» بیش از ۳۰ مگابایت است و نادیده گرفته شد.`);
+        if (f.size > maxBytes) {
+          const fileMb = (f.size / (1024 * 1024)).toFixed(1);
+          alert(`فایل «${f.name}» با حجم ${fileMb}MB بیش از سقف مجاز سیستم (${formatMaxLimitDisplay()}) است و نادیده گرفته شد.`);
           return false;
         }
         return true;
@@ -156,6 +175,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
     setLoading(true);
     setError('');
+    setUploadStatusText(null);
 
     try {
       const payload = {
@@ -179,16 +199,12 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         targetProjectId = (res as any)?.projectId;
       }
 
-      // Upload any chosen files for the project
+      // Upload any chosen files for the project with direct streaming
       if (targetProjectId && selectedFiles.length > 0) {
-        for (const file of selectedFiles) {
-          const base64Data = await fileToBase64(file);
-          await api.uploadProjectAttachment(targetProjectId, {
-            fileName: file.name,
-            fileSize: file.size,
-            fileType: file.type || 'application/octet-stream',
-            data: base64Data,
-          });
+        for (let i = 0; i < selectedFiles.length; i++) {
+          const file = selectedFiles[i];
+          setUploadStatusText(`در حال استریم فایل (${i + 1}/${selectedFiles.length}): ${file.name}...`);
+          await api.uploadProjectAttachmentStream(targetProjectId, file);
         }
       }
 
@@ -198,6 +214,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       setError(err.message || 'خطا در ثبت پروژه');
     } finally {
       setLoading(false);
+      setUploadStatusText(null);
     }
   };
 
@@ -253,8 +270,8 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                   type="text"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  placeholder="مثال: مستند تاریخی شکوه زاگرس، برنامه ویژه جوانان..."
-                  className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs"
+                  placeholder="عنوان کامل طرح یا پروژه..."
+                  className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs"
                   required
                 />
               </div>
@@ -268,7 +285,8 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                   type="text"
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
-                  className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition font-mono shadow-2xs"
+                  placeholder="PRJ-1403-01"
+                  className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition font-mono shadow-2xs text-left"
                   dir="ltr"
                 />
               </div>
@@ -282,8 +300,8 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                   type="text"
                   value={productionType}
                   onChange={(e) => setProductionType(e.target.value)}
-                  placeholder="مثال: تولید نمایشی، استودیویی، مستند..."
-                  className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs"
+                  placeholder="نوع تولید (مستند، استودیویی، داستانی...)"
+                  className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs"
                 />
               </div>
 
@@ -325,11 +343,11 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                     type="text"
                     value={budgetEstimated}
                     onChange={(e) => setBudgetEstimated(formatCurrencyInput(e.target.value))}
-                    placeholder="مثال: ۱۵۰٬۰۰۰٬۰۰۰"
-                    className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs sm:text-sm font-semibold text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs ltr:text-left"
-                    dir="ltr"
+                    placeholder="۱۵۰٬۰۰۰٬۰۰۰"
+                    className="w-full rounded-xl bg-white border border-slate-300 pr-3.5 pl-14 py-2 text-xs sm:text-sm font-semibold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs text-right"
+                    dir="rtl"
                   />
-                  <span className="absolute left-3 top-2.5 text-[11px] font-bold text-slate-400 pointer-events-none">
+                  <span className="absolute left-3 top-2 text-[11px] font-bold text-slate-400 pointer-events-none select-none bg-slate-100 px-1.5 py-0.5 rounded-md border border-slate-200/80">
                     تومان
                   </span>
                 </div>
@@ -350,8 +368,8 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                   rows={4}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="شرح و اهداف پروژه، محورهای محتوایی، خلاصه داستان، مشخصات و نکات ویژه... (با زدن Enter به خط بعدی بروید)"
-                  className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2.5 text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs leading-relaxed whitespace-pre-wrap"
+                  placeholder="خلاصه شرح، محورهای محتوایی و مشخصات کلی طرح را وارد فرمایید..."
+                  className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2.5 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs leading-relaxed whitespace-pre-wrap"
                 />
               </div>
 
@@ -473,8 +491,8 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                   <Paperclip className="w-3.5 h-3.5 text-indigo-600" />
                   <span>اسناد و فایل‌های پیوست پروژه</span>
                 </h4>
-                <span className="text-[10px] text-slate-400">
-                  PDF، Word، Excel یا تصاویر تا ۳۰ مگابایت
+                <span className="text-[10px] text-slate-500 font-semibold bg-slate-100 px-2 py-0.5 rounded-md">
+                  انواع اسناد و فایل‌ها تا {formatMaxLimitDisplay()}
                 </span>
               </div>
 
@@ -583,7 +601,14 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                 disabled={loading}
                 className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 disabled:opacity-50 transition cursor-pointer flex items-center gap-2"
               >
-                {loading ? 'در حال ثبت...' : editProject ? 'ذخیره تغییرات' : 'ثبت و ارسال به کارتابل اعضا'}
+                {loading ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>{uploadStatusText || (editProject ? 'در حال ذخیره...' : 'در حال ثبت...')}</span>
+                  </>
+                ) : (
+                  <span>{editProject ? 'ذخیره تغییرات' : 'ثبت و ارسال به کارتابل اعضا'}</span>
+                )}
               </button>
             </div>
           </div>

@@ -300,8 +300,8 @@ export const VotingModal: React.FC<VotingModalProps> = ({
                 onChange={(e) => setReason(e.target.value)}
                 placeholder={
                   selectedStatus === 'NEEDS_REVISION'
-                    ? 'لطفاً بندها، تعداد عوامل، بودجه، لوکیشن یا مواردی که باید توسط تهیه‌کننده اصلاح شوند را به تفصیل بنویسید (الزامی)...'
-                    : 'توضیحات تکمیلی یا ملاحظات تخصصی خود را در صورت تمایل یادداشت فرمایید...'
+                    ? 'موارد و بندهای نیازمند اصلاح و بازبینی را ذکر نمایید (الزامی)...'
+                    : 'توضیحات و ملاحظات تکمیلی خود را در صورت تمایل یادداشت فرمایید (اختیاری)...'
                 }
                 className={`w-full rounded-2xl bg-white border px-3.5 py-2.5 text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:outline-none transition leading-relaxed shadow-2xs whitespace-pre-wrap ${
                   selectedStatus === 'NEEDS_REVISION' && !reason.trim()
