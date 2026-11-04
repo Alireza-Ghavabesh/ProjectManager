@@ -1,9 +1,12 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
-// Database file path in root directory: council.db
-const dbDir = path.resolve(process.cwd());
-const dbPath = path.join(dbDir, 'council.db');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+// Reliable root directory: council.db is always placed at project root regardless of PM2 working directory
+const projectRoot = path.resolve(__dirname, '../../');
+const dbPath = path.join(projectRoot, 'council.db');
 
 const rawDb = new DatabaseSync(dbPath);
 rawDb.exec('PRAGMA journal_mode = WAL;');
@@ -432,6 +435,15 @@ function seedInitialData() {
     insertUser.run('usr-moradi', 'moradi', '123456', 'پیمان مرادی', 'COUNCIL', 'pos-4', generateOfflineAvatarSvg('پیمان مرادی', 'usr-moradi'), '09124445566', now);
     insertUser.run('usr-hoseini', 'hoseini', '123456', 'مریم سادات حسینی', 'COUNCIL', 'pos-5', generateOfflineAvatarSvg('مریم سادات حسینی', 'usr-hoseini'), '09125556677', now);
   } else {
+    // Ensure admin user always exists if somehow missing from an existing database
+    const adminExists = db.prepare("SELECT id FROM users WHERE username = 'admin'").get() as any;
+    if (!adminExists) {
+      db.prepare(`
+        INSERT INTO users (id, username, password, name, role, positionId, avatar, phone, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run('usr-admin', 'admin', 'admin123', 'مهندس علیرضا علوی', 'ADMIN', 'pos-1', generateOfflineAvatarSvg('مهندس علیرضا علوی', 'usr-admin'), '09121112233', now);
+    }
+
     // Offline Migration: convert any external URLs in database to offline SVG data URIs
     const existingUsers = db.prepare("SELECT id, name, avatar FROM users WHERE avatar LIKE 'http%'").all() as any[];
     for (const u of existingUsers) {
