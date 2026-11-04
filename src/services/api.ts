@@ -1,4 +1,4 @@
-import { Position, User, DynamicField, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowLog, ProjectStructure, StructurePositionNode, ProjectAttachment } from '../types';
+import { Position, User, DynamicField, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowLog, ProjectStructure, StructurePositionNode, ProjectAttachment, SystemSetting } from '../types';
 
 class ApiService {
   getToken(): string | null {
@@ -570,6 +570,26 @@ class ApiService {
       headers: this.getAuthHeader(),
     });
     const data = await res.json();
+    return data;
+  }
+
+  // System Settings
+  async getSettings(): Promise<{ settings: Record<string, string>; list: SystemSetting[] }> {
+    const res = await fetch('/api/settings', {
+      headers: this.getAuthHeader(),
+    });
+    if (!res.ok) throw new Error('خطا در دریافت تنظیمات سامانه');
+    return res.json();
+  }
+
+  async updateSettings(settings: Record<string, string>): Promise<{ settings: Record<string, string>; list: SystemSetting[] }> {
+    const res = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify({ settings }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'خطا در ذخیره تنظیمات');
     return data;
   }
 }

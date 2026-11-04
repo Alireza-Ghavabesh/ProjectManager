@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import { db, generateOfflineAvatarSvg } from './db.js';
 import { randomUUID } from 'crypto';
 import { createJwtToken, verifyJwtToken } from './jwt.js';
+import { isDeadlineExpired } from '../utils/formatters.js';
 
 export const apiRouter = express.Router();
 
@@ -1337,6 +1338,11 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
     const prjLogs = allLogs.filter((l) => l.projectId === prj.id);
     const prjAttachments = allAttachments.filter((a) => a.projectId === prj.id);
 
+    // Dynamic expected voters: count of positions/steps in this project's specific workflow
+    const workflowStepCount = prjSteps.length;
+    const projectExpectedVoters = workflowStepCount > 0 ? workflowStepCount : (totalCouncilCount || 4);
+    const expired = isDeadlineExpired(prj.deadline);
+
     if (canViewConfidential) {
       // User with confidential voting inspection permission (Admin / Board Chair)
       const allVotes = db.prepare(`
@@ -1352,12 +1358,14 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
 
       return {
         ...prj,
+        deliveryDate: prj.deliveryDate || '',
+        isDeadlineExpired: expired,
         requirements,
         attachments: prjAttachments,
         attachmentCount: prjAttachments.length,
         majorityResult: majorityInfo.majority,
         voteCounts: majorityInfo.counts,
-        totalCouncilMembers: totalCouncilCount,
+        totalCouncilMembers: projectExpectedVoters,
         allVotes,
         workflowSteps: prjSteps,
         workflowLogs: prjLogs,
@@ -1372,12 +1380,14 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
 
       return {
         ...prj,
+        deliveryDate: prj.deliveryDate || '',
+        isDeadlineExpired: expired,
         requirements,
         attachments: prjAttachments,
         attachmentCount: prjAttachments.length,
         majorityResult: majorityInfo.majority,
         voteCounts: majorityInfo.counts,
-        totalCouncilMembers: totalCouncilCount,
+        totalCouncilMembers: projectExpectedVoters,
         hasVoted: !!myVote,
         userVote: myVote || null,
         workflowSteps: prjSteps,
@@ -1395,7 +1405,7 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
     return res.status(403).json({ error: 'شما مجاز به ایجاد پروژه جدید نیستید.' });
   }
 
-  const { title, code, description, productionType, location, deadline, budgetEstimated, requirements } = req.body;
+  const { title, code, description, productionType, location, deadline, deliveryDate, budgetEstimated, requirements, workflowId } = req.body;
   if (!title || !title.trim()) {
     return res.status(400).json({ error: 'نام پروژه الزامی است.' });
   }
@@ -1404,13 +1414,24 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
   const prjCode = code && code.trim() ? code.trim() : `PRJ-${Math.floor(1000 + Math.random() * 9000)}`;
   const now = new Date().toISOString();
 
+  // Resolve target workflow: specified or default workflow in database
+  let targetWorkflowId = workflowId;
+  if (!targetWorkflowId) {
+    const defaultWf = db.prepare('SELECT id FROM workflows WHERE isDefault = 1 LIMIT 1').get() as any;
+    targetWorkflowId = defaultWf?.id || 'wf-standard';
+  }
+
+  // Find first step position of this workflow
+  const firstStep = db.prepare('SELECT positionId FROM workflow_steps WHERE workflowId = ? ORDER BY stepOrder ASC LIMIT 1').get(targetWorkflowId) as any;
+  const initialPositionId = firstStep?.positionId || null;
+
   try {
     db.prepare(`
       INSERT INTO projects (
-        id, title, code, description, productionType, location, deadline, budgetEstimated,
+        id, title, code, description, productionType, location, deadline, deliveryDate, budgetEstimated,
         status, majorityResult, requirementsJson, createdById, workflowId, currentStepOrder, currentPositionId, createdAt, updatedAt
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'IN_REVIEW', 'PENDING', ?, ?, NULL, 1, NULL, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'IN_REVIEW', 'PENDING', ?, ?, ?, 1, ?, ?, ?)
     `).run(
       id,
       title.trim(),
@@ -1419,9 +1440,12 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
       productionType || 'طرح عمومی شورا',
       location || '',
       deadline || '',
+      deliveryDate || '',
       budgetEstimated || '',
       JSON.stringify(requirements || {}),
       currentUser.id,
+      targetWorkflowId,
+      initialPositionId,
       now,
       now
     );
@@ -1454,13 +1478,14 @@ apiRouter.put('/projects/:id', (req: Request, res: Response) => {
   }
 
   const { id } = req.params;
-  const { title, code, description, productionType, location, deadline, budgetEstimated, requirements, status } = req.body;
+  const { title, code, description, productionType, location, deadline, deliveryDate, budgetEstimated, requirements, status, workflowId } = req.body;
   const now = new Date().toISOString();
 
   db.prepare(`
     UPDATE projects
     SET title = ?, code = ?, description = ?, productionType = ?, location = ?,
-        deadline = ?, budgetEstimated = ?, requirementsJson = ?, status = COALESCE(?, status), updatedAt = ?
+        deadline = ?, deliveryDate = ?, budgetEstimated = ?, requirementsJson = ?, status = COALESCE(?, status),
+        workflowId = COALESCE(?, workflowId), updatedAt = ?
     WHERE id = ?
   `).run(
     title,
@@ -1469,9 +1494,11 @@ apiRouter.put('/projects/:id', (req: Request, res: Response) => {
     productionType || '',
     location || '',
     deadline || '',
+    deliveryDate || '',
     budgetEstimated || '',
     JSON.stringify(requirements || {}),
     status || null,
+    workflowId || null,
     now,
     id
   );
@@ -1688,9 +1715,18 @@ apiRouter.post('/projects/:id/vote', (req: Request, res: Response) => {
     });
   }
 
-  const project = db.prepare('SELECT id, title FROM projects WHERE id = ?').get(projectId);
+  const project = db.prepare('SELECT id, title, deadline FROM projects WHERE id = ?').get(projectId) as any;
   if (!project) {
     return res.status(404).json({ error: 'پروژه مورد نظر یافت نشد.' });
+  }
+
+  // Enforce evaluation deadline check based on system settings
+  const enforceSetting = db.prepare("SELECT value FROM system_settings WHERE key = 'enforce_deadline'").get() as any;
+  const isEnforced = !enforceSetting || enforceSetting.value === 'true';
+  if (isEnforced && isDeadlineExpired(project.deadline)) {
+    return res.status(400).json({
+      error: 'مهلت قانونی ارزیابی این پروژه به پایان رسیده است و ثبت رای امکان‌پذیر نیست. ثبت‌کننده طرح یا مدیر ارشد سیستم می‌تواند با ویرایش پروژه و تمدید تاریخ، مجدداً امکان رای‌گیری را بازگشایی نماید.',
+    });
   }
 
   const voteId = `vot-${randomUUID().substring(0, 8)}`;
@@ -1859,4 +1895,57 @@ apiRouter.get('/dashboard/stats', (req: Request, res: Response) => {
     totalPositions,
     activeWorkflows,
   });
+});
+
+// --------------------------------------------------------------------------
+// 9. SYSTEM SETTINGS (تنظیمات سامانه و مهلت ارزیابی)
+// --------------------------------------------------------------------------
+
+apiRouter.get('/settings', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) {
+    return res.status(401).json({ error: 'احراز هویت نشده است.' });
+  }
+
+  const list = db.prepare('SELECT key, value, description, updatedAt FROM system_settings').all() as any[];
+  const settings: Record<string, string> = {};
+  for (const item of list) {
+    settings[item.key] = item.value;
+  }
+
+  res.json({ settings, list });
+});
+
+apiRouter.put('/settings', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || currentUser.role !== 'ADMIN') {
+    return res.status(403).json({ error: 'دسترسی غیرمجاز: صرفاً مدیرکل (کاربر ارشد سیستم) مجاز به تغییر تنظیمات سامانه است.' });
+  }
+
+  const { settings } = req.body;
+  if (!settings || typeof settings !== 'object') {
+    return res.status(400).json({ error: 'داده‌های ارسالی تنظیمات نامعتبر است.' });
+  }
+
+  const now = new Date().toISOString();
+  const updateStmt = db.prepare(`
+    INSERT INTO system_settings (key, value, updatedAt)
+    VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt
+  `);
+
+  const tx = db.transaction(() => {
+    for (const [key, val] of Object.entries(settings)) {
+      updateStmt.run(key, String(val), now);
+    }
+  });
+  tx();
+
+  const updatedList = db.prepare('SELECT key, value, description, updatedAt FROM system_settings').all() as any[];
+  const updatedSettings: Record<string, string> = {};
+  for (const item of updatedList) {
+    updatedSettings[item.key] = item.value;
+  }
+
+  res.json({ success: true, settings: updatedSettings, list: updatedList });
 });

@@ -158,6 +158,8 @@ export interface Project {
   productionType?: string;
   location?: string;
   deadline?: string;
+  deliveryDate?: string;
+  isDeadlineExpired?: boolean;
   budgetEstimated?: string;
   status: 'IN_REVIEW' | 'APPROVED' | 'REJECTED' | 'NEEDS_REVISION';
   majorityResult: 'PENDING' | 'APPROVED' | 'REJECTED' | 'NEEDS_REVISION' | 'TIED';
@@ -227,4 +229,11 @@ export interface DashboardStats {
   userPendingCount: number;
   totalPositions?: number;
   activeWorkflows?: number;
+}
+
+export interface SystemSetting {
+  key: string;
+  value: string;
+  description?: string;
+  updatedAt: string;
 }

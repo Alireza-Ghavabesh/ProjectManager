@@ -13,6 +13,7 @@ import { UsersPositionsManager } from './components/UsersPositionsManager';
 import { OrgHierarchyChart } from './components/OrgHierarchyChart';
 import { CouncilChat } from './components/CouncilChat';
 import { StatsView } from './components/StatsView';
+import { SystemSettingsView } from './components/SystemSettingsView';
 import { LoginModal } from './components/LoginModal';
 import { OfflineIndicator } from './pwa/PWAComponents';
 import { 
@@ -38,7 +39,7 @@ export default function App() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
 
   // Navigation & Filters
-  const [activeTab, setActiveTab] = useState<'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats'>('projects');
+  const [activeTab, setActiveTab] = useState<'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings'>('projects');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING_MY_VOTE' | 'APPROVED' | 'NEEDS_REVISION' | 'REJECTED'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -403,6 +404,13 @@ export default function App() {
             />
           )}
 
+          {/* ===================== TAB: SYSTEM SETTINGS (تنظیمات سامانه و مهلت ارزیابی) ===================== */}
+          {activeTab === 'settings' && (
+            <SystemSettingsView
+              currentUser={currentUser}
+            />
+          )}
+
         </main>
       </div>
 
@@ -425,6 +433,7 @@ export default function App() {
           }}
           onSuccess={refreshData}
           editProject={editingProject}
+          workflows={workflows}
         />
       )}
 

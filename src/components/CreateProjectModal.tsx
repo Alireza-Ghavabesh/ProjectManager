@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { DynamicField, Project, ProjectAttachment } from '../types';
+import { DynamicField, Project, ProjectAttachment, Workflow } from '../types';
 import { api, fileToBase64, formatFileSize } from '../services/api';
 import { ProjectAttachments } from './ProjectAttachments';
 import { PersianDatePicker } from './PersianDatePicker';
@@ -18,7 +18,8 @@ import {
   Paperclip,
   Upload,
   Trash2,
-  File
+  File,
+  GitBranch
 } from 'lucide-react';
 
 interface CreateProjectModalProps {
@@ -26,6 +27,7 @@ interface CreateProjectModalProps {
   onClose: () => void;
   onSuccess: () => void;
   editProject?: Project | null;
+  workflows?: Workflow[];
 }
 
 export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
@@ -33,6 +35,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   onClose,
   onSuccess,
   editProject,
+  workflows = [],
 }) => {
   const [title, setTitle] = useState(editProject?.title || '');
   const [code, setCode] = useState(
@@ -40,10 +43,37 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   );
   const [productionType, setProductionType] = useState(editProject?.productionType || 'طرح عمومی شورا');
   const [deadline, setDeadline] = useState(editProject?.deadline || '۱۴۰۳/۰۹/۳۰');
+  const [deliveryDate, setDeliveryDate] = useState(editProject?.deliveryDate || '');
   const [budgetEstimated, setBudgetEstimated] = useState(
     formatCurrencyInput(editProject?.budgetEstimated || '')
   );
   const [description, setDescription] = useState(editProject?.description || '');
+  
+  // Workflow selector state
+  const [availableWorkflows, setAvailableWorkflows] = useState<Workflow[]>(workflows);
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string>(() => {
+    if (editProject?.workflowId) return editProject.workflowId;
+    const def = workflows.find((w) => w.isDefault);
+    return def?.id || (workflows[0]?.id) || '';
+  });
+
+  useEffect(() => {
+    if (workflows.length === 0) {
+      api.getWorkflows().then((wfs) => {
+        setAvailableWorkflows(wfs);
+        if (!selectedWorkflowId) {
+          const def = wfs.find((w) => w.isDefault);
+          setSelectedWorkflowId(editProject?.workflowId || def?.id || wfs[0]?.id || '');
+        }
+      }).catch(console.error);
+    } else {
+      setAvailableWorkflows(workflows);
+      if (!selectedWorkflowId) {
+        const def = workflows.find((w) => w.isDefault);
+        setSelectedWorkflowId(editProject?.workflowId || def?.id || workflows[0]?.id || '');
+      }
+    }
+  }, [workflows, editProject?.workflowId]);
 
   // Initialize requirements from dynamic fields or existing project
   const [requirements, setRequirements] = useState<Record<string, any>>(() => {
@@ -134,9 +164,11 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         productionType: productionType.trim() || 'طرح عمومی شورا',
         location: editProject?.location || '',
         deadline: deadline.trim(),
+        deliveryDate: deliveryDate.trim(),
         budgetEstimated: budgetEstimated.trim(),
         description: description.trim(),
         requirements,
+        workflowId: selectedWorkflowId || undefined,
       };
 
       let targetProjectId = editProject?.id;
@@ -168,6 +200,8 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       setLoading(false);
     }
   };
+
+  const selectedWf = availableWorkflows.find((w) => w.id === selectedWorkflowId);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 md:p-6 bg-slate-900/50 backdrop-blur-xs">
@@ -258,8 +292,18 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                 <PersianDatePicker
                   value={deadline}
                   onChange={setDeadline}
-                  label="مهلت بررسی و اعلام نظر"
+                  label="مهلت ارزیابی و رای‌گیری"
                   placeholder="انتخاب تاریخ شمسی..."
+                />
+              </div>
+
+              {/* Estimated Delivery Date - Persian Jalali Date Picker */}
+              <div>
+                <PersianDatePicker
+                  value={deliveryDate}
+                  onChange={setDeliveryDate}
+                  label="تاریخ حدودی تحویل پروژه"
+                  placeholder="انتخاب تاریخ شمسی تحویل..."
                 />
               </div>
 
@@ -310,6 +354,50 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                   className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2.5 text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs leading-relaxed whitespace-pre-wrap"
                 />
               </div>
+
+              {/* Workflow Selection Section */}
+              {availableWorkflows.length > 0 && (
+                <div className="md:col-span-2 lg:col-span-3 p-3.5 rounded-2xl bg-indigo-50/50 border border-indigo-100 shadow-2xs">
+                  <label className="block text-xs font-bold text-slate-800 mb-1.5 flex items-center justify-between flex-wrap gap-2">
+                    <span className="flex items-center gap-1.5 text-indigo-900">
+                      <GitBranch className="w-4 h-4 text-indigo-600" />
+                      <span>گردش کار سازمانی و ساختار مربوطه برای این پروژه *</span>
+                    </span>
+                    {selectedWf && (
+                      <span className="text-[11px] font-bold text-indigo-700 bg-white border border-indigo-200 px-2.5 py-0.5 rounded-lg shadow-2xs">
+                        تعداد سمت‌های گردش: {selectedWf.steps.length} نفر (مشارکت کارتابل: {selectedWf.steps.length} رای)
+                      </span>
+                    )}
+                  </label>
+
+                  <select
+                    value={selectedWorkflowId}
+                    onChange={(e) => setSelectedWorkflowId(e.target.value)}
+                    className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs sm:text-sm font-bold text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs cursor-pointer"
+                  >
+                    {availableWorkflows.map((wf) => (
+                      <option key={wf.id} value={wf.id}>
+                        {wf.title} {wf.isDefault ? '⭐ (پیش‌فرض سیستم)' : ''} — ({wf.steps.length} سمت و مرحله سازمانی)
+                      </option>
+                    ))}
+                  </select>
+
+                  {selectedWf && (
+                    <div className="mt-2.5 pt-2 border-t border-indigo-100 text-[11px] text-slate-600 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <Users className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                        <span className="text-slate-500">مسیر گردش بین سمت‌ها:</span>
+                        <span className="font-semibold text-slate-800" dir="rtl">
+                          {selectedWf.steps.map((s) => s.title).join(' ← ')}
+                        </span>
+                      </div>
+                      <span className="text-slate-500">
+                        آمار کارتابل این طرح به صورت <strong className="text-indigo-700">«X تا از {selectedWf.steps.length} نفر»</strong> محاسبه می‌شود.
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
 
             </div>
 

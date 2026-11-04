@@ -258,6 +258,13 @@ export function initDatabase() {
       uploadedBy TEXT REFERENCES users(id) ON DELETE SET NULL,
       createdAt TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS system_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      description TEXT,
+      updatedAt TEXT NOT NULL
+    );
   `);
 
   // Safe columns migration for positions if already existed
@@ -280,6 +287,9 @@ export function initDatabase() {
   } catch (e) {}
   try {
     db.prepare('ALTER TABLE projects ADD COLUMN currentPositionId TEXT REFERENCES positions(id) ON DELETE SET NULL').run();
+  } catch (e) {}
+  try {
+    db.prepare('ALTER TABLE projects ADD COLUMN deliveryDate TEXT').run();
   } catch (e) {}
   try {
     db.prepare('ALTER TABLE workflow_steps ADD COLUMN structureId TEXT REFERENCES project_structures(id) ON DELETE SET NULL').run();
@@ -636,6 +646,15 @@ function seedInitialData() {
       'usr-admin',
       now
     );
+  }
+
+  // 8. Seed System Settings
+  const settingCount = (db.prepare('SELECT count(*) as count FROM system_settings').get() as any)?.count || 0;
+  if (settingCount === 0) {
+    const insertSetting = db.prepare('INSERT INTO system_settings (key, value, description, updatedAt) VALUES (?, ?, ?, ?)');
+    insertSetting.run('enforce_deadline', 'true', 'جلوگیری از ثبت رای پس از اتمام مهلت ارزیابی', now);
+    insertSetting.run('default_deadline_days', '14', 'مدت زمان پیش‌فرض مهلت ارزیابی پروژه‌ها (روز)', now);
+    insertSetting.run('allow_creator_extension', 'true', 'امکان تمدید مهلت و بازگشایی مجدد رای‌گیری توسط ثبت‌کننده یا مدیر', now);
   }
 }
 

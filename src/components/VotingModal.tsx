@@ -13,9 +13,11 @@ import {
   Download,
   FileText,
   Coins,
-  Calendar
+  Calendar,
+  Lock,
+  PackageCheck
 } from 'lucide-react';
-import { formatBudgetDisplay } from '../utils/formatters';
+import { formatBudgetDisplay, isDeadlineExpired } from '../utils/formatters';
 
 interface VotingModalProps {
   project: Project;
@@ -35,8 +37,14 @@ export const VotingModal: React.FC<VotingModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const isExpired = project.isDeadlineExpired ?? isDeadlineExpired(project.deadline);
+
   const handleSubmitVote = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isExpired) {
+      setError('مهلت ارزیابی این پروژه به پایان رسیده است و امکان ثبت یا ویرایش رای وجود ندارد.');
+      return;
+    }
     if (!selectedStatus) {
       setError('لطفاً یکی از ۳ وضعیت رای (تایید، رد یا نیاز به اصلاح) را انتخاب فرمایید.');
       return;
@@ -116,9 +124,19 @@ export const VotingModal: React.FC<VotingModalProps> = ({
                 )}
                 {project.deadline && (
                   <div className="flex items-center gap-1.5 text-slate-700 bg-white px-2.5 py-1 rounded-xl border border-slate-200/60 shadow-2xs">
-                    <Calendar className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                    <Calendar className={`w-3.5 h-3.5 shrink-0 ${isExpired ? 'text-rose-600' : 'text-indigo-600'}`} />
                     <span className="text-slate-500">مهلت ارزیابی:</span>
-                    <span className="font-bold text-slate-900">{project.deadline}</span>
+                    <span className={`font-bold ${isExpired ? 'text-rose-700' : 'text-slate-900'}`}>{project.deadline}</span>
+                    {isExpired && (
+                      <span className="text-[10px] font-bold text-rose-700 bg-rose-100 px-1 py-0.2 rounded">منقضی</span>
+                    )}
+                  </div>
+                )}
+                {project.deliveryDate && (
+                  <div className="flex items-center gap-1.5 text-slate-700 bg-white px-2.5 py-1 rounded-xl border border-slate-200/60 shadow-2xs">
+                    <PackageCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span className="text-slate-500">تاریخ تحویل:</span>
+                    <span className="font-bold text-slate-900">{project.deliveryDate}</span>
                   </div>
                 )}
               </div>
@@ -130,6 +148,17 @@ export const VotingModal: React.FC<VotingModalProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Expired Warning Banner */}
+            {isExpired && (
+              <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2.5 shadow-2xs">
+                <Lock className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div className="leading-relaxed text-[11px]">
+                  <strong className="text-rose-900 block font-bold mb-0.5">مهلت قانونی ارزیابی این پروژه به پایان رسیده است</strong>
+                  امکان ثبت یا تغییر رای در کارتابل غیرفعال شده است. ثبت‌کننده طرح یا مدیر ارشد سیستم با ویرایش پروژه و تمدید تاریخ مهلت می‌توانند فرآیند رای‌گیری را مجدداً بازگشایی کنند.
+                </div>
+              </div>
+            )}
 
             {/* Attached documents preview */}
             {project.attachments && project.attachments.length > 0 && (
@@ -307,10 +336,10 @@ export const VotingModal: React.FC<VotingModalProps> = ({
               </button>
               <button
                 type="submit"
-                disabled={loading}
-                className="flex-1 sm:flex-initial px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2 text-center"
+                disabled={loading || isExpired}
+                className="flex-1 sm:flex-initial px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-center"
               >
-                {loading ? 'در حال ثبت...' : 'ثبت قطعی رای شورا'}
+                {loading ? 'در حال ثبت...' : isExpired ? 'مهلت ارزیابی پایان یافته' : 'ثبت قطعی رای شورا'}
               </button>
             </div>
           </div>

@@ -12,13 +12,13 @@ import {
   Network, 
   GitBranch,
   Sparkles,
-  ChevronDown,
-  FolderTree
+  FolderTree,
+  Settings
 } from 'lucide-react';
 
 interface HeaderProps {
   currentUser: User;
-  activeTab: 'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats';
+  activeTab: 'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings';
   onOpenMobileMenu: () => void;
 }
 
@@ -43,6 +43,8 @@ export const Header: React.FC<HeaderProps> = ({
         return { title: 'تعریف فیلدهای پویای پروژه', icon: Sliders, desc: 'مدیریت و افزودن فیلدهای دلخواه بدون نیاز به تغییر کد' };
       case 'chat':
         return { title: 'تالار گفتگوی شورا', icon: MessageSquare, desc: 'چت گروهی و پیام‌رسانی خصوصی (پی‌وی) بین اعضا' };
+      case 'settings':
+        return { title: 'تنظیمات سامانه و مهلت ارزیابی', icon: Settings, desc: 'سیاست‌های مهلت بررسی، قفل خودکار رای‌گیری و ضوابط تمدید توسط ثبت‌کننده طرح' };
       case 'stats':
         return { title: 'داشبورد و آمار تحلیلی مصوبات', icon: BarChart3, desc: 'گزارش تجمیعی آرا، مشارکت و شاخص‌های شورا' };
       default:

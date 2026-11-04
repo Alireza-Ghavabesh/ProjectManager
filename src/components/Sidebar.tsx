@@ -12,13 +12,14 @@ import {
   ChevronLeft,
   X,
   FolderTree,
-  GitBranch
+  GitBranch,
+  Settings
 } from 'lucide-react';
 
 interface SidebarProps {
   currentUser: User;
-  activeTab: 'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats';
-  setActiveTab: (tab: 'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats') => void;
+  activeTab: 'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings';
+  setActiveTab: (tab: 'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings') => void;
   onLogout: () => void;
   pendingVotesCount?: number;
   mobileOpen: boolean;
@@ -117,6 +118,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
           badgeColor: '',
           permission: 'projects.fields.manage',
         },
+        ...(currentUser.role === 'ADMIN' ? [{
+          id: 'settings' as const,
+          title: 'تنظیمات مهلت و قوانین شورا',
+          shortTitle: 'تنظیمات مهلت',
+          icon: Settings,
+          badge: null,
+          badgeColor: '',
+          permission: 'system',
+        }] : []),
       ],
     },
     {

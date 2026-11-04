@@ -16,11 +16,13 @@ import {
   ChevronUp,
   Vote as VoteIcon,
   ArrowLeft,
-  Briefcase
+  Briefcase,
+  Lock,
+  PackageCheck
 } from 'lucide-react';
 
 import { ProjectAttachments } from './ProjectAttachments';
-import { formatBudgetDisplay } from '../utils/formatters';
+import { formatBudgetDisplay, isDeadlineExpired } from '../utils/formatters';
 
 interface ProjectCardProps {
   project: Project;
@@ -130,22 +132,37 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   const steps = project.workflowSteps || [];
   const currentStep = steps.find((s) => s.stepOrder === project.currentStepOrder);
   const isMyTurnInWorkflow = currentUser.positionId && currentUser.positionId === project.currentPositionId;
+  const isExpired = project.isDeadlineExpired ?? isDeadlineExpired(project.deadline);
 
   return (
     <div className="bg-white border border-slate-200/90 hover:border-slate-300 rounded-3xl p-5 sm:p-6 shadow-xs hover:shadow-sm transition duration-200">
       
       {/* Top Header: Code, Badges, Admin Actions */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-4 border-b border-slate-100">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="font-mono text-xs font-black px-2.5 py-1 rounded-xl bg-slate-100 text-indigo-700 border border-slate-200">
             {project.code}
           </span>
           <span className="text-xs px-2.5 py-1 rounded-xl bg-slate-100 text-slate-700 border border-slate-200 font-medium">
             {project.productionType || 'تولید محتوا'}
           </span>
+          {project.workflowTitle && (
+            <span className="text-xs px-2.5 py-1 rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200/70 font-semibold flex items-center gap-1">
+              <GitBranch className="w-3 h-3 text-indigo-500" />
+              <span>{project.workflowTitle}</span>
+            </span>
+          )}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Expired deadline badge */}
+          {isExpired && (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-rose-50 text-rose-800 border border-rose-200 shadow-2xs">
+              <Lock className="w-3.5 h-3.5 text-rose-600" />
+              مهلت ارزیابی پایان یافته
+            </span>
+          )}
+
           {/* Majority status */}
           {getMajorityBadge(project.majorityResult)}
 
@@ -253,10 +270,22 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                 رای شما ثبت شده است
               </span>
+            ) : isExpired ? (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-rose-800 font-bold bg-rose-50 px-2.5 py-1 rounded-xl border border-rose-200 flex items-center gap-1 text-xs">
+                  <Lock className="w-3.5 h-3.5 text-rose-600" />
+                  مهلت رای‌گیری پایان یافته
+                </span>
+                {(isAdmin || currentUser.id === project.createdById) && (
+                  <span className="text-[10px] text-slate-500 font-normal">
+                    (برای بازگشایی مجدد، مهلت را با دکمه ویرایش ✏️ تمدید نمایید)
+                  </span>
+                )}
+              </div>
             ) : currentUser.role === 'COUNCIL' ? (
               <button
                 onClick={() => onOpenVoteModal(project)}
-                className="text-amber-800 font-bold hover:text-amber-900 bg-amber-100/80 hover:bg-amber-100 px-2 py-0.5 rounded-lg border border-amber-300 flex items-center gap-1 cursor-pointer transition"
+                className="text-amber-800 font-bold hover:text-amber-900 bg-amber-100/80 hover:bg-amber-100 px-2.5 py-1 rounded-lg border border-amber-300 flex items-center gap-1 cursor-pointer transition shadow-2xs"
               >
                 <VoteIcon className="w-3 h-3 text-amber-700" />
                 رای شما ثبت نشده (ثبت رای)
@@ -266,13 +295,23 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
         </div>
       </div>
 
-      {/* Meta details: Deadline, Budget */}
+      {/* Meta details: Deadline, Delivery Date, Budget */}
       <div className="flex flex-wrap items-center gap-4 mb-5 p-3 rounded-2xl bg-slate-50 border border-slate-200/70 text-xs">
         {project.deadline && (
           <div className="flex items-center gap-2 text-slate-700">
-            <Calendar className="w-4 h-4 text-indigo-600 shrink-0" />
+            <Calendar className={`w-4 h-4 shrink-0 ${isExpired ? 'text-rose-600' : 'text-indigo-600'}`} />
             <span className="text-slate-500">مهلت ارزیابی:</span>
-            <span className="font-semibold text-slate-900">{project.deadline}</span>
+            <span className={`font-semibold ${isExpired ? 'text-rose-700' : 'text-slate-900'}`}>{project.deadline}</span>
+            {isExpired && (
+              <span className="text-[10px] font-bold text-rose-700 bg-rose-100/80 border border-rose-200 px-1.5 py-0.2 rounded">پایان یافته</span>
+            )}
+          </div>
+        )}
+        {project.deliveryDate && (
+          <div className="flex items-center gap-2 text-slate-700">
+            <PackageCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span className="text-slate-500">تاریخ حدودی تحویل:</span>
+            <span className="font-semibold text-slate-900">{project.deliveryDate}</span>
           </div>
         )}
         {project.budgetEstimated && (
