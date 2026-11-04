@@ -1,8 +1,35 @@
 import { Position, User, DynamicField, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowLog, ProjectStructure, StructurePositionNode, ProjectAttachment } from '../types';
 
 class ApiService {
+  getToken(): string | null {
+    if (typeof sessionStorage !== 'undefined') {
+      const sToken = sessionStorage.getItem('council_jwt_token');
+      if (sToken) return sToken;
+    }
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('council_jwt_token');
+    }
+    return null;
+  }
+
+  getStoredUser(): User | null {
+    try {
+      if (typeof sessionStorage !== 'undefined') {
+        const sUser = sessionStorage.getItem('council_jwt_user');
+        if (sUser) return JSON.parse(sUser);
+      }
+      if (typeof localStorage !== 'undefined') {
+        const lUser = localStorage.getItem('council_jwt_user');
+        if (lUser) return JSON.parse(lUser);
+      }
+    } catch (e) {
+      return null;
+    }
+    return null;
+  }
+
   private getAuthHeader(): Record<string, string> {
-    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('council_token') : null;
+    const token = this.getToken();
     const headers: Record<string, string> = {};
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
@@ -22,8 +49,18 @@ class ApiService {
       throw new Error(err.error || 'خطا در ورود به سامانه');
     }
     const data = await res.json();
-    localStorage.setItem('council_token', data.token);
-    localStorage.setItem('council_user', JSON.stringify(data.user));
+    
+    // Per-tab isolated storage
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem('council_jwt_token', data.token);
+      sessionStorage.setItem('council_jwt_user', JSON.stringify(data.user));
+    }
+    // Also save in localStorage for single-tab convenience
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('council_jwt_token', data.token);
+      localStorage.setItem('council_jwt_user', JSON.stringify(data.user));
+    }
+
     return data;
   }
 
@@ -31,14 +68,29 @@ class ApiService {
     const res = await fetch('/api/auth/me', {
       headers: this.getAuthHeader(),
     });
-    if (!res.ok) throw new Error('خطا در دریافت مشخصات کاربر');
+    if (!res.ok) {
+      this.logout();
+      throw new Error('خطا در دریافت مشخصات کاربر');
+    }
     const data = await res.json();
+    // Keep cached user up to date
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem('council_jwt_user', JSON.stringify(data.user));
+    }
     return data.user;
   }
 
   logout() {
-    localStorage.removeItem('council_token');
-    localStorage.removeItem('council_user');
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.removeItem('council_jwt_token');
+      sessionStorage.removeItem('council_jwt_user');
+    }
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('council_jwt_token');
+      localStorage.removeItem('council_jwt_user');
+      localStorage.removeItem('council_token');
+      localStorage.removeItem('council_user');
+    }
   }
 
   // Users

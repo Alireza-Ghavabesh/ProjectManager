@@ -190,54 +190,80 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
         )}
       </div>
 
-      {/* Organizational Workflow Progress Bar */}
-      {steps.length > 0 && (
-        <div className="mb-5 p-3.5 rounded-2xl bg-indigo-50/70 border border-indigo-100 text-slate-800">
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-            <div className="flex items-center gap-2">
-              <span className="p-1 rounded-lg bg-indigo-100 text-indigo-700">
-                <GitBranch className="w-3.5 h-3.5" />
-              </span>
-              <span className="text-xs font-bold text-slate-900">
-                گردش کار سازمانی: گام {project.currentStepOrder || 1} از {steps.length}
-              </span>
-              {currentStep && (
-                <span className="text-xs text-indigo-700 font-semibold">
-                  («{currentStep.title}»)
-                </span>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2">
-              {isMyTurnInWorkflow && (
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 animate-pulse">
-                  اکنون نوبت ارزیابی سمت شماست
-                </span>
-              )}
-
-              {onOpenWorkflowModal && (
-                <button
-                  onClick={() => onOpenWorkflowModal(project)}
-                  className="flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-800 transition cursor-pointer"
-                >
-                  <span>ارجاع در گردش کار</span>
-                  <ArrowLeft className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
+      {/* Council Voting Tally and Participation Progress */}
+      <div className="mb-5 p-3.5 rounded-2xl bg-indigo-50/60 border border-indigo-100/90 text-slate-800">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <div className="flex items-center gap-2">
+            <span className="p-1.5 rounded-xl bg-indigo-100 text-indigo-700 shadow-2xs">
+              <Users className="w-4 h-4" />
+            </span>
+            <span className="text-xs font-bold text-slate-900">
+              وضعیت مشارکت شورا: <strong className="text-indigo-700 font-black text-sm">{project.voteCounts?.total ?? (project.allVotes?.length || (project.hasVoted ? 1 : 0))} تا از {project.totalCouncilMembers && project.totalCouncilMembers > 0 ? project.totalCouncilMembers : 4} نفر شورا رای داده‌اند</strong>
+            </span>
           </div>
 
-          <div className="flex items-center justify-between text-[11px] text-slate-600 pt-1">
-            <span className="flex items-center gap-1">
-              <Briefcase className="w-3 h-3 text-indigo-600" />
-              سمت مسئول فعلی در چارت: <strong className="text-slate-900">{project.currentPositionTitle || currentStep?.positionTitle || 'دبیرخانه شورا'}</strong>
-            </span>
-            <span className="text-[10px] text-slate-400">
-              {project.workflowLogs?.length || 0} گردش ثبت شده
-            </span>
+          <div className="flex items-center gap-2">
+            {(project.voteCounts?.total ?? (project.allVotes?.length || 0)) >= (project.totalCouncilMembers && project.totalCouncilMembers > 0 ? project.totalCouncilMembers : 4) ? (
+              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                تکمیل تمامی آرا
+              </span>
+            ) : (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                {Math.round(((project.voteCounts?.total ?? (project.allVotes?.length || (project.hasVoted ? 1 : 0))) / Math.max(project.totalCouncilMembers && project.totalCouncilMembers > 0 ? project.totalCouncilMembers : 4, 1)) * 100)}٪ آرا
+              </span>
+            )}
           </div>
         </div>
-      )}
+
+        {/* Participation Progress Bar */}
+        <div className="w-full h-2 bg-slate-200/80 rounded-full overflow-hidden mb-2.5">
+          <div
+            className="h-full bg-indigo-600 rounded-full transition-all duration-300"
+            style={{
+              width: `${Math.min(100, Math.round(((project.voteCounts?.total ?? (project.allVotes?.length || (project.hasVoted ? 1 : 0))) / Math.max(project.totalCouncilMembers && project.totalCouncilMembers > 0 ? project.totalCouncilMembers : 4, 1)) * 100))}%`
+            }}
+          />
+        </div>
+
+        {/* Voting summary and User vote status */}
+        <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-600 pt-1.5 border-t border-indigo-100">
+          <div className="flex items-center gap-3">
+            {project.voteCounts && (
+              <>
+                <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                  موافق: {project.voteCounts.APPROVED || 0}
+                </span>
+                <span className="text-rose-700 font-semibold flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                  مخالف: {project.voteCounts.REJECTED || 0}
+                </span>
+                <span className="text-amber-700 font-semibold flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                  نیاز به اصلاح: {project.voteCounts.NEEDS_REVISION || 0}
+                </span>
+              </>
+            )}
+          </div>
+
+          <div>
+            {project.hasVoted ? (
+              <span className="text-emerald-700 font-bold flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                رای شما ثبت شده است
+              </span>
+            ) : currentUser.role === 'COUNCIL' ? (
+              <button
+                onClick={() => onOpenVoteModal(project)}
+                className="text-amber-800 font-bold hover:text-amber-900 bg-amber-100/80 hover:bg-amber-100 px-2 py-0.5 rounded-lg border border-amber-300 flex items-center gap-1 cursor-pointer transition"
+              >
+                <VoteIcon className="w-3 h-3 text-amber-700" />
+                رای شما ثبت نشده (ثبت رای)
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </div>
 
       {/* Meta details: Deadline, Budget */}
       <div className="flex flex-wrap items-center gap-4 mb-5 p-3 rounded-2xl bg-slate-50 border border-slate-200/70 text-xs">

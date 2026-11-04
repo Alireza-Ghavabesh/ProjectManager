@@ -1,27 +1,29 @@
-import React, { useState } from 'react';
-import { Workflow, Position, User } from '../types';
+import React, { useState, useEffect } from 'react';
+import { Workflow, Position, User, ProjectStructure, StructurePositionNode } from '../types';
 import { api } from '../services/api';
 import { 
   GitBranch, 
   Plus, 
   Trash2, 
   Briefcase, 
-  X,
-  FileCheck2,
-  ArrowUp,
-  ArrowDown,
-  Star,
-  Edit2,
-  ShieldCheck,
-  CheckCircle2,
-  Sparkles,
-  Layers,
-  Users
+  X, 
+  ArrowUp, 
+  ArrowDown, 
+  Star, 
+  Edit2, 
+  ShieldCheck, 
+  CheckCircle2, 
+  Layers, 
+  Users,
+  FolderTree,
+  Building2,
+  RefreshCw
 } from 'lucide-react';
 
 interface WorkflowManagerProps {
   workflows: Workflow[];
   positions: Position[];
+  structures?: ProjectStructure[];
   users?: User[];
   currentUser: User;
   onRefresh: () => void;
@@ -30,6 +32,7 @@ interface WorkflowManagerProps {
 export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
   workflows,
   positions,
+  structures = [],
   users = [],
   currentUser,
   onRefresh,
@@ -40,10 +43,11 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
   const [description, setDescription] = useState('');
   const [isDefault, setIsDefault] = useState(false);
   
-  // Dynamic Steps definition based on positions
+  // Dynamic Steps definition with target structure and position
   const [steps, setSteps] = useState<Array<{
     id?: string;
     title: string;
+    structureId?: string | null;
     positionId: string;
     actionType: string;
     description?: string;
@@ -51,6 +55,10 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Cache for positions inside each structure
+  const [structurePositionsMap, setStructurePositionsMap] = useState<Record<string, StructurePositionNode[]>>({});
+  const [loadingStructureMap, setLoadingStructureMap] = useState(false);
 
   const isAdmin = currentUser.role === 'ADMIN' || 
     (Array.isArray(currentUser.permissions) && currentUser.permissions.includes('workflow.definitions.manage'));
@@ -65,11 +73,51 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
     'REVIEW': 'بررسی عمومی و اعلام نظر اولیه',
   };
 
-  const getPositionDetails = (posId: string) => {
+  // Pre-load all structure positions so users can pick positions per structure seamlessly
+  const loadAllStructurePositions = async () => {
+    if (structures.length === 0) return;
+    setLoadingStructureMap(true);
+    try {
+      const map: Record<string, StructurePositionNode[]> = {};
+      await Promise.all(
+        structures.map(async (st) => {
+          try {
+            const data = await api.getStructurePositions(st.id);
+            map[st.id] = data.positions || [];
+          } catch (e) {
+            map[st.id] = [];
+          }
+        })
+      );
+      setStructurePositionsMap(map);
+    } catch (e) {
+      console.error('Failed to load structure positions map', e);
+    } finally {
+      setLoadingStructureMap(false);
+    }
+  };
+
+  useEffect(() => {
+    loadAllStructurePositions();
+  }, [structures]);
+
+  const getPositionDetails = (posId: string, structureId?: string | null) => {
+    // If inside a specific structure, look for structure-assigned users
+    if (structureId && structurePositionsMap[structureId]) {
+      const node = structurePositionsMap[structureId].find((sp) => sp.positionId === posId);
+      if (node && node.users && node.users.length > 0) {
+        return {
+          title: node.title,
+          parentTitle: node.parentTitle,
+          userNames: node.users.map((u) => u.name).join('، '),
+        };
+      }
+    }
+
     const pos = positions.find((p) => p.id === posId);
     if (!pos) return { title: 'سمت نامشخص', userNames: 'بدون انتصاب' };
     
-    // Find users assigned to this position
+    // Find users assigned to this position generally
     const assignedUsers = users.filter((u) => u.positionId === pos.id).map((u) => u.name);
     return {
       title: pos.title,
@@ -78,21 +126,22 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
     };
   };
 
+  const getStructureTitle = (structureId?: string | null) => {
+    if (!structureId) return 'چارت عمومی سازمان';
+    const found = structures.find((s) => s.id === structureId);
+    return found ? found.title : 'ساختار اختصاصی';
+  };
+
   const handleOpenCreate = () => {
     setEditingWorkflow(null);
     setTitle('');
     setDescription('');
     setIsDefault(false);
-    // Provide sensible default multi-stage workflow from available positions
-    const initialSteps = positions.slice(0, 3).map((pos, idx) => ({
-      title: idx === 0 ? 'ارزیابی فنی و تجهیزات' : idx === 1 ? 'بررسی کیفی و محتوایی' : 'طرح در صحن شورا و مصوبه نهایی',
-      positionId: pos.id,
-      actionType: idx === 0 ? 'TECHNICAL_APPROVE' : idx === 1 ? 'CONTENT_APPROVE' : 'FINAL_COUNCIL_VOTE',
-      description: idx === 0 ? 'اولین مرحله گردش کار پس از ثبت طرح' : undefined,
-    }));
-    setSteps(initialSteps.length > 0 ? initialSteps : [
+    // Default initial step
+    setSteps([
       {
-        title: 'گام ۱ (شروع فرآیند)',
+        title: 'گام ۱ (شروع ارزیابی)',
+        structureId: structures[0]?.id || null,
         positionId: positions[0]?.id || '',
         actionType: 'REVIEW',
         description: 'سمت اولیه دریافت‌کننده طرح',
@@ -100,6 +149,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
     ]);
     setError('');
     setModalOpen(true);
+    loadAllStructurePositions();
   };
 
   const handleOpenEdit = (wf: Workflow) => {
@@ -111,6 +161,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
       wf.steps.map((s) => ({
         id: s.id,
         title: s.title,
+        structureId: s.structureId || null,
         positionId: s.positionId,
         actionType: s.actionType || 'REVIEW',
         description: s.description || '',
@@ -118,6 +169,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
     );
     setError('');
     setModalOpen(true);
+    loadAllStructurePositions();
   };
 
   const addStep = () => {
@@ -125,6 +177,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
       ...prev,
       {
         title: `مرحله ${prev.length + 1}`,
+        structureId: structures[0]?.id || null,
         positionId: positions[0]?.id || '',
         actionType: 'REVIEW',
         description: '',
@@ -162,10 +215,22 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
     });
   };
 
-  const handleStepChange = (index: number, field: string, value: string) => {
+  const handleStepChange = (index: number, field: string, value: any) => {
     setSteps((prev) => {
       const copy = [...prev];
-      copy[index] = { ...copy[index], [field]: value };
+      const updated = { ...copy[index], [field]: value };
+
+      // If structure changed, automatically pick first valid position from that structure if available
+      if (field === 'structureId') {
+        const structId = value;
+        if (structId && structurePositionsMap[structId] && structurePositionsMap[structId].length > 0) {
+          updated.positionId = structurePositionsMap[structId][0].positionId;
+        } else if (positions.length > 0) {
+          updated.positionId = positions[0].id;
+        }
+      }
+
+      copy[index] = updated;
       return copy;
     });
   };
@@ -180,12 +245,6 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
       setError('حداقل یک مرحله برای گردش کار باید تعیین شود.');
       return;
     }
-    for (let i = 0; i < steps.length; i++) {
-      if (!steps[i].positionId) {
-        setError(`لطفاً سمت سازمانی مسئول مرحله ${i + 1} را انتخاب فرمایید.`);
-        return;
-      }
-    }
 
     setLoading(true);
     setError('');
@@ -195,7 +254,10 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
         title: title.trim(),
         description: description.trim(),
         isDefault,
-        steps,
+        steps: steps.map((s, idx) => ({
+          ...s,
+          stepOrder: idx + 1,
+        })),
       };
 
       if (editingWorkflow) {
@@ -207,119 +269,134 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
       setModalOpen(false);
       onRefresh();
     } catch (err: any) {
-      setError(err.message || 'خطا در ثبت فرآیند گردش کار');
+      setError(err.message || 'خطا در ثبت گردش کار');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDeleteWorkflow = async (wf: Workflow) => {
-    if (!confirm(`آیا از حذف گردش کار «${wf.title}» اطمینان دارید؟`)) return;
+  const handleDeleteWorkflow = async (id: string, titleStr: string) => {
+    if (!confirm(`آیا از حذف گردش کار «${titleStr}» اطمینان دارید؟`)) return;
     try {
-      await api.deleteWorkflow(wf.id);
+      await api.deleteWorkflow(id);
       onRefresh();
     } catch (err: any) {
       alert(err.message || 'خطا در حذف گردش کار');
     }
   };
 
-  const handleSetDefault = async (wf: Workflow) => {
+  const handleSetDefault = async (id: string) => {
     try {
-      await api.setDefaultWorkflow(wf.id);
+      await api.setDefaultWorkflow(id);
       onRefresh();
     } catch (err: any) {
-      alert(err.message || 'خطا در تعیین پیش‌فرض');
+      alert(err.message || 'خطا در تعیین گردش کار پیش‌فرض');
     }
   };
 
   return (
     <div className="space-y-6">
       
-      {/* Top Banner */}
-      <div className="p-5 sm:p-6 rounded-3xl bg-white border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2.5 mb-1.5">
-            <span className="p-2 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200">
-              <GitBranch className="w-5 h-5" />
-            </span>
-            <h2 className="text-lg font-bold text-slate-900">
-              طراحی و مدیریت گردش کار بر روی ساختار و سمت‌ها
-            </h2>
+      {/* Top Header Card */}
+      <div className="p-6 rounded-3xl bg-white border border-slate-200/80 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 border border-indigo-200 flex items-center justify-center shadow-xs">
+            <GitBranch className="w-6 h-6" />
           </div>
-          <p className="text-xs text-slate-500 max-w-2xl leading-relaxed">
-            تعریف گام‌به‌گام گردش پروژه‌ها میان سمت‌های چارت سازمانی. شما می‌توانید مشخص کنید وقتی طرح ثبت می‌شود ابتدا به کدام سمت برود و بعد از تایید به چه ترتیبی به سمت‌های بعدی ارجاع شود.
-          </p>
+          <div>
+            <h2 className="text-lg font-black text-slate-900">
+              طراحی و مدیریت گردش کار پروژه‌ها
+            </h2>
+            <p className="text-xs text-slate-500">
+              تعیین مسیر ارجاع پروژه به سمت‌های مشخص از هر ساختار سازمانی، مراحل ارزیابی و اخذ مصوبه شورا.
+            </p>
+          </div>
         </div>
 
-        {isAdmin && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={handleOpenCreate}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-xs font-bold text-white shadow-sm transition cursor-pointer shrink-0"
+            onClick={loadAllStructurePositions}
+            className="p-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer"
+            title="بروزرسانی سمت‌ها و ساختارها"
           >
-            <Plus className="w-4 h-4" />
-            <span>طراحی فرآیند گردش کار جدید</span>
+            <RefreshCw className={`w-4 h-4 ${loadingStructureMap ? 'animate-spin text-indigo-600' : ''}`} />
           </button>
-        )}
+
+          {isAdmin && (
+            <button
+              onClick={handleOpenCreate}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>تعریف گردش کار جدید</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Info notice about targeting positions of specific structures */}
+      <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200/80 text-amber-900 text-xs flex items-center gap-3">
+        <Building2 className="w-5 h-5 text-amber-600 shrink-0" />
+        <p className="leading-relaxed">
+          <strong>تخصیص ساختار و سمت:</strong> در این سامانه هر گام از گردش کار می‌تواند مستقیماً به <strong>سمت مشخصی از یک ساختار سازمانی اختصاصی</strong> (مانند ساختار مرخصی، ساختار ماموریت، ساختار تولید فیلم) یا چارت عمومی سازمان ارجاع داده شود.
+        </p>
       </div>
 
       {/* Workflows List */}
-      <div className="space-y-6">
-        {workflows.map((wf) => (
-          <div
-            key={wf.id}
-            className="p-6 rounded-3xl bg-white border border-slate-200 shadow-sm hover:border-slate-300 transition"
-          >
-            {/* Header info */}
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-5 pb-4 border-b border-slate-100">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center font-bold">
-                  <FileCheck2 className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                    <span>{wf.title}</span>
-                    {wf.isDefault ? (
-                      <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold flex items-center gap-1">
-                        <Star className="w-3 h-3 fill-emerald-600 text-emerald-600" />
-                        گردش کار پیش‌فرض سیستم
-                      </span>
-                    ) : null}
+      <div className="space-y-4">
+        {workflows.length === 0 ? (
+          <div className="p-12 text-center rounded-3xl bg-white border border-slate-200 text-slate-500 space-y-3">
+            <Layers className="w-12 h-12 text-slate-300 mx-auto" />
+            <h3 className="text-base font-bold text-slate-800">هیچ گردش کاری تعریف نشده است</h3>
+            <p className="text-xs text-slate-500 max-w-sm mx-auto">
+              با ایجاد اولین فرآیند گردش کار، مشخص کنید پروژه‌ها پس از ثبت به کدام سمت‌ها از کدام ساختارها ارسال شوند.
+            </p>
+          </div>
+        ) : (
+          workflows.map((wf) => (
+            <div
+              key={wf.id}
+              className="p-6 rounded-3xl bg-white border border-slate-200/80 shadow-xs hover:border-slate-300 transition"
+            >
+              {/* Header row */}
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-2.5">
+                  <span className="p-1.5 rounded-xl bg-indigo-50 text-indigo-700 font-black text-xs border border-indigo-200">
+                    <GitBranch className="w-4 h-4" />
+                  </span>
+                  <h3 className="text-base font-bold text-slate-900">
+                    {wf.title}
                   </h3>
-                  {wf.description && (
-                    <p className="text-xs text-slate-500 mt-1">
-                      {wf.description}
-                    </p>
+                  {Boolean(wf.isDefault) && (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+                      <Star className="w-3 h-3 text-emerald-600 fill-emerald-600" />
+                      گردش پیش‌فرض
+                    </span>
                   )}
                 </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-3 py-1.5 rounded-xl">
-                  {wf.steps.length} مرحله سازمانی
-                </span>
 
                 {isAdmin && (
-                  <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-xl border border-slate-200">
+                  <div className="flex items-center gap-1.5">
                     {!wf.isDefault && (
                       <button
-                        onClick={() => handleSetDefault(wf)}
-                        className="px-2.5 py-1 text-xs text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition cursor-pointer font-medium"
-                        title="تعیین به عنوان گردش کار پیش‌فرض"
+                        onClick={() => handleSetDefault(wf.id)}
+                        className="px-3 py-1 rounded-xl text-xs font-semibold text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
+                        title="تعیین به عنوان پیش‌فرض شورا"
                       >
-                        تنظیم پیش‌فرض
+                        تنظیم به عنوان پیش‌فرض
                       </button>
                     )}
                     <button
                       onClick={() => handleOpenEdit(wf)}
-                      className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition cursor-pointer"
-                      title="ویرایش مراحل و سمت‌های گردش کار"
+                      className="p-2 rounded-xl text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
+                      title="ویرایش گردش کار"
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>
                     {!wf.isDefault && (
                       <button
-                        onClick={() => handleDeleteWorkflow(wf)}
-                        className="p-1.5 text-slate-600 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                        onClick={() => handleDeleteWorkflow(wf.id, wf.title)}
+                        className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
                         title="حذف گردش کار"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -328,65 +405,66 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                   </div>
                 )}
               </div>
-            </div>
 
-            {/* Sequence flow explanation */}
-            <div className="mb-3 flex items-center gap-2 text-xs text-slate-500">
-              <span className="font-semibold text-slate-700">ترتیب ارجاع در چارت سازمانی:</span>
-              <span className="text-slate-400">ابتدا پروژه به گام اول ارسال و پس از تایید متصدی آن سمت به گام‌های بعد منتقل می‌شود.</span>
-            </div>
+              {wf.description && (
+                <p className="text-xs text-slate-600 mb-4 leading-relaxed">
+                  {wf.description}
+                </p>
+              )}
 
-            {/* Steps Timeline Visual */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 relative">
-              {wf.steps.map((st, idx) => {
-                const isFirst = idx === 0;
-                const isLast = idx === wf.steps.length - 1;
-                const posDetails = getPositionDetails(st.positionId);
+              {/* Steps Timeline Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {wf.steps.map((st, idx) => {
+                  const isFirst = idx === 0;
+                  const posDetails = getPositionDetails(st.positionId, st.structureId);
+                  const structTitle = st.structureTitle || getStructureTitle(st.structureId);
 
-                return (
-                  <div
-                    key={st.id || idx}
-                    className={`p-4 rounded-2xl border flex flex-col justify-between relative group transition ${
-                      isFirst 
-                        ? 'bg-emerald-50/40 border-emerald-200 shadow-xs' 
-                        : 'bg-slate-50 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div>
+                  return (
+                    <div
+                      key={st.id || idx}
+                      className={`p-4 rounded-2xl border transition relative ${
+                        isFirst 
+                          ? 'bg-emerald-50/40 border-emerald-200 shadow-2xs' 
+                          : 'bg-slate-50/80 border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
                       {/* Step Header */}
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-1.5">
-                          <span className={`w-6 h-6 rounded-full font-extrabold text-xs flex items-center justify-center border ${
+                          <span className={`w-6 h-6 rounded-full font-black text-xs flex items-center justify-center border ${
                             isFirst 
                               ? 'bg-emerald-600 text-white border-emerald-600' 
                               : 'bg-slate-200 text-slate-700 border-slate-300'
                           }`}>
                             {idx + 1}
                           </span>
-                          <span className="text-[10px] font-bold text-slate-600">
-                            گام {idx + 1}
+                          <span className="text-xs font-bold text-slate-900">
+                            {st.title}
                           </span>
                         </div>
 
                         {isFirst ? (
                           <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold border border-emerald-300">
-                            نقطه شروع گردش
+                            آغاز گردش
                           </span>
-                        ) : isLast ? (
+                        ) : idx === wf.steps.length - 1 ? (
                           <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-bold border border-indigo-200">
-                            مرحله تصویب نهایی
+                            مرحله پایانی
                           </span>
                         ) : null}
                       </div>
 
-                      {/* Step Title */}
-                      <h4 className="text-xs font-bold text-slate-900 mb-1 leading-snug">
-                        {st.title}
-                      </h4>
+                      {/* Structure badge */}
+                      <div className="mb-2">
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-xl bg-white border border-slate-200 text-indigo-700 shadow-2xs">
+                          <FolderTree className="w-3 h-3 text-indigo-600" />
+                          ساختار: {structTitle}
+                        </span>
+                      </div>
 
                       {/* Action Type */}
                       <div className="mb-2">
-                        <span className="text-[10px] px-2 py-0.5 rounded-md bg-white border border-slate-200 text-slate-600 inline-block font-medium">
+                        <span className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-600 inline-block font-medium">
                           {actionTypeLabels[st.actionType] || st.actionType}
                         </span>
                       </div>
@@ -396,32 +474,32 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                           {st.description}
                         </p>
                       )}
-                    </div>
 
-                    {/* Responsible Position in Org Chart */}
-                    <div className="pt-2 border-t border-slate-200 mt-2">
-                      <span className="text-[10px] text-slate-400 block mb-0.5">سمت مسئول در ساختار سازمانی:</span>
-                      <span className="text-xs font-bold text-indigo-700 flex items-center gap-1.5 truncate">
-                        <Briefcase className="w-3.5 h-3.5 shrink-0 text-indigo-600" />
-                        {st.positionTitle || posDetails.title}
-                      </span>
-                      <span className="text-[10px] text-slate-500 truncate block mt-0.5 flex items-center gap-1">
-                        <Users className="w-3 h-3 text-slate-400" />
-                        متصدی: {posDetails.userNames}
-                      </span>
+                      {/* Responsible Position & Users in that Structure */}
+                      <div className="pt-2.5 border-t border-slate-200 mt-2">
+                        <span className="text-[10px] text-slate-400 block mb-0.5">سمت هدف در ساختار:</span>
+                        <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5 truncate">
+                          <Briefcase className="w-3.5 h-3.5 shrink-0 text-indigo-600" />
+                          {st.positionTitle || posDetails.title}
+                        </span>
+                        <span className="text-[10px] text-slate-500 truncate block mt-0.5 flex items-center gap-1">
+                          <Users className="w-3 h-3 text-slate-400 shrink-0" />
+                          متصدی: {posDetails.userNames}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ))}
+          ))
+        )}
       </div>
 
       {/* Modal: Create or Edit Workflow */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs overflow-y-auto">
-          <div className="w-full max-w-3xl rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden my-6 animate-in fade-in zoom-in-95 duration-150">
+          <div className="w-full max-w-4xl rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden my-6 animate-in fade-in zoom-in-95 duration-150">
             
             <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/70">
               <div className="flex items-center gap-2.5">
@@ -430,10 +508,10 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                 </span>
                 <div>
                   <h3 className="text-base font-bold text-slate-900">
-                    {editingWorkflow ? 'ویرایش فرآیند گردش کار و سمت‌ها' : 'طراحی فرآیند گردش کار جدید بر روی سمت‌های چارت'}
+                    {editingWorkflow ? 'ویرایش فرآیند گردش کار و ساختارها' : 'طراحی فرآیند گردش کار جدید بر اساس ساختارها و سمت‌ها'}
                   </h3>
                   <p className="text-[11px] text-slate-500">
-                    تعیین ترتیب دقیق ارجاع طرح میان سمت‌ها و مشخص کردن نقطه آغاز گردش.
+                    برای هر مرحله از گردش مشخص کنید پروژه به کدام سمت از کدام ساختار سازمانی ارجاع داده شود.
                   </p>
                 </div>
               </div>
@@ -462,8 +540,8 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                     type="text"
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
-                    placeholder="مثال: گردش کار ویژه پروژه‌های داستانی و سریال"
-                    className="w-full rounded-xl bg-slate-50 border border-slate-300 px-3.5 py-2 text-sm text-slate-900 focus:outline-none focus:border-emerald-500 focus:bg-white transition"
+                    placeholder="مثال: گردش کار بررسی طرح‌های سازمانی و پروژه‌ای"
+                    className="w-full rounded-xl bg-slate-50 border border-slate-300 px-3.5 py-2 text-sm text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white transition"
                     required
                   />
                 </div>
@@ -478,7 +556,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                       id="isDefaultWf"
                       checked={isDefault}
                       onChange={(e) => setIsDefault(e.target.checked)}
-                      className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                      className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                     />
                     <label htmlFor="isDefaultWf" className="text-xs text-slate-700 font-medium cursor-pointer">
                       گردش کار پیش‌فرض شورا
@@ -495,166 +573,209 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                   type="text"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="توضیح کوتاه در خصوص نحوه گردش طرح‌ها در این فرآیند..."
-                  className="w-full rounded-xl bg-slate-50 border border-slate-300 px-3.5 py-2 text-sm text-slate-900 focus:outline-none focus:border-emerald-500 focus:bg-white transition"
+                  placeholder="توضیح در خصوص ساختارها و نحوه ارجاع طرح‌ها در این فرآیند..."
+                  className="w-full rounded-xl bg-slate-50 border border-slate-300 px-3.5 py-2 text-sm text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white transition"
                 />
               </div>
 
-              {/* Dynamic Steps sequence builder based on Organizational Positions */}
+              {/* Dynamic Steps sequence builder based on Structures & Positions */}
               <div className="pt-2">
                 <div className="flex items-center justify-between mb-2">
                   <div>
                     <label className="text-xs font-bold text-slate-800 block">
-                      ترتیب مراحل ارجاع به سمت‌های چارت سازمانی:
+                      مراحل ارجاع: تعیین ساختار و سمت مسئول برای هر گام
                     </label>
                     <p className="text-[11px] text-slate-500">
-                      مرحله ۱ سمتی است که پروژه بلافاصله پس از ثبت به کارتابل آن ارسال خواهد شد. با دکمه‌های فلش می‌توانید اولویت مراحل را جابجا کنید.
+                      پروژه به ترتیب از گام ۱ به سمت‌های مشخص شده در ساختارهای انتخابی ارسال خواهد شد.
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={addStep}
-                    className="px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 text-xs font-bold flex items-center gap-1 transition cursor-pointer"
+                    className="px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 text-xs font-bold flex items-center gap-1 transition cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    افزودن مرحله به گردش
+                    افزودن گام جدید
                   </button>
                 </div>
 
-                <div className="space-y-3 max-h-80 overflow-y-auto p-1">
+                <div className="space-y-3 max-h-96 overflow-y-auto p-1">
                   {steps.map((st, idx) => {
                     const isFirst = idx === 0;
+                    const currentStructId = st.structureId || '';
+                    const structPositions = currentStructId && structurePositionsMap[currentStructId]
+                      ? structurePositionsMap[currentStructId]
+                      : [];
+
                     return (
                       <div
                         key={idx}
-                        className={`p-3.5 rounded-2xl border transition flex flex-col sm:flex-row items-start sm:items-center gap-3 ${
+                        className={`p-4 rounded-2xl border transition flex flex-col gap-3 ${
                           isFirst 
-                            ? 'bg-emerald-50/50 border-emerald-200' 
+                            ? 'bg-emerald-50/40 border-emerald-200' 
                             : 'bg-slate-50 border-slate-200'
                         }`}
                       >
-                        {/* Order & Reordering buttons */}
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className={`w-7 h-7 rounded-xl font-bold text-xs flex items-center justify-center border ${
-                            isFirst 
-                              ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' 
-                              : 'bg-white text-slate-700 border-slate-300'
-                          }`}>
-                            {idx + 1}
-                          </span>
-                          
-                          <div className="flex flex-col gap-0.5">
+                        {/* Step Top Bar */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className={`w-7 h-7 rounded-xl font-black text-xs flex items-center justify-center border ${
+                              isFirst 
+                                ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs' 
+                                : 'bg-white text-slate-700 border-slate-300'
+                            }`}>
+                              {idx + 1}
+                            </span>
+                            <span className="text-xs font-bold text-slate-900">
+                              گام شماره {idx + 1}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
                             <button
                               type="button"
                               onClick={() => moveStepUp(idx)}
                               disabled={idx === 0}
-                              className="p-1 rounded bg-white border border-slate-200 text-slate-500 hover:text-slate-800 disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                              className="p-1 rounded-lg bg-white border border-slate-200 text-slate-500 hover:text-slate-800 disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
                               title="انتقال به گام قبل"
                             >
-                              <ArrowUp className="w-3 h-3" />
+                              <ArrowUp className="w-3.5 h-3.5" />
                             </button>
                             <button
                               type="button"
                               onClick={() => moveStepDown(idx)}
                               disabled={idx === steps.length - 1}
-                              className="p-1 rounded bg-white border border-slate-200 text-slate-500 hover:text-slate-800 disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                              className="p-1 rounded-lg bg-white border border-slate-200 text-slate-500 hover:text-slate-800 disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
                               title="انتقال به گام بعد"
                             >
-                              <ArrowDown className="w-3 h-3" />
+                              <ArrowDown className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeStep(idx)}
+                              className="p-1 rounded-lg bg-white border border-rose-200 text-rose-500 hover:bg-rose-50 cursor-pointer mr-1"
+                              title="حذف این گام"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
                         </div>
 
-                        {/* Step details fields */}
-                        <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-2 w-full">
+                        {/* Fields Row */}
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
                           
-                          {/* Title */}
-                          <div>
-                            <label className="block text-[10px] text-slate-500 mb-1">
+                          {/* Step Title */}
+                          <div className="sm:col-span-3">
+                            <label className="block text-[11px] font-bold text-slate-700 mb-1">
                               عنوان این مرحله:
                             </label>
                             <input
                               type="text"
                               value={st.title}
                               onChange={(e) => handleStepChange(idx, 'title', e.target.value)}
-                              placeholder="عنوان مرحله"
-                              className="w-full rounded-xl bg-white border border-slate-300 px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-emerald-500 transition"
+                              placeholder="مثال: ارزیابی فنی و مالی"
+                              className="w-full rounded-xl bg-white border border-slate-300 px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-indigo-500 transition"
                               required
                             />
                           </div>
 
-                          {/* Position Selector from Organizational Chart */}
-                          <div>
-                            <label className="block text-[10px] text-slate-500 mb-1">
-                              سمت مسئول در چارت سازمانی:
+                          {/* 1. Project Structure Selector */}
+                          <div className="sm:col-span-3">
+                            <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1">
+                              <FolderTree className="w-3 h-3 text-indigo-600" />
+                              از کدام ساختار پروژه / سازمانی؟
+                            </label>
+                            <select
+                              value={st.structureId || ''}
+                              onChange={(e) => handleStepChange(idx, 'structureId', e.target.value || null)}
+                              className="w-full rounded-xl bg-white border border-slate-300 px-2.5 py-1.5 text-xs text-indigo-900 font-bold focus:outline-none focus:border-indigo-500 cursor-pointer transition"
+                            >
+                              <option value="">چارت عمومی سازمان</option>
+                              {structures.map((s) => (
+                                <option key={s.id} value={s.id}>
+                                  {s.title} ({s.category || 'ساختار سازمانی'})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* 2. Position Selector for chosen Structure */}
+                          <div className="sm:col-span-3">
+                            <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1">
+                              <Briefcase className="w-3 h-3 text-indigo-600" />
+                              سمت هدف از این ساختار:
                             </label>
                             <select
                               value={st.positionId}
                               onChange={(e) => handleStepChange(idx, 'positionId', e.target.value)}
-                              className="w-full rounded-xl bg-white border border-slate-300 px-2.5 py-1.5 text-xs text-indigo-700 font-bold focus:outline-none focus:border-emerald-500 cursor-pointer transition"
+                              className="w-full rounded-xl bg-white border border-slate-300 px-2.5 py-1.5 text-xs text-indigo-700 font-bold focus:outline-none focus:border-indigo-500 cursor-pointer transition"
                             >
-                              {positions.map((p) => {
-                                const details = getPositionDetails(p.id);
-                                return (
-                                  <option key={p.id} value={p.id}>
-                                    {p.title} ({details.userNames})
-                                  </option>
-                                );
-                              })}
+                              {/* If specific structure chosen and has positions defined */}
+                              {currentStructId && structPositions.length > 0 ? (
+                                structPositions.map((sp) => {
+                                  const userList = sp.users && sp.users.length > 0 
+                                    ? sp.users.map((u) => u.name).join('، ')
+                                    : 'بدون متصدی مستقیم';
+                                  return (
+                                    <option key={sp.id} value={sp.positionId}>
+                                      {sp.title} ({userList})
+                                    </option>
+                                  );
+                                })
+                              ) : (
+                                /* Fallback to general positions */
+                                positions.map((p) => {
+                                  const details = getPositionDetails(p.id);
+                                  return (
+                                    <option key={p.id} value={p.id}>
+                                      {p.title} ({details.userNames})
+                                    </option>
+                                  );
+                                })
+                              )}
                             </select>
                           </div>
 
-                          {/* Action Type */}
-                          <div>
-                            <label className="block text-[10px] text-slate-500 mb-1">
-                              نوع اقدام در این مرحله:
+                          {/* 3. Action Type */}
+                          <div className="sm:col-span-3">
+                            <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                              نوع اقدام:
                             </label>
                             <select
                               value={st.actionType}
                               onChange={(e) => handleStepChange(idx, 'actionType', e.target.value)}
-                              className="w-full rounded-xl bg-white border border-slate-300 px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-500 cursor-pointer transition"
+                              className="w-full rounded-xl bg-white border border-slate-300 px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-indigo-500 cursor-pointer transition"
                             >
-                              <option value="TECHNICAL_APPROVE">ارزیابی فنی و تجهیزات</option>
-                              <option value="CONTENT_APPROVE">بررسی کیفی و فیلم‌نامه</option>
-                              <option value="BUDGET_APPROVE">کنترل مالی و برآورد بودجه</option>
-                              <option value="COUNCIL_REVIEW">بررسی کارشناسی و استعلام</option>
-                              <option value="FINAL_COUNCIL_VOTE">طرح در صحن شورا و رای‌گیری</option>
-                              <option value="DIRECTOR_SANCTION">تنفیذ و تایید نهایی مدیریت</option>
-                              <option value="REVIEW">بررسی عمومی و ارزیابی اولیه</option>
+                              {Object.entries(actionTypeLabels).map(([val, label]) => (
+                                <option key={val} value={val}>
+                                  {label}
+                                </option>
+                              ))}
                             </select>
                           </div>
 
                         </div>
-
-                        {/* Delete step button */}
-                        <button
-                          type="button"
-                          onClick={() => removeStep(idx)}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 transition cursor-pointer shrink-0"
-                          title="حذف مرحله"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
                       </div>
                     );
                   })}
                 </div>
               </div>
 
-              <div className="pt-3 flex items-center justify-end gap-3 border-t border-slate-100">
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setModalOpen(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-300 text-xs text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+                  className="px-4 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
                 >
                   انصراف
                 </button>
                 <button
                   type="submit"
                   disabled={loading}
-                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-xs font-bold text-white shadow-sm disabled:opacity-50 transition cursor-pointer"
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer disabled:opacity-50"
                 >
-                  {loading ? 'در حال ذخیره...' : editingWorkflow ? 'ذخیره تغییرات گردش کار' : 'ثبت فرآیند گردش کار'}
+                  {loading ? 'در حال ذخیره‌سازی...' : editingWorkflow ? 'ذخیره تغییرات' : 'ایجاد گردش کار'}
                 </button>
               </div>
 

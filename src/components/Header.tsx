@@ -18,7 +18,7 @@ import {
 
 interface HeaderProps {
   currentUser: User;
-  activeTab: 'projects' | 'fields' | 'structures' | 'users' | 'org' | 'chat' | 'stats';
+  activeTab: 'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats';
   onOpenMobileMenu: () => void;
 }
 
@@ -33,6 +33,8 @@ export const Header: React.FC<HeaderProps> = ({
         return { title: 'کارتابل و پروژه‌های شورا', icon: Layers, desc: 'ارزیابی مستقیم تمام طرح‌ها، رای‌گیری ۳ حالته اعضا و تجمیع آرا' };
       case 'structures':
         return { title: 'مدیریت ساختار سازمانی', icon: FolderTree, desc: 'تعریف ساختارها (مانند ماموریت، مرخصی، مالی)، چیدمان درختی سمت‌ها و انتصاب پرسنل' };
+      case 'workflows':
+        return { title: 'طراحی گردش کار پروژه‌ها', icon: GitBranch, desc: 'تعیین ارجاع مرحله‌ای طرح‌ها به سمت‌های مشخص از هر ساختار سازمانی' };
       case 'org':
         return { title: 'چارت و سمت‌های سازمانی', icon: Network, desc: 'کتابخانه سمت‌های سازمان، سطوح سلسله‌مراتب و ماتریس دسترسی‌ها' };
       case 'users':

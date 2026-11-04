@@ -11,13 +11,14 @@ import {
   ChevronRight, 
   ChevronLeft,
   X,
-  FolderTree
+  FolderTree,
+  GitBranch
 } from 'lucide-react';
 
 interface SidebarProps {
   currentUser: User;
-  activeTab: 'projects' | 'fields' | 'structures' | 'users' | 'org' | 'chat' | 'stats';
-  setActiveTab: (tab: 'projects' | 'fields' | 'structures' | 'users' | 'org' | 'chat' | 'stats') => void;
+  activeTab: 'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats';
+  setActiveTab: (tab: 'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats') => void;
   onLogout: () => void;
   pendingVotesCount?: number;
   mobileOpen: boolean;
@@ -72,6 +73,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
           badge: null,
           badgeColor: '',
           permission: 'projects.fields.manage',
+        },
+        {
+          id: 'workflows' as const,
+          title: 'طراحی گردش کار پروژه‌ها',
+          shortTitle: 'گردش کار',
+          icon: GitBranch,
+          badge: null,
+          badgeColor: '',
+          permission: 'workflow.definitions.manage',
         },
         /* 'org' (چارت و ساختار درختی سمت‌ها) - فعلا به درخواست کاربر پنهان شده است
         {

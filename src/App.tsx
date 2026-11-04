@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User, Project, DynamicField, Position, DashboardStats, ProjectStructure } from './types';
+import { User, Project, DynamicField, Position, DashboardStats, ProjectStructure, Workflow } from './types';
 import { api } from './services/api';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -8,6 +8,7 @@ import { VotingModal } from './components/VotingModal';
 import { CreateProjectModal } from './components/CreateProjectModal';
 import { DynamicFieldsManager } from './components/DynamicFieldsManager';
 import { ProjectStructuresManager } from './components/ProjectStructuresManager';
+import { WorkflowManager } from './components/WorkflowManager';
 import { UsersPositionsManager } from './components/UsersPositionsManager';
 import { OrgHierarchyChart } from './components/OrgHierarchyChart';
 import { CouncilChat } from './components/CouncilChat';
@@ -31,12 +32,13 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [dynamicFields, setDynamicFields] = useState<DynamicField[]>([]);
   const [projectStructures, setProjectStructures] = useState<ProjectStructure[]>([]);
+  const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
 
   // Navigation & Filters
-  const [activeTab, setActiveTab] = useState<'projects' | 'fields' | 'structures' | 'users' | 'org' | 'chat' | 'stats'>('projects');
+  const [activeTab, setActiveTab] = useState<'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats'>('projects');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING_MY_VOTE' | 'APPROVED' | 'NEEDS_REVISION' | 'REJECTED'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -47,25 +49,32 @@ export default function App() {
 
   const [loading, setLoading] = useState(false);
 
-  // Check login on mount
+  // Check login on mount with tab/window-isolated session
   useEffect(() => {
-    const token = localStorage.getItem('council_token');
-    const storedUser = localStorage.getItem('council_user');
+    const token = api.getToken();
+    const storedUser = api.getStoredUser();
 
-    if (token && storedUser) {
-      try {
-        setCurrentUser(JSON.parse(storedUser));
-      } catch (e) {
-        localStorage.removeItem('council_token');
-        localStorage.removeItem('council_user');
+    if (token) {
+      if (storedUser) {
+        setCurrentUser(storedUser);
       }
+      // Validate token with backend using JWT
+      api.getMe()
+        .then((user) => {
+          setCurrentUser(user);
+        })
+        .catch(() => {
+          api.logout();
+          setCurrentUser(null);
+        })
+        .finally(() => {
+          setAuthChecked(true);
+        });
     } else {
-      // Auto-authenticate default session if not set
-      api.login('admin', 'admin123').then((res) => {
-        setCurrentUser(res.user);
-      }).catch(() => {});
+      // If no valid session in this tab/window, show Login modal cleanly (never auto-login)
+      setCurrentUser(null);
+      setAuthChecked(true);
     }
-    setAuthChecked(true);
   }, []);
 
   // Fetch all council data
@@ -73,13 +82,14 @@ export default function App() {
     if (!currentUser) return;
     setLoading(true);
     try {
-      const [prjs, flds, structs, usrs, pos, st] = await Promise.all([
+      const [prjs, flds, structs, usrs, pos, st, wfs] = await Promise.all([
         api.getProjects(),
         api.getDynamicFields(),
         api.getProjectStructures(),
         api.getUsers(),
         api.getPositions(),
         api.getDashboardStats(),
+        api.getWorkflows(),
       ]);
       setProjects(prjs);
       setDynamicFields(flds);
@@ -87,6 +97,7 @@ export default function App() {
       setUsers(usrs);
       setPositions(pos);
       setStats(st);
+      setWorkflows(wfs);
     } catch (err) {
       console.error('Error refreshing data:', err);
     } finally {
@@ -337,6 +348,18 @@ export default function App() {
             <ProjectStructuresManager
               structures={projectStructures}
               positions={positions}
+              users={users}
+              currentUser={currentUser}
+              onRefresh={refreshData}
+            />
+          )}
+
+          {/* ===================== TAB: WORKFLOWS (طراحی و مدیریت گردش کار پروژه‌ها) ===================== */}
+          {activeTab === 'workflows' && (
+            <WorkflowManager
+              workflows={workflows}
+              positions={positions}
+              structures={projectStructures}
               users={users}
               currentUser={currentUser}
               onRefresh={refreshData}

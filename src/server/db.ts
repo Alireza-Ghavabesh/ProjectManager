@@ -154,6 +154,7 @@ export function initDatabase() {
       workflowId TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
       stepOrder INTEGER NOT NULL,
       title TEXT NOT NULL,
+      structureId TEXT REFERENCES project_structures(id) ON DELETE SET NULL,
       positionId TEXT NOT NULL REFERENCES positions(id) ON DELETE CASCADE,
       actionType TEXT DEFAULT 'REVIEW', -- 'REVIEW', 'TECHNICAL_APPROVE', 'BUDGET_APPROVE', 'CONTENT_APPROVE', 'FINAL_COUNCIL_VOTE'
       description TEXT
@@ -279,6 +280,9 @@ export function initDatabase() {
   } catch (e) {}
   try {
     db.prepare('ALTER TABLE projects ADD COLUMN currentPositionId TEXT REFERENCES positions(id) ON DELETE SET NULL').run();
+  } catch (e) {}
+  try {
+    db.prepare('ALTER TABLE workflow_steps ADD COLUMN structureId TEXT REFERENCES project_structures(id) ON DELETE SET NULL').run();
   } catch (e) {}
 
   seedInitialData();

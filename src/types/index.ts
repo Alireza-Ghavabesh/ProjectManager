@@ -106,6 +106,8 @@ export interface WorkflowStep {
   workflowId: string;
   stepOrder: number;
   title: string;
+  structureId?: string | null;
+  structureTitle?: string;
   positionId: string;
   positionTitle?: string;
   positionColor?: string;

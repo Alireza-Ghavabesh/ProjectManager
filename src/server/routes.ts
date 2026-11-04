@@ -1,20 +1,32 @@
 import express, { Request, Response } from 'express';
 import { db, generateOfflineAvatarSvg } from './db.js';
 import { randomUUID } from 'crypto';
+import { createJwtToken, verifyJwtToken } from './jwt.js';
 
 export const apiRouter = express.Router();
 
-// Helper to get authenticated user from request header or query
+// Helper to get authenticated user from request header or query using JWT
 function getCurrentUser(req: Request) {
   const authHeader = req.headers.authorization;
-  let userId = '';
+  let rawToken = '';
   if (authHeader && authHeader.startsWith('Bearer ')) {
-    userId = authHeader.substring(7).trim();
+    rawToken = authHeader.substring(7).trim();
   } else if (req.query.userId && typeof req.query.userId === 'string') {
-    userId = req.query.userId;
+    rawToken = req.query.userId;
   }
 
-  if (!userId) return null;
+  if (!rawToken) return null;
+
+  let userId = '';
+  if (rawToken.includes('.')) {
+    // Standard JWT token verification
+    const decoded = verifyJwtToken(rawToken);
+    if (!decoded || !decoded.sub) return null;
+    userId = decoded.sub;
+  } else {
+    // Fallback for raw user id (e.g. backward-compatibility or tests)
+    userId = rawToken;
+  }
 
   const user = db.prepare(`
     SELECT u.id, u.username, u.name, u.role, u.positionId, u.avatar, u.phone,
@@ -144,7 +156,12 @@ apiRouter.post('/auth/login', (req: Request, res: Response) => {
 
   const permissions = getUserPermissionsList(user);
   const fullUser = { ...user, permissions };
-  res.json({ token: user.id, user: fullUser });
+  const token = createJwtToken({
+    sub: user.id,
+    username: user.username,
+    role: user.role,
+  });
+  res.json({ token, user: fullUser });
 });
 
 apiRouter.get('/auth/me', (req: Request, res: Response) => {
@@ -533,9 +550,10 @@ apiRouter.delete('/positions/:id', (req: Request, res: Response) => {
 apiRouter.get('/workflows', (_req: Request, res: Response) => {
   const workflows = db.prepare('SELECT * FROM workflows ORDER BY isDefault DESC, title ASC').all() as any[];
   const steps = db.prepare(`
-    SELECT s.*, p.title as positionTitle, p.color as positionColor
+    SELECT s.*, p.title as positionTitle, p.color as positionColor, ps.title as structureTitle
     FROM workflow_steps s
     JOIN positions p ON s.positionId = p.id
+    LEFT JOIN project_structures ps ON s.structureId = ps.id
     ORDER BY s.workflowId ASC, s.stepOrder ASC
   `).all() as any[];
 
@@ -566,8 +584,8 @@ apiRouter.post('/workflows', (req: Request, res: Response) => {
 
   const insertWf = db.prepare('INSERT INTO workflows (id, title, description, isDefault, createdAt) VALUES (?, ?, ?, 0, ?)');
   const insertStep = db.prepare(`
-    INSERT INTO workflow_steps (id, workflowId, stepOrder, title, positionId, actionType, description)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO workflow_steps (id, workflowId, stepOrder, title, structureId, positionId, actionType, description)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const tx = db.transaction(() => {
@@ -578,6 +596,7 @@ apiRouter.post('/workflows', (req: Request, res: Response) => {
         id,
         idx + 1,
         s.title || `گام ${idx + 1}`,
+        s.structureId || null,
         s.positionId,
         s.actionType || 'REVIEW',
         s.description || ''
@@ -609,8 +628,8 @@ apiRouter.put('/workflows/:id', (req: Request, res: Response) => {
     db.prepare('DELETE FROM workflow_steps WHERE workflowId = ?').run(id);
 
     const insertStep = db.prepare(`
-      INSERT INTO workflow_steps (id, workflowId, stepOrder, title, positionId, actionType, description)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO workflow_steps (id, workflowId, stepOrder, title, structureId, positionId, actionType, description)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     steps.forEach((s: any, idx: number) => {
@@ -619,6 +638,7 @@ apiRouter.put('/workflows/:id', (req: Request, res: Response) => {
         id,
         idx + 1,
         s.title || `گام ${idx + 1}`,
+        s.structureId || null,
         s.positionId,
         s.actionType || 'REVIEW',
         s.description || ''
@@ -1356,6 +1376,8 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
         attachments: prjAttachments,
         attachmentCount: prjAttachments.length,
         majorityResult: majorityInfo.majority,
+        voteCounts: majorityInfo.counts,
+        totalCouncilMembers: totalCouncilCount,
         hasVoted: !!myVote,
         userVote: myVote || null,
         workflowSteps: prjSteps,
