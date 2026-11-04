@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 
 import { ProjectAttachments } from './ProjectAttachments';
+import { formatBudgetDisplay } from '../utils/formatters';
 
 interface ProjectCardProps {
   project: Project;
@@ -184,7 +185,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           {project.title}
         </h3>
         {project.description && (
-          <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+          <p className="text-xs sm:text-sm text-slate-600 leading-relaxed whitespace-pre-wrap bg-slate-50/50 p-2.5 rounded-xl border border-slate-100">
             {project.description}
           </p>
         )}
@@ -278,7 +279,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           <div className="flex items-center gap-2 text-slate-700">
             <Coins className="w-4 h-4 text-amber-600 shrink-0" />
             <span className="text-slate-500">برآورد هزینه:</span>
-            <span className="font-semibold text-slate-900">{project.budgetEstimated}</span>
+            <span className="font-bold text-slate-900">{formatBudgetDisplay(project.budgetEstimated)}</span>
           </div>
         )}
       </div>

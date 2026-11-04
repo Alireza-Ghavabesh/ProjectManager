@@ -41,7 +41,9 @@ app.use('/api', apiRouter);
 async function startServer() {
   const httpServer = http.createServer(app);
 
-  if (process.env.NODE_ENV === 'production') {
+  const isProduction = process.env.NODE_ENV === 'production' || process.argv.includes('--production') || process.argv.includes('--prod');
+
+  if (isProduction) {
     app.use(express.static(path.resolve(__dirname, 'dist')));
     app.get('*', (_req, res) => {
       res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));

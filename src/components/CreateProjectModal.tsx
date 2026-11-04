@@ -3,6 +3,7 @@ import { DynamicField, Project, ProjectAttachment } from '../types';
 import { api, fileToBase64, formatFileSize } from '../services/api';
 import { ProjectAttachments } from './ProjectAttachments';
 import { PersianDatePicker } from './PersianDatePicker';
+import { formatCurrencyInput, formatBudgetDisplay } from '../utils/formatters';
 import { 
   X, 
   Calendar, 
@@ -39,7 +40,9 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   );
   const [productionType, setProductionType] = useState(editProject?.productionType || 'طرح عمومی شورا');
   const [deadline, setDeadline] = useState(editProject?.deadline || '۱۴۰۳/۰۹/۳۰');
-  const [budgetEstimated, setBudgetEstimated] = useState(editProject?.budgetEstimated || '');
+  const [budgetEstimated, setBudgetEstimated] = useState(
+    formatCurrencyInput(editProject?.budgetEstimated || '')
+  );
   const [description, setDescription] = useState(editProject?.description || '');
 
   // Initialize requirements from dynamic fields or existing project
@@ -262,31 +265,49 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
               {/* Budget */}
               <div>
-                <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1.5">
-                  <Coins className="w-3.5 h-3.5 text-slate-500" />
-                  برآورد بودجه پیشنهادی
+                <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Coins className="w-3.5 h-3.5 text-slate-500" />
+                    <span>برآورد بودجه پیشنهادی</span>
+                  </span>
+                  {budgetEstimated && (
+                    <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-md">
+                      {formatBudgetDisplay(budgetEstimated)}
+                    </span>
+                  )}
                 </label>
-                <input
-                  type="text"
-                  value={budgetEstimated}
-                  onChange={(e) => setBudgetEstimated(e.target.value)}
-                  placeholder="مثال: ۷۵۰٬۰۰۰٬۰۰۰ تومان"
-                  className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs"
-                />
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={budgetEstimated}
+                    onChange={(e) => setBudgetEstimated(formatCurrencyInput(e.target.value))}
+                    placeholder="مثال: ۱۵۰٬۰۰۰٬۰۰۰"
+                    className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs sm:text-sm font-semibold text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs ltr:text-left"
+                    dir="ltr"
+                  />
+                  <span className="absolute left-3 top-2.5 text-[11px] font-bold text-slate-400 pointer-events-none">
+                    تومان
+                  </span>
+                </div>
               </div>
 
               {/* Description */}
               <div className="md:col-span-2 lg:col-span-3">
-                <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1.5">
-                  <FileText className="w-3.5 h-3.5 text-slate-500" />
-                  خلاصه طرح و اهداف پروژه
+                <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5 text-slate-500" />
+                    <span>خلاصه شرح و اهداف پروژه</span>
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    خطوط بعدی و فاصله‌ها در نمایش حفظ می‌شوند
+                  </span>
                 </label>
                 <textarea
-                  rows={2}
+                  rows={4}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="توضیحات کلی درباره اهداف، ویژگی‌های فنی یا محتوایی..."
-                  className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-1.5 text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition resize-none shadow-2xs leading-relaxed"
+                  placeholder="شرح و اهداف پروژه، محورهای محتوایی، خلاصه داستان، مشخصات و نکات ویژه... (با زدن Enter به خط بعدی بروید)"
+                  className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2.5 text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs leading-relaxed whitespace-pre-wrap"
                 />
               </div>
 
@@ -309,38 +330,46 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                   {dynamicFields.map((field) => (
                     <div
                       key={field.key}
-                      className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/90 flex flex-col justify-between hover:border-slate-300 transition"
+                      className="p-3 rounded-2xl bg-slate-50/80 border border-slate-200 flex flex-col justify-between hover:border-slate-300 transition shadow-2xs"
                     >
-                      <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center justify-between mb-2">
                         <span className="text-xs font-bold text-slate-800 truncate" title={field.name}>
                           {field.name}
                         </span>
-                        <span className="text-[10px] text-slate-400">
+                        <span className="text-[10px] font-medium text-slate-400 bg-white px-1.5 py-0.5 rounded-md border border-slate-200/60">
                           {field.unit || 'نفر'}
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-1.5">
+                      {/* Modern Arranged Stepper */}
+                      <div className="flex items-center justify-between bg-white border border-slate-200/90 rounded-xl p-1 shadow-2xs hover:border-indigo-300 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/10 transition">
                         <button
                           type="button"
                           onClick={() => handleDecrement(field.key)}
-                          className="w-7 h-7 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 flex items-center justify-center transition cursor-pointer shadow-2xs"
+                          className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 active:scale-90 transition flex items-center justify-center cursor-pointer disabled:opacity-30 disabled:pointer-events-none"
+                          disabled={parseInt(requirements[field.key] || '0', 10) <= 0}
+                          title="کاهش تعداد"
                         >
-                          <Minus className="w-3 h-3" />
+                          <Minus className="w-3.5 h-3.5 stroke-[2.5]" />
                         </button>
-                        <input
-                          type="number"
-                          min="0"
-                          value={requirements[field.key] || '0'}
-                          onChange={(e) => handleRequirementChange(field.key, e.target.value)}
-                          className="flex-1 text-center font-bold text-xs bg-white border border-slate-200 rounded-lg py-1 text-slate-900 focus:outline-none focus:border-indigo-500 shadow-2xs"
-                        />
+                        
+                        <div className="flex-1 flex items-center justify-center px-1">
+                          <input
+                            type="number"
+                            min="0"
+                            value={requirements[field.key] || '0'}
+                            onChange={(e) => handleRequirementChange(field.key, e.target.value)}
+                            className="w-full text-center font-bold text-sm bg-transparent text-slate-900 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          />
+                        </div>
+
                         <button
                           type="button"
                           onClick={() => handleIncrement(field.key)}
-                          className="w-7 h-7 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 flex items-center justify-center transition cursor-pointer shadow-2xs"
+                          className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-600 active:scale-90 transition flex items-center justify-center cursor-pointer"
+                          title="افزایش تعداد"
                         >
-                          <Plus className="w-3 h-3" />
+                          <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
                         </button>
                       </div>
                     </div>
