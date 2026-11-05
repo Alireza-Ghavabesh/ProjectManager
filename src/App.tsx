@@ -52,6 +52,14 @@ export default function App() {
 
   // Check login on mount with tab/window-isolated session
   useEffect(() => {
+    // Purge legacy localStorage tokens so new/private windows always show login screen
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('council_jwt_token');
+      localStorage.removeItem('council_jwt_user');
+      localStorage.removeItem('council_token');
+      localStorage.removeItem('council_user');
+    }
+
     const token = api.getToken();
     const storedUser = api.getStoredUser();
 
@@ -83,7 +91,7 @@ export default function App() {
     if (!currentUser) return;
     setLoading(true);
     try {
-      const [prjs, flds, structs, usrs, pos, st, wfs] = await Promise.all([
+      const [prjs, flds, structs, usrs, pos, st, wfs, me] = await Promise.all([
         api.getProjects(),
         api.getDynamicFields(),
         api.getProjectStructures(),
@@ -91,6 +99,7 @@ export default function App() {
         api.getPositions(),
         api.getDashboardStats(),
         api.getWorkflows(),
+        api.getMe().catch(() => null),
       ]);
       setProjects(prjs);
       setDynamicFields(flds);
@@ -99,6 +108,9 @@ export default function App() {
       setPositions(pos);
       setStats(st);
       setWorkflows(wfs);
+      if (me) {
+        setCurrentUser(me);
+      }
     } catch (err) {
       console.error('Error refreshing data:', err);
     } finally {

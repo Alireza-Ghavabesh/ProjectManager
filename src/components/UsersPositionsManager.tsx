@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { User, Position } from '../types';
+import React, { useState, useEffect } from 'react';
+import { User, Position, PasswordResetRequest } from '../types';
 import { api } from '../services/api';
+import { PermissionsTreeModal } from './PermissionsTreeModal';
 import { 
   Users, 
   Briefcase, 
@@ -11,9 +12,18 @@ import {
   UserCheck, 
   Key, 
   X, 
-  Sparkles,
-  Phone,
-  CheckCircle2
+  Sparkles, 
+  Phone, 
+  CheckCircle2, 
+  Lock, 
+  Search, 
+  Check, 
+  AlertCircle,
+  Crown,
+  Clock,
+  Send,
+  RotateCcw,
+  HelpCircle
 } from 'lucide-react';
 
 interface UsersPositionsManagerProps {
@@ -29,8 +39,23 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
   currentUser,
   onRefresh,
 }) => {
-  const [subTab, setSubTab] = useState<'users' | 'positions'>('users');
+  const [subTab, setSubTab] = useState<'users' | 'positions' | 'permissions' | 'resets'>('users');
   const isAdmin = currentUser.role === 'ADMIN';
+
+  // Selected for permissions modal
+  const [selectedUserForPerms, setSelectedUserForPerms] = useState<User | null>(null);
+  const [selectedPosForPerms, setSelectedPosForPerms] = useState<Position | null>(null);
+
+  // Search filter
+  const [searchUserQuery, setSearchUserQuery] = useState('');
+  const [searchPosQuery, setSearchPosQuery] = useState('');
+
+  // Password Reset Requests (کارتابل فراموشی رمز)
+  const [resetRequests, setResetRequests] = useState<PasswordResetRequest[]>([]);
+  const [resolvingReqId, setResolvingReqId] = useState<string | null>(null);
+  const [newPasswordInput, setNewPasswordInput] = useState<{ [key: string]: string }>({});
+  const [resolveActionLoading, setResolveActionLoading] = useState(false);
+  const [resetFeedbackMsg, setResetFeedbackMsg] = useState('');
 
   // User creation / edit modal state
   const [showUserModal, setShowUserModal] = useState(false);
@@ -51,6 +76,23 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Fetch reset requests if admin
+  const fetchResetRequests = async () => {
+    if (!isAdmin) return;
+    try {
+      const reqs = await api.getPasswordResetRequests();
+      setResetRequests(reqs);
+    } catch (err) {
+      console.error('Error fetching password reset requests:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchResetRequests();
+  }, [isAdmin]);
+
+  const pendingResetRequests = resetRequests.filter((r) => r.status === 'PENDING');
 
   // Open User modal
   const openUserModal = (user?: User) => {
@@ -189,6 +231,49 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
     }
   };
 
+  // Admin resolves password reset request
+  const handleResolveRequest = async (req: PasswordResetRequest, action: 'APPROVE' | 'REJECT') => {
+    const customPass = newPasswordInput[req.id]?.trim() || 'pass1234';
+    if (action === 'APPROVE' && customPass.length < 4) {
+      alert('رمز عبور جدید باید حداقل ۴ کاراکتر باشد.');
+      return;
+    }
+
+    setResolveActionLoading(true);
+    setResetFeedbackMsg('');
+    try {
+      const res = await api.resolvePasswordResetRequest(req.id, action, action === 'APPROVE' ? customPass : undefined);
+      setResetFeedbackMsg(res.message);
+      await fetchResetRequests();
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'خطا در پردازش درخواست');
+    } finally {
+      setResolveActionLoading(false);
+    }
+  };
+
+  // Filtered lists
+  const filteredUsers = users.filter((u) => {
+    const q = searchUserQuery.toLowerCase().trim();
+    if (!q) return true;
+    return (
+      u.name.toLowerCase().includes(q) ||
+      u.username.toLowerCase().includes(q) ||
+      (u.positionTitle && u.positionTitle.toLowerCase().includes(q)) ||
+      (u.phone && u.phone.includes(q))
+    );
+  });
+
+  const filteredPositions = positions.filter((p) => {
+    const q = searchPosQuery.toLowerCase().trim();
+    if (!q) return true;
+    return (
+      p.title.toLowerCase().includes(q) ||
+      (p.description && p.description.toLowerCase().includes(q))
+    );
+  });
+
   return (
     <div className="space-y-6">
       
@@ -197,17 +282,17 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
         <div>
           <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
             <Users className="w-5 h-5 text-indigo-600" />
-            مدیریت اعضای شورا، تعریف سمت‌ها و انتصاب‌ها
+            مدیریت کاربران، سمت‌های سازمانی و ماتریس دسترسی‌ها
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            تعریف سمت‌های تخصصی در شورا و انتصاب اعضا به سمت‌ها با نام کاربری و رمز اختصاصی
+            تعریف سمت‌ها، انتصاب اعضا، ایجاد کاربر ارشد سیستم و پاسخ به درخواست‌های فراموشی رمز عبور
           </p>
         </div>
 
-        <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 self-stretch sm:self-auto">
+        <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 self-stretch sm:self-auto overflow-x-auto">
           <button
             onClick={() => setSubTab('users')}
-            className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+            className={`flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
               subTab === 'users'
                 ? 'bg-indigo-600 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
@@ -217,7 +302,7 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
           </button>
           <button
             onClick={() => setSubTab('positions')}
-            className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+            className={`flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
               subTab === 'positions'
                 ? 'bg-indigo-600 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
@@ -225,100 +310,202 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
           >
             سمت‌های سازمانی ({positions.length})
           </button>
+          <button
+            onClick={() => setSubTab('permissions')}
+            className={`flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+              subTab === 'permissions'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Shield className="w-3.5 h-3.5" />
+            <span>ماتریس دسترسی‌ها</span>
+          </button>
+          {isAdmin && (
+            <button
+              onClick={() => setSubTab('resets')}
+              className={`flex-1 sm:flex-none px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap relative ${
+                subTab === 'resets'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Key className="w-3.5 h-3.5" />
+              <span>فراموشی رمز</span>
+              {pendingResetRequests.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500 text-white font-extrabold animate-pulse">
+                  {pendingResetRequests.length}
+                </span>
+              )}
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Pending Reset Requests Alert Banner for Admin (Visible in all tabs) */}
+      {isAdmin && pendingResetRequests.length > 0 && subTab !== 'resets' && (
+        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 flex items-center justify-between gap-3 animate-in fade-in duration-150">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-xs">
+              <Key className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-amber-950">
+                {pendingResetRequests.length} درخواست فراموشی رمز عبور در انتظار پاسخ مدیر
+              </div>
+              <div className="text-[11px] text-amber-800">
+                کاربرانی که رمز عبور خود را فراموش کرده‌اند منتظر صدور و ارسال رمز جدید هستند.
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => setSubTab('resets')}
+            className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-xs transition cursor-pointer shrink-0"
+          >
+            بررسی و تعیین رمز جدید
+          </button>
+        </div>
+      )}
 
       {/* ======================= TAB 1: USERS LIST ======================= */}
       {subTab === 'users' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-800">
-              لیست کاربران ثبت شده با نام کاربری، رمز عبور، کارتابل و سمت:
-            </span>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="relative flex-1 max-w-sm">
+              <input
+                type="text"
+                placeholder="جستجو در نام، نام کاربری یا سمت..."
+                value={searchUserQuery}
+                onChange={(e) => setSearchUserQuery(e.target.value)}
+                className="w-full rounded-2xl bg-white border border-slate-200 px-4 py-2 pr-9 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500 shadow-2xs"
+              />
+              <Search className="w-4 h-4 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
+            </div>
+
             {isAdmin && (
               <button
                 onClick={() => openUserModal()}
-                className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
+                className="flex items-center justify-center gap-2 px-4 py-2 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
-                <span>تعریف کاربر جدید</span>
+                <span>تعریف کاربر جدید (با امکان تعیین کاربر ارشد)</span>
               </button>
             )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {users.map((u) => (
-              <div
-                key={u.id}
-                className="p-5 rounded-2xl bg-white border border-slate-200/90 hover:border-slate-300 shadow-2xs hover:shadow-xs transition flex flex-col justify-between text-slate-800"
-              >
-                <div>
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-11 h-11 rounded-2xl bg-indigo-100 text-indigo-700 font-extrabold text-sm flex items-center justify-center border border-indigo-200">
-                        {u.name.charAt(0)}
+            {filteredUsers.map((u) => {
+              const permCount = u.permissions?.length || 0;
+              const isSuperAdmin = u.role === 'ADMIN';
+
+              return (
+                <div
+                  key={u.id}
+                  className={`p-5 rounded-2xl bg-white border shadow-2xs hover:shadow-xs transition flex flex-col justify-between text-slate-800 ${
+                    isSuperAdmin ? 'border-amber-300 ring-1 ring-amber-200/50' : 'border-slate-200/90'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-11 h-11 rounded-2xl font-extrabold text-sm flex items-center justify-center border shrink-0 ${
+                          isSuperAdmin 
+                            ? 'bg-amber-100 text-amber-900 border-amber-300' 
+                            : 'bg-indigo-100 text-indigo-700 border-indigo-200'
+                        }`}>
+                          {u.name.charAt(0)}
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-slate-900 leading-tight flex items-center gap-1.5">
+                            <span>{u.name}</span>
+                            {isSuperAdmin && (
+                              <span title="کاربر ارشد سیستم">
+                                <Crown className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                              </span>
+                            )}
+                          </h4>
+                          <span className="text-[11px] text-slate-500 font-mono" dir="ltr">
+                            @{u.username}
+                          </span>
+                        </div>
                       </div>
-                      <div>
-                        <h4 className="text-sm font-bold text-slate-900 leading-tight">
-                          {u.name}
-                        </h4>
-                        <span className="text-[11px] text-slate-500 font-mono" dir="ltr">
-                          @{u.username}
+
+                      {/* Role badge */}
+                      {isSuperAdmin ? (
+                        <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 shrink-0 flex items-center gap-1">
+                          <Crown className="w-3 h-3 text-amber-600" />
+                          <span>کاربر ارشد</span>
                         </span>
+                      ) : (
+                        <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200 shrink-0">
+                          عضو شورا
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Assigned Position Pill */}
+                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 mb-3">
+                      <div className="text-[10px] text-slate-500 mb-0.5">سمت انتصاب یافته:</div>
+                      <div className="text-xs font-bold text-indigo-700 flex items-center gap-1.5">
+                        <Briefcase className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                        <span className="truncate">{u.positionTitle || 'بدون سمت (انتصاب نشده)'}</span>
                       </div>
                     </div>
 
-                    {/* Role badge */}
-                    {u.role === 'ADMIN' ? (
-                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
-                        مدیر جلسه
+                    {/* Permissions summary badge */}
+                    <div className="flex items-center justify-between text-[11px] px-3 py-1.5 rounded-xl bg-slate-100/70 border border-slate-200 text-slate-600 mb-3">
+                      <span className="flex items-center gap-1.5">
+                        <Shield className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>سطح دسترسی:</span>
                       </span>
-                    ) : (
-                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200">
-                        عضو شورا
+                      <span className="font-bold text-indigo-700">
+                        {isSuperAdmin ? 'دسترسی کامل و تام (۳۰ مجوز)' : `${permCount} مجوز فعال`}
                       </span>
+                    </div>
+
+                    {u.phone && (
+                      <div className="flex items-center gap-1.5 text-[11px] text-slate-500 mb-2">
+                        <Phone className="w-3.5 h-3.5 text-slate-400" />
+                        <span>{u.phone}</span>
+                      </div>
                     )}
                   </div>
 
-                  {/* Assigned Position Pill */}
-                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 mb-3">
-                    <div className="text-[10px] text-slate-500 mb-0.5">سمت انتصاب یافته:</div>
-                    <div className="text-xs font-bold text-indigo-700 flex items-center gap-1.5">
-                      <Briefcase className="w-3.5 h-3.5 text-indigo-600" />
-                      {u.positionTitle || 'بدون سمت (انتصاب نشده)'}
-                    </div>
-                  </div>
+                  {isAdmin && (
+                    <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                      <button
+                        onClick={() => setSelectedUserForPerms(u)}
+                        className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                        title="تنظیم و ویرایش مستقیم سطوح دسترسی کاربر"
+                      >
+                        <Shield className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>تنظیم دسترسی‌ها</span>
+                      </button>
 
-                  {u.phone && (
-                    <div className="flex items-center gap-1.5 text-[11px] text-slate-500 mb-2">
-                      <Phone className="w-3.5 h-3.5 text-slate-400" />
-                      <span>{u.phone}</span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => openUserModal(u)}
+                          className="px-2.5 py-1.5 rounded-xl text-xs text-slate-700 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
+                          title="ویرایش سمت، مشخصات یا سطح ارشد"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">مشخصات</span>
+                        </button>
+                        {u.id !== currentUser.id && (
+                          <button
+                            onClick={() => handleDeleteUser(u.id, u.name)}
+                            className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                            title="حذف کاربر"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
-
-                {isAdmin && (
-                  <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
-                    <button
-                      onClick={() => openUserModal(u)}
-                      className="px-2.5 py-1.5 rounded-lg text-xs text-slate-700 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                      <span>تغییر سمت / مشخصات</span>
-                    </button>
-                    {u.id !== currentUser.id && (
-                      <button
-                        onClick={() => handleDeleteUser(u.id, u.name)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
-                        title="حذف کاربر"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -326,14 +513,22 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
       {/* ======================= TAB 2: POSITIONS LIST ======================= */}
       {subTab === 'positions' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-800">
-              سمت‌های سازمانی و شورایی (قابل انتصاب به کاربران):
-            </span>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="relative flex-1 max-w-sm">
+              <input
+                type="text"
+                placeholder="جستجو در عناوین یا وظایف سمت‌ها..."
+                value={searchPosQuery}
+                onChange={(e) => setSearchPosQuery(e.target.value)}
+                className="w-full rounded-2xl bg-white border border-slate-200 px-4 py-2 pr-9 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500 shadow-2xs"
+              />
+              <Search className="w-4 h-4 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
+            </div>
+
             {isAdmin && (
               <button
                 onClick={() => openPosModal()}
-                className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
+                className="flex items-center justify-center gap-2 px-4 py-2 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
                 <span>تعریف سمت جدید</span>
@@ -342,61 +537,378 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {positions.map((p) => (
-              <div
-                key={p.id}
-                className="p-5 rounded-2xl bg-white border border-slate-200/90 hover:border-slate-300 shadow-2xs hover:shadow-xs transition flex flex-col justify-between text-slate-800"
-              >
-                <div>
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                      <Briefcase className="w-4 h-4 text-indigo-600" />
-                      {p.title}
-                    </h3>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                      {p.userCount || 0} نفر منتصب
-                    </span>
+            {filteredPositions.map((p) => {
+              const posPermCount = p.permissions?.length || 0;
+              return (
+                <div
+                  key={p.id}
+                  className="p-5 rounded-2xl bg-white border border-slate-200/90 hover:border-slate-300 shadow-2xs hover:shadow-xs transition flex flex-col justify-between text-slate-800"
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                        <Briefcase className="w-4 h-4 text-indigo-600 shrink-0" />
+                        <span>{p.title}</span>
+                      </h3>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 shrink-0">
+                        {p.userCount || 0} نفر منتصب
+                      </span>
+                    </div>
+
+                    {/* Permissions summary */}
+                    <div className="flex items-center justify-between text-[11px] px-3 py-1.5 rounded-xl bg-indigo-50/50 border border-indigo-100 text-indigo-900 mb-2.5">
+                      <span className="flex items-center gap-1.5">
+                        <Lock className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>مجوزهای پیش‌فرض سمت:</span>
+                      </span>
+                      <span className="font-bold">{posPermCount} مجوز</span>
+                    </div>
+
+                    {p.description && (
+                      <p className="text-xs text-slate-600 leading-relaxed mt-1 bg-slate-50 p-2.5 rounded-xl border border-slate-200 line-clamp-3">
+                        {p.description}
+                      </p>
+                    )}
                   </div>
 
-                  {p.description && (
-                    <p className="text-xs text-slate-600 leading-relaxed mt-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-                      {p.description}
-                    </p>
+                  {isAdmin && (
+                    <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2 mt-4">
+                      <button
+                        onClick={() => setSelectedPosForPerms(p)}
+                        className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                        title="تنظیم درخت مجوزهای این سمت"
+                      >
+                        <Shield className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>دسترسی‌های سمت</span>
+                      </button>
+
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => openPosModal(p)}
+                          className="px-2.5 py-1.5 rounded-xl text-xs text-slate-700 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          <span>ویرایش</span>
+                        </button>
+                        <button
+                          onClick={() => handleDeletePosition(p.id, p.title)}
+                          className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                          title="حذف سمت"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </div>
-
-                {isAdmin && (
-                  <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2 mt-4">
-                    <button
-                      onClick={() => openPosModal(p)}
-                      className="px-2.5 py-1.5 rounded-lg text-xs text-slate-700 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                      <span>ویرایش سمت</span>
-                    </button>
-                    <button
-                      onClick={() => handleDeletePosition(p.id, p.title)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
-                      title="حذف سمت"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
 
-      {/* MODAL: CREATE / EDIT USER */}
+      {/* ======================= TAB 3: PERMISSIONS MATRIX OVERVIEW ======================= */}
+      {subTab === 'permissions' && (
+        <div className="space-y-6">
+          <div className="p-5 rounded-3xl bg-indigo-50/60 border border-indigo-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+                <Shield className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">
+                  سامانه مدیریت یکپارچه و سلسله‌مراتبی سطوح دسترسی
+                </h3>
+                <p className="text-xs text-slate-600 mt-1 max-w-2xl leading-relaxed">
+                  هر سمت سازمانی دارای یک بسته مجوز پایه است. همچنین می‌توانید برای هر عضو شورا به صورت تفکیک‌شده، مجوزهای شخصی‌سازی‌شده اعمال نمایید یا هر زمان که نیاز بود، آن را به پیش‌فرض سمت بازنشانی فرمایید.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-stretch sm:self-auto">
+              <button
+                onClick={() => {
+                  if (positions.length > 0) setSelectedPosForPerms(positions[0]);
+                }}
+                className="flex-1 sm:flex-none px-4 py-2.5 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-xs font-bold text-indigo-700 shadow-2xs transition cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Lock className="w-4 h-4 text-indigo-600" />
+                <span>دسترسی‌های سمت‌ها</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Selection Grid for Users & Positions */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Box 1: User Permissions Access */}
+            <div className="p-5 rounded-3xl bg-white border border-slate-200 shadow-xs space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <UserCheck className="w-4 h-4 text-indigo-600" />
+                  <span>دسترسی‌های اختصاصی پرسنل و اعضا</span>
+                </h3>
+                <span className="text-[11px] text-slate-500">{users.length} کاربر</span>
+              </div>
+
+              <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                {users.map((u) => (
+                  <div
+                    key={u.id}
+                    className="p-3 rounded-2xl border border-slate-200/90 hover:border-indigo-300 bg-slate-50/50 hover:bg-indigo-50/30 transition flex items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center shrink-0">
+                        {u.name.charAt(0)}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-900 truncate flex items-center gap-1">
+                          <span>{u.name}</span>
+                          {u.role === 'ADMIN' && <Crown className="w-3 h-3 text-amber-600" />}
+                        </div>
+                        <div className="text-[10px] text-slate-500 truncate">
+                          {u.positionTitle || 'بدون سمت'} • <span className="font-mono">@{u.username}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => setSelectedUserForPerms(u)}
+                      className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-2xs transition flex items-center gap-1.5 cursor-pointer shrink-0"
+                    >
+                      <Shield className="w-3.5 h-3.5" />
+                      <span>تنظیم مجوزها</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Box 2: Position Permissions Access */}
+            <div className="p-5 rounded-3xl bg-white border border-slate-200 shadow-xs space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Briefcase className="w-4 h-4 text-indigo-600" />
+                  <span>دسترسی‌های پایه سمت‌های سازمانی</span>
+                </h3>
+                <span className="text-[11px] text-slate-500">{positions.length} سمت</span>
+              </div>
+
+              <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                {positions.map((p) => (
+                  <div
+                    key={p.id}
+                    className="p-3 rounded-2xl border border-slate-200/90 hover:border-indigo-300 bg-slate-50/50 hover:bg-indigo-50/30 transition flex items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 font-bold text-xs flex items-center justify-center border border-indigo-200 shrink-0">
+                        <Briefcase className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-900 truncate">{p.title}</div>
+                        <div className="text-[10px] text-slate-500 truncate">
+                          {p.userCount || 0} کاربر منتصب • {p.permissions?.length || 0} مجوز فعال
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => setSelectedPosForPerms(p)}
+                      className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 text-xs font-bold shadow-2xs transition flex items-center gap-1.5 cursor-pointer shrink-0"
+                    >
+                      <Lock className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>ویرایش مجوزها</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================= TAB 4: PASSWORD RESET REQUESTS (کارتابل فراموشی رمز) ======================= */}
+      {subTab === 'resets' && isAdmin && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between p-4 rounded-2xl bg-white border border-slate-200">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Key className="w-4 h-4 text-indigo-600" />
+                <span>کارتابل درخواست‌های فراموشی رمز عبور کاربران</span>
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                کاربرانی که در صفحه لاگین درخواست فراموشی رمز ثبت کرده‌اند، در این قسمت لیست می‌شوند. شما می‌توانید برای هر کاربر رمز عبور جدید تعیین و صادر فرمایید.
+              </p>
+            </div>
+            <button
+              onClick={fetchResetRequests}
+              className="px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs text-slate-700 flex items-center gap-1 cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>بروزرسانی لیست</span>
+            </button>
+          </div>
+
+          {resetFeedbackMsg && (
+            <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+              <span>{resetFeedbackMsg}</span>
+            </div>
+          )}
+
+          {resetRequests.length === 0 ? (
+            <div className="p-12 text-center rounded-3xl bg-white border border-slate-200 text-slate-400 text-xs space-y-2">
+              <Key className="w-10 h-10 text-slate-300 mx-auto" />
+              <div className="font-bold text-slate-700">هیچ درخواست فراموشی رمزی ثبت نشده است.</div>
+              <p className="text-[11px] text-slate-500">
+                هر زمان کاربری از صفحه ورود درخواست تغییر رمز بزند، به این بخش اضافه خواهد شد.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {resetRequests.map((req) => {
+                const isPending = req.status === 'PENDING';
+                const isApproved = req.status === 'APPROVED';
+
+                return (
+                  <div
+                    key={req.id}
+                    className={`p-5 rounded-2xl bg-white border transition flex flex-col md:flex-row items-start md:items-center justify-between gap-4 ${
+                      isPending ? 'border-amber-300 ring-1 ring-amber-200/60 shadow-xs' : 'border-slate-200 opacity-90'
+                    }`}
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-bold text-slate-900">{req.fullName || req.username}</span>
+                        <span className="text-xs text-slate-500 font-mono" dir="ltr">@{req.username}</span>
+                        {isPending && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 font-bold">
+                            در انتظار تعیین رمز
+                          </span>
+                        )}
+                        {isApproved && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold">
+                            رمز جدید صادر شد
+                          </span>
+                        )}
+                        {req.status === 'REJECTED' && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200 font-bold">
+                            رد شده
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-4 text-xs text-slate-500 flex-wrap">
+                        {req.phone && (
+                          <span className="flex items-center gap-1 text-slate-600" dir="ltr">
+                            <Phone className="w-3.5 h-3.5 text-slate-400" />
+                            {req.phone}
+                          </span>
+                        )}
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3.5 h-3.5 text-slate-400" />
+                          تاریخ درخواست: {new Date(req.requestedAt).toLocaleString('fa-IR')}
+                        </span>
+                      </div>
+
+                      {isApproved && req.newPassword && (
+                        <div className="mt-2 p-2 rounded-xl bg-emerald-50 border border-emerald-200 text-xs flex items-center gap-2">
+                          <span className="text-emerald-800 font-bold">رمز عبور صادر شده:</span>
+                          <span className="font-mono bg-white px-2 py-0.5 rounded border border-emerald-300 font-bold text-slate-900" dir="ltr">
+                            {req.newPassword}
+                          </span>
+                          <span className="text-[10px] text-slate-500">
+                            (کاربر می‌تواند در صفحه ورود با وارد کردن نام کاربری وضعیت را چک کند)
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Actions if Pending */}
+                    {isPending && (
+                      <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
+                        <div className="flex items-center gap-1.5 flex-1 md:flex-none">
+                          <input
+                            type="text"
+                            value={newPasswordInput[req.id] || ''}
+                            onChange={(e) =>
+                              setNewPasswordInput({ ...newPasswordInput, [req.id]: e.target.value })
+                            }
+                            placeholder="رمز جدید (مثلاً: pass123)"
+                            className="rounded-xl bg-slate-50 border border-slate-300 px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:border-indigo-500 w-36"
+                            dir="ltr"
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setNewPasswordInput({
+                                ...newPasswordInput,
+                                [req.id]: `pass${Math.floor(1000 + Math.random() * 9000)}`,
+                              })
+                            }
+                            className="px-2 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-[10px] text-slate-600 font-bold cursor-pointer"
+                            title="تولید رمز تصادفی"
+                          >
+                            تولید
+                          </button>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleResolveRequest(req, 'APPROVE')}
+                          disabled={resolveActionLoading}
+                          className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>تایید و ارسال رمز جدید</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleResolveRequest(req, 'REJECT')}
+                          disabled={resolveActionLoading}
+                          className="px-3 py-1.5 rounded-xl border border-rose-200 text-rose-700 hover:bg-rose-50 text-xs font-medium transition cursor-pointer disabled:opacity-50"
+                        >
+                          رد
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ===================== PERMISSIONS TREE MODAL ===================== */}
+      {selectedUserForPerms && (
+        <PermissionsTreeModal
+          user={selectedUserForPerms}
+          onClose={() => setSelectedUserForPerms(null)}
+          onSuccess={() => {
+            onRefresh();
+          }}
+        />
+      )}
+
+      {selectedPosForPerms && (
+        <PermissionsTreeModal
+          position={selectedPosForPerms}
+          onClose={() => setSelectedPosForPerms(null)}
+          onSuccess={() => {
+            onRefresh();
+          }}
+        />
+      )}
+
+      {/* MODAL: CREATE / EDIT USER WITH "کاربر ارشد سیستم" CHECKBOX */}
       {showUserModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
           <div className="w-full max-w-md rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-slate-800">
             <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/80">
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <UserCheck className="w-5 h-5 text-indigo-600" />
-                {editingUser ? 'ویرایش مشخصات و انتصاب سمت' : 'تعریف کاربر جدید شورا'}
+                {editingUser ? 'ویرایش مشخصات و سمت کاربر' : 'تعریف کاربر جدید شورا'}
               </h3>
               <button
                 onClick={() => setShowUserModal(false)}
@@ -451,7 +963,7 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                   type="password"
                   value={userPassword}
                   onChange={(e) => setUserPassword(e.target.value)}
-                  placeholder="حداقل ۶ کاراکتر"
+                  placeholder="حداقل ۴ کاراکتر"
                   className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 shadow-2xs"
                   dir="rtl"
                 />
@@ -476,35 +988,34 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                 </select>
               </div>
 
-              {/* Role */}
-              <div>
-                <label className="block text-xs font-bold text-slate-800 mb-1.5">
-                  نقش دسترسی در سامانه
+              {/* Senior System Admin (کاربر ارشد سیستم) Checkbox Requirement */}
+              <div
+                className={`p-3.5 rounded-2xl border transition ${
+                  userRole === 'ADMIN'
+                    ? 'bg-amber-50/90 border-amber-300 ring-2 ring-amber-400/40 shadow-xs'
+                    : 'bg-slate-50 border-slate-200'
+                }`}
+              >
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={userRole === 'ADMIN'}
+                    onChange={(e) => {
+                      const isChecked = e.target.checked;
+                      setUserRole(isChecked ? 'ADMIN' : 'COUNCIL');
+                    }}
+                    className="mt-1 w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300 cursor-pointer shrink-0"
+                  />
+                  <div>
+                    <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                      <Crown className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span>کاربر ارشد سیستم (مدیر ارشد با کلیه دسترسی‌ها)</span>
+                    </div>
+                    <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
+                      با فعال‌سازی این تیک، کاربر دقیقاً مشابه مدیر اصلی سیستم تعریف می‌شود و کلیه ۳۰ سطح دسترسی (شامل ماتریس دسترسی‌ها، ساختارها، حذف و ویرایش کاربران، صدور مصوبه نهایی و نظارت بر آرا) را خواهد داشت.
+                    </p>
+                  </div>
                 </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setUserRole('COUNCIL')}
-                    className={`p-2.5 rounded-xl border text-xs font-bold transition cursor-pointer ${
-                      userRole === 'COUNCIL'
-                        ? 'bg-indigo-50 border-indigo-500 text-indigo-800 shadow-2xs'
-                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                    }`}
-                  >
-                    عضو شورا (کارتابل و رای)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setUserRole('ADMIN')}
-                    className={`p-2.5 rounded-xl border text-xs font-bold transition cursor-pointer ${
-                      userRole === 'ADMIN'
-                        ? 'bg-amber-100 border-amber-400 text-amber-900 shadow-2xs'
-                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                    }`}
-                  >
-                    مدیر جلسه (ثبت پروژه و ناظر آرا)
-                  </button>
-                </div>
               </div>
 
               <div>

@@ -268,6 +268,20 @@ export function initDatabase() {
       description TEXT,
       updatedAt TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS password_reset_requests (
+      id TEXT PRIMARY KEY,
+      userId TEXT REFERENCES users(id) ON DELETE CASCADE,
+      username TEXT NOT NULL,
+      fullName TEXT,
+      phone TEXT,
+      status TEXT NOT NULL DEFAULT 'PENDING', -- 'PENDING', 'APPROVED', 'REJECTED'
+      newPassword TEXT,
+      adminNote TEXT,
+      requestedAt TEXT NOT NULL,
+      resolvedAt TEXT,
+      resolvedBy TEXT REFERENCES users(id) ON DELETE SET NULL
+    );
   `);
 
   // Safe columns migration for positions if already existed
@@ -299,6 +313,9 @@ export function initDatabase() {
   } catch (e) {}
   try {
     db.prepare('ALTER TABLE project_attachments ADD COLUMN filePath TEXT').run();
+  } catch (e) {}
+  try {
+    db.prepare('ALTER TABLE users ADD COLUMN hasCustomPermissions INTEGER DEFAULT 0').run();
   } catch (e) {}
 
   seedInitialData();

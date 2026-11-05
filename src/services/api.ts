@@ -1,13 +1,10 @@
-import { Position, User, DynamicField, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowLog, ProjectStructure, StructurePositionNode, ProjectAttachment, SystemSetting } from '../types';
+import { Position, User, DynamicField, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowLog, ProjectStructure, StructurePositionNode, ProjectAttachment, SystemSetting, PasswordResetRequest } from '../types';
 
 class ApiService {
   getToken(): string | null {
     if (typeof sessionStorage !== 'undefined') {
       const sToken = sessionStorage.getItem('council_jwt_token');
       if (sToken) return sToken;
-    }
-    if (typeof localStorage !== 'undefined') {
-      return localStorage.getItem('council_jwt_token');
     }
     return null;
   }
@@ -17,10 +14,6 @@ class ApiService {
       if (typeof sessionStorage !== 'undefined') {
         const sUser = sessionStorage.getItem('council_jwt_user');
         if (sUser) return JSON.parse(sUser);
-      }
-      if (typeof localStorage !== 'undefined') {
-        const lUser = localStorage.getItem('council_jwt_user');
-        if (lUser) return JSON.parse(lUser);
       }
     } catch (e) {
       return null;
@@ -50,15 +43,17 @@ class ApiService {
     }
     const data = await res.json();
     
-    // Per-tab isolated storage
+    // Per-tab isolated storage strictly in sessionStorage
     if (typeof sessionStorage !== 'undefined') {
       sessionStorage.setItem('council_jwt_token', data.token);
       sessionStorage.setItem('council_jwt_user', JSON.stringify(data.user));
     }
-    // Also save in localStorage for single-tab convenience
+    // Clean any old localStorage tokens to ensure private/new windows never leak
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('council_jwt_token', data.token);
-      localStorage.setItem('council_jwt_user', JSON.stringify(data.user));
+      localStorage.removeItem('council_jwt_token');
+      localStorage.removeItem('council_jwt_user');
+      localStorage.removeItem('council_token');
+      localStorage.removeItem('council_user');
     }
 
     return data;
@@ -73,11 +68,67 @@ class ApiService {
       throw new Error('خطا در دریافت مشخصات کاربر');
     }
     const data = await res.json();
-    // Keep cached user up to date
+    // Keep cached user up to date in sessionStorage
     if (typeof sessionStorage !== 'undefined') {
       sessionStorage.setItem('council_jwt_user', JSON.stringify(data.user));
     }
     return data.user;
+  }
+
+  async changePassword(currentPassword: string, newPassword: string): Promise<{ success: boolean; message: string }> {
+    const res = await fetch('/api/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'خطا در تغییر رمز عبور');
+    }
+    return data;
+  }
+
+  async forgotPassword(username: string, phone?: string, note?: string): Promise<{ success: boolean; message: string; requestId?: string }> {
+    const res = await fetch('/api/auth/forgot-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, phone, note }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'خطا در ارسال درخواست بازیابی رمز');
+    }
+    return data;
+  }
+
+  async getResetStatus(username: string): Promise<{ found: boolean; request?: PasswordResetRequest }> {
+    const res = await fetch(`/api/auth/reset-status/${encodeURIComponent(username.trim().toLowerCase())}`);
+    return await res.json();
+  }
+
+  async getPasswordResetRequests(): Promise<PasswordResetRequest[]> {
+    const res = await fetch('/api/password-reset-requests', {
+      headers: this.getAuthHeader(),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'خطا در دریافت درخواست‌های فراموشی رمز');
+    }
+    const data = await res.json();
+    return data.requests || [];
+  }
+
+  async resolvePasswordResetRequest(id: string, action: 'APPROVE' | 'REJECT', newPassword?: string, adminNote?: string): Promise<{ success: boolean; message: string }> {
+    const res = await fetch(`/api/password-reset-requests/${id}/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify({ action, newPassword, adminNote }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'خطا در بررسی درخواست رمز');
+    }
+    return data;
   }
 
   logout() {
@@ -136,7 +187,7 @@ class ApiService {
   }
 
   // User Permissions
-  async getUserPermissions(userId: string): Promise<{ permissions: string[]; customPermissions: string[]; inheritedPermissions: string[] }> {
+  async getUserPermissions(userId: string): Promise<{ permissions: string[]; customPermissions: string[]; inheritedPermissions: string[]; hasCustomPermissions?: boolean }> {
     const res = await fetch(`/api/users/${userId}/permissions`, {
       headers: this.getAuthHeader(),
     });
@@ -153,6 +204,17 @@ class ApiService {
     if (!res.ok) {
       const data = await res.json();
       throw new Error(data.error || 'خطا در ذخیره دسترسی‌های کاربر');
+    }
+  }
+
+  async resetUserPermissions(userId: string): Promise<void> {
+    const res = await fetch(`/api/users/${userId}/permissions/reset`, {
+      method: 'POST',
+      headers: this.getAuthHeader(),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'خطا در بازنشانی دسترسی‌های کاربر');
     }
   }
 

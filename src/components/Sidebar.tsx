@@ -97,8 +97,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         */
         {
           id: 'users' as const,
-          title: 'کاربران و پرسنل سیستم',
-          shortTitle: 'کاربران',
+          title: 'کاربران و سطوح دسترسی',
+          shortTitle: 'کاربران و دسترسی',
           icon: Users,
           badge: null,
           badgeColor: '',

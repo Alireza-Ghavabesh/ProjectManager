@@ -237,3 +237,19 @@ export interface SystemSetting {
   description?: string;
   updatedAt: string;
 }
+
+export interface PasswordResetRequest {
+  id: string;
+  userId?: string;
+  username: string;
+  fullName?: string;
+  phone?: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  newPassword?: string;
+  adminNote?: string;
+  requestedAt: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
+  resolvedByName?: string;
+}
+

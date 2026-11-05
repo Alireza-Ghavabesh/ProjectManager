@@ -57,10 +57,29 @@ function getCurrentUser(req: Request) {
 }
 
 // Unified helper to get all effective permissions for a user
-export function getUserPermissionsList(user: { id: string; role: string; positionId?: string | null }): string[] {
+export function getUserPermissionsList(user: { id: string; role: string; positionId?: string | null; hasCustomPermissions?: number | boolean }): string[] {
   if (user.role === 'ADMIN') {
     const allP = db.prepare('SELECT code FROM permissions').all() as { code: string }[];
     return allP.map((p) => p.code);
+  }
+
+  // Check if user has explicit custom permissions configured
+  let isCustom = Boolean(user.hasCustomPermissions);
+  if (user.hasCustomPermissions === undefined) {
+    try {
+      const row = db.prepare('SELECT hasCustomPermissions FROM users WHERE id = ?').get(user.id) as any;
+      isCustom = Boolean(row?.hasCustomPermissions);
+    } catch (e) {}
+  }
+
+  if (isCustom) {
+    try {
+      const userP = db.prepare(`
+        SELECT permissionCode FROM user_permissions
+        WHERE userId = ?
+      `).all(user.id) as { permissionCode: string }[];
+      return userP.map((p) => p.permissionCode);
+    } catch (e) {}
   }
 
   const permSet = new Set<string>();
@@ -84,15 +103,6 @@ export function getUserPermissionsList(user: { id: string; role: string; positio
       WHERE spu.userId = ?
     `).all(user.id) as { permissionCode: string }[];
     structPosP.forEach((p) => permSet.add(p.permissionCode));
-  } catch (e) {}
-
-  // 3. User-specific custom permissions overrides
-  try {
-    const userP = db.prepare(`
-      SELECT permissionCode FROM user_permissions
-      WHERE userId = ?
-    `).all(user.id) as { permissionCode: string }[];
-    userP.forEach((p) => permSet.add(p.permissionCode));
   } catch (e) {}
 
   return Array.from(permSet);
@@ -185,6 +195,151 @@ apiRouter.get('/auth/me', (req: Request, res: Response) => {
     return res.status(401).json({ error: 'کاربر احراز هویت نشده است.' });
   }
   res.json({ user });
+});
+
+// User self password change (فقط رمز عبور خودش)
+apiRouter.post('/auth/change-password', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) {
+    return res.status(401).json({ error: 'کاربر احراز هویت نشده است.' });
+  }
+
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'رمز عبور فعلی و رمز عبور جدید الزامی هستند.' });
+  }
+
+  if (newPassword.trim().length < 4) {
+    return res.status(400).json({ error: 'رمز عبور جدید باید حداقل ۴ کاراکتر باشد.' });
+  }
+
+  const dbUser = db.prepare('SELECT password FROM users WHERE id = ?').get(currentUser.id) as any;
+  if (!dbUser || dbUser.password !== currentPassword) {
+    return res.status(400).json({ error: 'رمز عبور فعلی اشتباه است.' });
+  }
+
+  db.prepare('UPDATE users SET password = ? WHERE id = ?').run(newPassword.trim(), currentUser.id);
+  res.json({ success: true, message: 'رمز عبور با موفقیت تغییر یافت.' });
+});
+
+// Forgot password request from login screen (عمومی)
+apiRouter.post('/auth/forgot-password', (req: Request, res: Response) => {
+  const { username, phone, note } = req.body;
+  if (!username || !username.trim()) {
+    return res.status(400).json({ error: 'نام کاربری الزامی است.' });
+  }
+
+  const cleanUsername = username.trim().toLowerCase();
+  const user = db.prepare('SELECT id, name, username, phone FROM users WHERE username = ?').get(cleanUsername) as any;
+  if (!user) {
+    return res.status(404).json({ error: 'کاربری با این نام کاربری در سامانه یافت نشد.' });
+  }
+
+  const now = new Date().toISOString();
+  const existingPending = db.prepare("SELECT id FROM password_reset_requests WHERE username = ? AND status = 'PENDING'").get(cleanUsername) as any;
+
+  if (existingPending) {
+    db.prepare(`
+      UPDATE password_reset_requests
+      SET phone = ?, adminNote = ?, requestedAt = ?
+      WHERE id = ?
+    `).run(phone?.trim() || user.phone || null, note?.trim() || null, now, existingPending.id);
+    return res.json({ success: true, requestId: existingPending.id, message: 'درخواست شما از قبل ثبت شده و در انتظار تایید مدیر است.' });
+  }
+
+  const reqId = `rst-${randomUUID().substring(0, 8)}`;
+  db.prepare(`
+    INSERT INTO password_reset_requests (id, userId, username, fullName, phone, status, adminNote, requestedAt)
+    VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)
+  `).run(reqId, user.id, user.username, user.name, phone?.trim() || user.phone || null, note?.trim() || null, now);
+
+  res.json({ success: true, requestId: reqId, message: 'درخواست تغییر رمز با موفقیت در کارتابل مدیر ثبت شد.' });
+});
+
+// Check status of forgot password request (عمومی)
+apiRouter.get('/auth/reset-status/:username', (req: Request, res: Response) => {
+  const { username } = req.params;
+  const cleanUsername = username.trim().toLowerCase();
+
+  const latest = db.prepare(`
+    SELECT prr.*, u.name as resolvedByName
+    FROM password_reset_requests prr
+    LEFT JOIN users u ON prr.resolvedBy = u.id
+    WHERE prr.username = ?
+    ORDER BY prr.requestedAt DESC
+    LIMIT 1
+  `).get(cleanUsername) as any;
+
+  if (!latest) {
+    return res.json({ found: false });
+  }
+
+  res.json({ found: true, request: latest });
+});
+
+// Admin list of password reset requests
+apiRouter.get('/password-reset-requests', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || (currentUser.role !== 'ADMIN' && !hasPermission(currentUser, 'system.users.edit'))) {
+    return res.status(403).json({ error: 'فقط مدیر جلسه مجاز به مشاهده درخواست‌های بازیابی رمز است.' });
+  }
+
+  const requests = db.prepare(`
+    SELECT prr.*, u.name as resolvedByName
+    FROM password_reset_requests prr
+    LEFT JOIN users u ON prr.resolvedBy = u.id
+    ORDER BY prr.requestedAt DESC
+  `).all() as any[];
+
+  res.json({ requests });
+});
+
+// Admin resolves (approves with new password or rejects) a reset request
+apiRouter.post('/password-reset-requests/:id/resolve', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || (currentUser.role !== 'ADMIN' && !hasPermission(currentUser, 'system.users.edit'))) {
+    return res.status(403).json({ error: 'فقط مدیر جلسه مجاز به تایید یا تغییر رمز عبور کاربران است.' });
+  }
+
+  const { id } = req.params;
+  const { action, newPassword, adminNote } = req.body;
+
+  const currentReq = db.prepare('SELECT * FROM password_reset_requests WHERE id = ?').get(id) as any;
+  if (!currentReq) {
+    return res.status(404).json({ error: 'درخواست یافت نشد.' });
+  }
+
+  const now = new Date().toISOString();
+
+  if (action === 'APPROVE') {
+    if (!newPassword || newPassword.trim().length < 4) {
+      return res.status(400).json({ error: 'رمز عبور جدید باید حداقل ۴ کاراکتر باشد.' });
+    }
+
+    const cleanPass = newPassword.trim();
+    const tx = db.transaction(() => {
+      // 1. Update user password
+      db.prepare('UPDATE users SET password = ? WHERE username = ?').run(cleanPass, currentReq.username);
+
+      // 2. Mark request approved with issued password
+      db.prepare(`
+        UPDATE password_reset_requests
+        SET status = 'APPROVED', newPassword = ?, resolvedAt = ?, resolvedBy = ?, adminNote = ?
+        WHERE id = ?
+      `).run(cleanPass, now, currentUser.id, adminNote?.trim() || null, id);
+    });
+    tx();
+
+    return res.json({ success: true, message: `رمز عبور جدید برای کاربر «${currentReq.fullName || currentReq.username}» ثبت گردید.` });
+  } else {
+    db.prepare(`
+      UPDATE password_reset_requests
+      SET status = 'REJECTED', resolvedAt = ?, resolvedBy = ?, adminNote = ?
+      WHERE id = ?
+    `).run(now, currentUser.id, adminNote?.trim() || null, id);
+
+    return res.json({ success: true, message: 'درخواست رد شد.' });
+  }
 });
 
 apiRouter.get('/users', (_req: Request, res: Response) => {
@@ -383,7 +538,7 @@ apiRouter.put('/positions/:id/permissions', (req: Request, res: Response) => {
 
 apiRouter.get('/users/:id/permissions', (req: Request, res: Response) => {
   const { id: userId } = req.params;
-  const user = db.prepare('SELECT id, name, username, role, positionId FROM users WHERE id = ?').get(userId) as any;
+  const user = db.prepare('SELECT id, name, username, role, positionId, hasCustomPermissions FROM users WHERE id = ?').get(userId) as any;
   if (!user) {
     return res.status(404).json({ error: 'کاربر یافت نشد.' });
   }
@@ -400,6 +555,7 @@ apiRouter.get('/users/:id/permissions', (req: Request, res: Response) => {
     permissions: effective,
     customPermissions: custom.map((c) => c.permissionCode),
     inheritedPermissions: inherited,
+    hasCustomPermissions: Boolean(user.hasCustomPermissions),
   });
 });
 
@@ -418,17 +574,35 @@ apiRouter.put('/users/:id/permissions', (req: Request, res: Response) => {
 
   const deleteStmt = db.prepare('DELETE FROM user_permissions WHERE userId = ?');
   const insertStmt = db.prepare('INSERT INTO user_permissions (userId, permissionCode) VALUES (?, ?)');
+  const updateFlagStmt = db.prepare('UPDATE users SET hasCustomPermissions = 1 WHERE id = ?');
 
   const tx = db.transaction(() => {
     deleteStmt.run(userId);
     for (const code of permissions) {
       insertStmt.run(userId, code);
     }
+    updateFlagStmt.run(userId);
   });
 
   tx();
 
   res.json({ success: true, count: permissions.length });
+});
+
+apiRouter.post('/users/:id/permissions/reset', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || !hasPermission(currentUser, 'system.permissions.manage')) {
+    return res.status(403).json({ error: 'تنها مدیر ارشد با مجوز مدیریت دسترسی‌ها امکان بازنشانی مجوزها را دارد.' });
+  }
+
+  const { id: userId } = req.params;
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM user_permissions WHERE userId = ?').run(userId);
+    db.prepare('UPDATE users SET hasCustomPermissions = 0 WHERE id = ?').run(userId);
+  });
+  tx();
+
+  res.json({ success: true });
 });
 
 // --------------------------------------------------------------------------
