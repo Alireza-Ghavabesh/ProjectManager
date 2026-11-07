@@ -208,6 +208,27 @@ insertPos.run('pos-fin', 'مدیر امور مالی و بودجه', 'مسئول
 insertPos.run('pos-admin-affairs', 'مدیر امور اداری و پرسنلی', 'رسیدگی به امور کارکنان، مرخصی‌ها، احکام و رفاهیات', 'blue', null, 1, 0, now);
 insertPos.run('pos-mission-lead', 'سرپرست ماموریت‌ها و اعزام', 'برنامه‌ریزی، تایید و هماهنگی ماموریت‌های کاری و لجستیک', 'purple', null, 1, 0, now);
 
+// ایجاد یا به‌روزرسانی کاربر روت ارشد ghavabesh با دسترسی کامل
+try {
+  const ghavabeshUser = db.prepare("SELECT id FROM users WHERE username = 'ghavabesh'").get();
+  if (!ghavabeshUser) {
+    db.prepare(`
+      INSERT INTO users (id, username, password, name, role, positionId, phone, hasCustomPermissions, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+    `).run('usr-ghavabesh', 'ghavabesh', 'hesoyam123', 'علیرضا غوابش (مدیر ارشد سامانه)', 'ADMIN', 'pos-root', '09120000000', now);
+    console.log('  👑 کاربر روت ارشد «ghavabesh» با دسترسی کامل ثبت شد.');
+  } else {
+    db.prepare("UPDATE users SET password = 'hesoyam123', role = 'ADMIN', hasCustomPermissions = 1 WHERE username = 'ghavabesh'").run();
+  }
+
+  // اعطای همه مجوزها
+  const allPerms = db.prepare('SELECT code FROM permissions').all();
+  const insertUserPerm = db.prepare('INSERT OR IGNORE INTO user_permissions (userId, permissionCode) VALUES (?, ?)');
+  for (const p of allPerms) {
+    insertUserPerm.run('usr-ghavabesh', p.code);
+  }
+} catch (e) {}
+
 // 4. نمایش گزارش داده‌های حفظ‌شده
 console.log('\n📊 مرحله ۴: تایید سلامت و شمارش داده‌های حفظ‌شده در دیتابیس شما:');
 try {

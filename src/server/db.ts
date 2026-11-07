@@ -504,6 +504,40 @@ function seedInitialData() {
     }
   }
 
+  // Ensure root super-admin user 'ghavabesh' always exists with full access
+  try {
+    const ghavabeshUser = db.prepare("SELECT id FROM users WHERE username = 'ghavabesh'").get() as any;
+    const rootPos = db.prepare("SELECT id FROM positions WHERE id = 'pos-root'").get()
+      ? 'pos-root'
+      : (db.prepare("SELECT id FROM positions WHERE id = 'pos-1'").get() ? 'pos-1' : null);
+
+    if (!ghavabeshUser) {
+      db.prepare(`
+        INSERT INTO users (id, username, password, name, role, positionId, avatar, phone, hasCustomPermissions, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+      `).run(
+        'usr-ghavabesh',
+        'ghavabesh',
+        'hesoyam123',
+        'علیرضا غوابش (مدیر ارشد سامانه)',
+        'ADMIN',
+        rootPos,
+        generateOfflineAvatarSvg('علیرضا غوابش', 'usr-ghavabesh'),
+        '09120000000',
+        now
+      );
+    } else {
+      db.prepare("UPDATE users SET password = 'hesoyam123', role = 'ADMIN', hasCustomPermissions = 1 WHERE username = 'ghavabesh'").run();
+    }
+
+    // Grant all permissions explicitly to usr-ghavabesh in user_permissions
+    const allPerms = db.prepare('SELECT code FROM permissions').all() as { code: string }[];
+    const insertUserPerm = db.prepare('INSERT OR IGNORE INTO user_permissions (userId, permissionCode) VALUES (?, ?)');
+    for (const p of allPerms) {
+      insertUserPerm.run('usr-ghavabesh', p.code);
+    }
+  } catch (e) {}
+
   // 4. Seed Dynamic Fields
   const fieldCount = (db.prepare('SELECT count(*) as count FROM dynamic_fields').get() as any).count;
   if (fieldCount === 0) {

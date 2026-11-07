@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "migrate:db": "node scripts/migrate-existing-db.js"
+    "migrate:db": "node scripts/migrate-existing-db.js",
+    "createUser": "node scripts/create-user.js"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
