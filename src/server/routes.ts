@@ -3,6 +3,7 @@ import { db, generateOfflineAvatarSvg } from './db.js';
 import { randomUUID } from 'crypto';
 import { createJwtToken, verifyJwtToken } from './jwt.js';
 import { isDeadlineExpired } from '../utils/formatters.js';
+import { triggerSmsForEvent, sendSmsViaProvider } from './sms.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -329,6 +330,17 @@ apiRouter.post('/password-reset-requests/:id/resolve', (req: Request, res: Respo
       `).run(cleanPass, now, currentUser.id, adminNote?.trim() || null, id);
     });
     tx();
+
+    // Trigger SMS notification to user if rule or phone exists
+    triggerSmsForEvent({
+      eventType: 'PASSWORD_RESET',
+      targetUserId: currentReq.userId,
+      actor: currentUser,
+      extraData: {
+        new_password: cleanPass,
+        username: currentReq.username,
+      },
+    }).catch(console.error);
 
     return res.json({ success: true, message: `رمز عبور جدید برای کاربر «${currentReq.fullName || currentReq.username}» ثبت گردید.` });
   } else {
@@ -1650,6 +1662,19 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
       now
     );
 
+    // Dispatch SMS trigger according to defined rules
+    triggerSmsForEvent({
+      eventType: 'PROJECT_CREATED',
+      project: {
+        id,
+        title: title.trim(),
+        code: prjCode,
+        author: currentUser.name,
+        creatorId: currentUser.id,
+      },
+      actor: currentUser,
+    }).catch(console.error);
+
     res.json({ success: true, projectId: id });
   } catch (err: any) {
     if (err.message && err.message.includes('UNIQUE')) {
@@ -2098,6 +2123,37 @@ apiRouter.post('/projects/:id/vote', (req: Request, res: Response) => {
     WHERE id = ?
   `).run(majorityInfo.majority, now, projectId);
 
+  // Trigger SMS rules for vote and majority outcome
+  const prj = db.prepare('SELECT id, title, code, createdById FROM projects WHERE id = ?').get(projectId) as any;
+  if (prj) {
+    triggerSmsForEvent({
+      eventType: 'NEW_VOTE_CAST',
+      project: { id: prj.id, title: prj.title, code: prj.code, creatorId: prj.createdById },
+      actor: currentUser,
+      extraData: { vote_status: status },
+    }).catch(console.error);
+
+    if (majorityInfo.majority === 'APPROVED') {
+      triggerSmsForEvent({
+        eventType: 'PROJECT_APPROVED',
+        project: { id: prj.id, title: prj.title, code: prj.code, creatorId: prj.createdById, majorityResult: 'APPROVED' },
+        actor: currentUser,
+      }).catch(console.error);
+    } else if (majorityInfo.majority === 'REJECTED') {
+      triggerSmsForEvent({
+        eventType: 'PROJECT_REJECTED',
+        project: { id: prj.id, title: prj.title, code: prj.code, creatorId: prj.createdById, majorityResult: 'REJECTED' },
+        actor: currentUser,
+      }).catch(console.error);
+    } else if (majorityInfo.majority === 'NEEDS_REVISION') {
+      triggerSmsForEvent({
+        eventType: 'PROJECT_NEEDS_REVISION',
+        project: { id: prj.id, title: prj.title, code: prj.code, creatorId: prj.createdById, majorityResult: 'NEEDS_REVISION' },
+        actor: currentUser,
+      }).catch(console.error);
+    }
+  }
+
   res.json({
     success: true,
     vote: {
@@ -2292,3 +2348,294 @@ apiRouter.put('/settings', (req: Request, res: Response) => {
 
   res.json({ success: true, settings: updatedSettings, list: updatedList });
 });
+
+// --------------------------------------------------------------------------
+// 10. PUBLIC SETTINGS & LOGIN BRANDING (قابل دسترسی برای عموم و صفحه لاگین)
+// --------------------------------------------------------------------------
+
+apiRouter.get('/system/public-settings', (req: Request, res: Response) => {
+  const list = db.prepare(`
+    SELECT key, value FROM system_settings 
+    WHERE key IN ('login_title', 'login_subtitle', 'login_logo_url', 'max_file_size_mb')
+  `).all() as any[];
+  const settings: Record<string, string> = {
+    login_title: 'شورای تولید و ارزیابی',
+    login_subtitle: 'سامانه جامع کارتابل مصوبات و مدیریت طرح‌ها',
+    login_logo_url: '',
+    max_file_size_mb: '1024',
+  };
+  for (const item of list) {
+    settings[item.key] = item.value;
+  }
+  res.json({ settings });
+});
+
+// Upload login logo image (Admin only)
+apiRouter.post('/system/upload-logo', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || currentUser.role !== 'ADMIN') {
+    return res.status(403).json({ error: 'صرفاً کاربر ارشد سیستم مجاز به تغییر لوگو است.' });
+  }
+
+  const { logoData, fileName } = req.body;
+  if (!logoData || typeof logoData !== 'string') {
+    return res.status(400).json({ error: 'تصویر ارسالی نامعتبر است.' });
+  }
+
+  try {
+    let logoUrl = logoData;
+    // If it's a data URI (base64), save to uploads directory
+    if (logoData.startsWith('data:image')) {
+      const extMatch = logoData.match(/^data:image\/([a-zA-Z0-9+]+);base64,/);
+      const ext = extMatch ? extMatch[1].replace('svg+xml', 'svg') : 'png';
+      const base64Content = logoData.replace(/^data:image\/[a-zA-Z0-9+]+;base64,/, '');
+      const buffer = Buffer.from(base64Content, 'base64');
+      
+      const fileId = `logo_${Date.now()}.${ext}`;
+      const filePath = path.resolve(uploadsDir, fileId);
+      fs.writeFileSync(filePath, buffer);
+      logoUrl = `/api/system/logo?t=${Date.now()}`;
+      
+      // Update system settings
+      db.prepare(`
+        INSERT INTO system_settings (key, value, updatedAt)
+        VALUES ('login_logo_url', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt
+      `).run(logoUrl, new Date().toISOString());
+
+      db.prepare(`
+        INSERT INTO system_settings (key, value, updatedAt)
+        VALUES ('login_logo_path', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt
+      `).run(fileId, new Date().toISOString());
+    } else {
+      db.prepare(`
+        INSERT INTO system_settings (key, value, updatedAt)
+        VALUES ('login_logo_url', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt
+      `).run(logoUrl, new Date().toISOString());
+    }
+
+    res.json({ success: true, logoUrl });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'خطا در بارگذاری لوگو' });
+  }
+});
+
+// Serve current logo image
+apiRouter.get('/system/logo', (req: Request, res: Response) => {
+  const logoPathSetting = db.prepare("SELECT value FROM system_settings WHERE key = 'login_logo_path'").get() as any;
+  if (logoPathSetting && logoPathSetting.value) {
+    const fullPath = path.resolve(uploadsDir, logoPathSetting.value);
+    if (fs.existsSync(fullPath)) {
+      const ext = path.extname(fullPath).toLowerCase();
+      const mimeTypes: Record<string, string> = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.svg': 'image/svg+xml',
+        '.webp': 'image/webp',
+        '.ico': 'image/x-icon',
+      };
+      res.setHeader('Content-Type', mimeTypes[ext] || 'application/octet-stream');
+      return res.sendFile(fullPath);
+    }
+  }
+
+  // Fallback to data url if stored directly
+  const logoUrlSetting = db.prepare("SELECT value FROM system_settings WHERE key = 'login_logo_url'").get() as any;
+  if (logoUrlSetting?.value && logoUrlSetting.value.startsWith('data:image')) {
+    const match = logoUrlSetting.value.match(/^data:([^;]+);base64,(.+)$/);
+    if (match) {
+      res.setHeader('Content-Type', match[1]);
+      return res.send(Buffer.from(match[2], 'base64'));
+    }
+  }
+
+  res.status(404).send('Logo not found');
+});
+
+// --------------------------------------------------------------------------
+// 11. SMS GATEWAY & TRIGGER RULES (وب‌سرویس و شرط‌های ارسال پیامک)
+// --------------------------------------------------------------------------
+
+// Get all SMS rules
+apiRouter.get('/sms/rules', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) return res.status(401).json({ error: 'احراز هویت نشده است.' });
+
+  const rawRules = db.prepare('SELECT * FROM sms_rules ORDER BY createdAt DESC').all() as any[];
+  const rules = rawRules.map((r) => {
+    let targetPositionIds: string[] = [];
+    try {
+      targetPositionIds = JSON.parse(r.targetPositionIds || '[]');
+    } catch (e) {}
+    return {
+      ...r,
+      enabled: Boolean(r.enabled),
+      targetPositionIds,
+    };
+  });
+
+  res.json({ rules });
+});
+
+// Create SMS rule (Admin only)
+apiRouter.post('/sms/rules', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || currentUser.role !== 'ADMIN') {
+    return res.status(403).json({ error: 'صرفاً مدیرکل مجاز به تعریف شرط‌های پیامک است.' });
+  }
+
+  const { title, eventType, targetType, targetPositionIds, customPhones, messageTemplate } = req.body;
+  if (!title || !eventType || !targetType || !messageTemplate) {
+    return res.status(400).json({ error: 'کلیه فیلدهای عنوان، رویداد، مخاطبان و متن پیامک الزامی هستند.' });
+  }
+
+  const id = `rule-${randomUUID().substring(0, 8)}`;
+  const now = new Date().toISOString();
+
+  db.prepare(`
+    INSERT INTO sms_rules (id, title, eventType, targetType, targetPositionIds, customPhones, messageTemplate, enabled, createdAt, updatedAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+  `).run(
+    id,
+    title.trim(),
+    eventType,
+    targetType,
+    JSON.stringify(targetPositionIds || []),
+    customPhones?.trim() || '',
+    messageTemplate.trim(),
+    now,
+    now
+  );
+
+  res.json({ success: true, ruleId: id });
+});
+
+// Update SMS rule
+apiRouter.put('/sms/rules/:id', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || currentUser.role !== 'ADMIN') {
+    return res.status(403).json({ error: 'صرفاً مدیرکل مجاز به ویرایش شرط پیامک است.' });
+  }
+
+  const { id } = req.params;
+  const { title, eventType, targetType, targetPositionIds, customPhones, messageTemplate, enabled } = req.body;
+  const now = new Date().toISOString();
+
+  db.prepare(`
+    UPDATE sms_rules
+    SET title = COALESCE(?, title),
+        eventType = COALESCE(?, eventType),
+        targetType = COALESCE(?, targetType),
+        targetPositionIds = COALESCE(?, targetPositionIds),
+        customPhones = COALESCE(?, customPhones),
+        messageTemplate = COALESCE(?, messageTemplate),
+        enabled = COALESCE(?, enabled),
+        updatedAt = ?
+    WHERE id = ?
+  `).run(
+    title ? title.trim() : null,
+    eventType || null,
+    targetType || null,
+    targetPositionIds !== undefined ? JSON.stringify(targetPositionIds) : null,
+    customPhones !== undefined ? customPhones.trim() : null,
+    messageTemplate ? messageTemplate.trim() : null,
+    enabled !== undefined ? (enabled ? 1 : 0) : null,
+    now,
+    id
+  );
+
+  res.json({ success: true });
+});
+
+// Toggle rule active/inactive
+apiRouter.post('/sms/rules/:id/toggle', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || currentUser.role !== 'ADMIN') {
+    return res.status(403).json({ error: 'دسترسی غیرمجاز.' });
+  }
+
+  const { id } = req.params;
+  const rule = db.prepare('SELECT enabled FROM sms_rules WHERE id = ?').get(id) as any;
+  if (!rule) return res.status(404).json({ error: 'شرط مورد نظر یافت نشد.' });
+
+  const newStatus = rule.enabled ? 0 : 1;
+  db.prepare('UPDATE sms_rules SET enabled = ?, updatedAt = ? WHERE id = ?').run(
+    newStatus,
+    new Date().toISOString(),
+    id
+  );
+
+  res.json({ success: true, enabled: Boolean(newStatus) });
+});
+
+// Delete SMS rule
+apiRouter.delete('/sms/rules/:id', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || currentUser.role !== 'ADMIN') {
+    return res.status(403).json({ error: 'صرفاً مدیرکل مجاز به حذف شرط پیامک است.' });
+  }
+
+  const { id } = req.params;
+  db.prepare('DELETE FROM sms_rules WHERE id = ?').run(id);
+  res.json({ success: true });
+});
+
+// Send test SMS
+apiRouter.post('/sms/send-test', async (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || currentUser.role !== 'ADMIN') {
+    return res.status(403).json({ error: 'صرفاً مدیرکل مجاز به ارسال پیامک تستی است.' });
+  }
+
+  const { phone, message } = req.body;
+  if (!phone || !phone.trim()) {
+    return res.status(400).json({ error: 'شماره تلفن همراه الزامی است.' });
+  }
+
+  const cleanPhone = phone.trim();
+  const testMsg = message?.trim() || `پیامک تستی از سامانه کارتابل و مصوبات شورا.\nزمان: ${new Date().toLocaleTimeString('fa-IR')}`;
+
+  const settingRows = db.prepare("SELECT key, value FROM system_settings WHERE key LIKE 'sms_%'").all() as any[];
+  const settings: Record<string, string> = {};
+  for (const row of settingRows) {
+    settings[row.key] = row.value;
+  }
+
+  const result = await sendSmsViaProvider(cleanPhone, testMsg, settings);
+
+  // Log in sms_logs
+  const logId = `sms-${randomUUID().substring(0, 8)}`;
+  db.prepare(`
+    INSERT INTO sms_logs (id, ruleId, recipientPhone, recipientName, message, eventType, status, providerResponse, sentAt)
+    VALUES (?, NULL, ?, ?, ?, 'TEST_SMS', ?, ?, ?)
+  `).run(
+    logId,
+    cleanPhone,
+    currentUser.name,
+    testMsg,
+    result.success ? (result.simulated ? 'SIMULATED' : 'SENT') : 'FAILED',
+    result.providerResponse,
+    new Date().toISOString()
+  );
+
+  res.json({
+    success: result.success,
+    simulated: result.simulated,
+    message: result.providerResponse,
+  });
+});
+
+// Get SMS logs
+apiRouter.get('/sms/logs', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || currentUser.role !== 'ADMIN') {
+    return res.status(403).json({ error: 'دسترسی غیرمجاز به لاگ پیامک‌ها.' });
+  }
+
+  const logs = db.prepare('SELECT * FROM sms_logs ORDER BY sentAt DESC LIMIT 100').all() as any[];
+  res.json({ logs });
+});
+

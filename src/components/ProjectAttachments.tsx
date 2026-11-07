@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ProjectAttachment } from '../types';
+import { ProjectAttachment, UploadProgressInfo } from '../types';
 import { api, fileToBase64, formatFileSize } from '../services/api';
 import { 
   Paperclip, 
@@ -37,7 +37,8 @@ export const ProjectAttachments: React.FC<ProjectAttachmentsProps> = ({
   compact = false,
 }) => {
   const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgressInfo | null>(null);
+  const [uploadingFileName, setUploadingFileName] = useState<string>('');
   const [maxFileSizeMb, setMaxFileSizeMb] = useState<number>(1024);
   const [replacingId, setReplacingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -100,12 +101,13 @@ export const ProjectAttachments: React.FC<ProjectAttachmentsProps> = ({
     }
 
     setUploading(true);
-    setUploadProgress(0);
+    setUploadProgress({ percent: 0, loaded: 0, total: file.size, speed: 0 });
+    setUploadingFileName(file.name);
     setStatusMessage(null);
 
     try {
-      await api.uploadProjectAttachmentStream(projectId, file, (percent) => {
-        setUploadProgress(percent);
+      await api.uploadProjectAttachmentStream(projectId, file, (progress) => {
+        setUploadProgress(progress);
       });
 
       setStatusMessage({ type: 'success', text: `فایل «${file.name}» با موفقیت پیوست گردید.` });
@@ -116,6 +118,7 @@ export const ProjectAttachments: React.FC<ProjectAttachmentsProps> = ({
     } finally {
       setUploading(false);
       setUploadProgress(null);
+      setUploadingFileName('');
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
@@ -164,13 +167,14 @@ export const ProjectAttachments: React.FC<ProjectAttachmentsProps> = ({
     }
 
     setReplacingId(oldAttachment.id);
-    setUploadProgress(0);
+    setUploadProgress({ percent: 0, loaded: 0, total: newFile.size, speed: 0 });
+    setUploadingFileName(newFile.name);
     setStatusMessage(null);
 
     try {
-      // 1. Upload new attachment with direct streaming
-      await api.uploadProjectAttachmentStream(projectId, newFile, (percent) => {
-        setUploadProgress(percent);
+      // 1. Upload new attachment with direct streaming and live progress
+      await api.uploadProjectAttachmentStream(projectId, newFile, (progress) => {
+        setUploadProgress(progress);
       });
 
       // 2. Delete old attachment
@@ -187,6 +191,7 @@ export const ProjectAttachments: React.FC<ProjectAttachmentsProps> = ({
     } finally {
       setReplacingId(null);
       setUploadProgress(null);
+      setUploadingFileName('');
       pendingReplaceAttachmentRef.current = null;
     }
   };
@@ -267,25 +272,52 @@ export const ProjectAttachments: React.FC<ProjectAttachmentsProps> = ({
         )}
       </div>
 
-      {/* Upload Progress Bar for Large Files */}
+      {/* Real Animated Upload Progress Bar for Files */}
       {uploading && uploadProgress !== null && (
-        <div className="p-3.5 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-950 text-xs space-y-2 animate-in fade-in">
-          <div className="flex items-center justify-between font-bold text-xs">
-            <span className="flex items-center gap-2">
-              <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600" />
-              <span>در حال ارسال مستقیم و استریم فایل روی سرور...</span>
-            </span>
-            <span className="font-mono font-bold text-indigo-700">{uploadProgress}%</span>
+        <div className="p-4 rounded-2xl bg-gradient-to-br from-indigo-950 via-slate-900 to-indigo-900 text-white shadow-xl border border-indigo-500/40 space-y-3 animate-in fade-in">
+          <div className="flex items-center justify-between text-xs font-bold">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="relative flex h-3 w-3 shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+              </span>
+              <span className="text-indigo-200 shrink-0">در حال ارسال و استریم مستقیم:</span>
+              <span className="text-white font-mono truncate" dir="ltr">
+                {uploadingFileName || 'فایل'}
+              </span>
+            </div>
+            <div className="flex items-center gap-1 font-mono text-emerald-400 text-sm font-bold shrink-0">
+              <span>{uploadProgress.percent}٪</span>
+            </div>
           </div>
-          <div className="w-full h-2.5 rounded-full bg-indigo-200/70 overflow-hidden">
+
+          {/* Animated Gradient Bar with Shimmer */}
+          <div className="relative w-full h-3 bg-slate-800/90 rounded-full overflow-hidden p-0.5 border border-white/10 shadow-inner">
             <div
-              className="h-full bg-gradient-to-l from-indigo-600 to-blue-600 transition-all duration-150 rounded-full"
-              style={{ width: `${uploadProgress}%` }}
-            />
+              className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-sky-400 to-emerald-400 transition-all duration-200 ease-out relative overflow-hidden shadow-md shadow-indigo-500/50"
+              style={{ width: `${Math.max(2, uploadProgress.percent)}%` }}
+            >
+              <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(255,255,255,0.3)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.3)_50%,rgba(255,255,255,0.3)_75%,transparent_75%,transparent)] bg-[length:16px_16px] animate-[pulse_1.5s_infinite]" />
+            </div>
           </div>
-          <p className="text-[10px] text-slate-500">
-            فایل‌های حجیم به صورت تکه‌تکه (Stream) مستقیماً روی دیسک ذخیره می‌شوند تا به حافظه سرور فشار وارد نشود.
-          </p>
+
+          {/* Transfer Metrics: Bytes & Speed */}
+          <div className="flex items-center justify-between text-[11px] text-slate-300">
+            <div className="flex items-center gap-1 text-slate-400">
+              <span>حجم منتقل‌شده:</span>
+              <span className="text-white font-bold font-mono">{formatFileSize(uploadProgress.loaded)}</span>
+              <span>از</span>
+              <span className="text-slate-300 font-mono">{formatFileSize(uploadProgress.total)}</span>
+            </div>
+            <div className="flex items-center gap-1 text-emerald-300">
+              <span className="text-slate-400">سرعت انتقال:</span>
+              <span className="font-bold font-mono">
+                {(uploadProgress.speed || 0) > 0
+                  ? `${((uploadProgress.speed || 0) / (1024 * 1024)).toFixed(1)} MB/s`
+                  : 'در حال محاسبه...'}
+              </span>
+            </div>
+          </div>
         </div>
       )}
 

@@ -253,3 +253,67 @@ export interface PasswordResetRequest {
   resolvedByName?: string;
 }
 
+export type SmsEventType =
+  | 'PROJECT_CREATED'
+  | 'PROJECT_APPROVED'
+  | 'PROJECT_REJECTED'
+  | 'PROJECT_NEEDS_REVISION'
+  | 'NEW_VOTE_CAST'
+  | 'PASSWORD_RESET';
+
+export type SmsTargetType =
+  | 'ALL_COUNCIL'
+  | 'ALL_ADMINS'
+  | 'ADMINS'
+  | 'PROJECT_CREATOR'
+  | 'SPECIFIC_POSITIONS'
+  | 'CUSTOM_NUMBERS';
+
+export interface SmsRule {
+  id: string;
+  title?: string;
+  event: SmsEventType;
+  eventType?: SmsEventType;
+  target: SmsTargetType;
+  targetType?: SmsTargetType;
+  targetPositionIds?: string[];
+  targetCustomNumbers?: string[];
+  customPhones?: string;
+  template: string;
+  messageTemplate?: string;
+  description?: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface SmsLog {
+  id: string;
+  ruleId?: string;
+  recipientPhone: string;
+  recipientName?: string;
+  message: string;
+  event: string;
+  eventType?: string;
+  status: 'SENT' | 'FAILED' | 'SIMULATED';
+  providerResponse?: string;
+  error?: string;
+  createdAt: string;
+  sentAt?: string;
+}
+
+export interface PublicSettings {
+  login_title?: string;
+  login_subtitle?: string;
+  login_logo_url?: string | null;
+  max_file_size_mb?: string;
+  max_upload_size_mb?: string;
+}
+
+export interface UploadProgressInfo {
+  percent: number;
+  loaded: number;
+  total: number;
+  speed: number; // bytes per second
+}
+

@@ -1,4 +1,4 @@
-import { Position, User, DynamicField, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowLog, ProjectStructure, StructurePositionNode, ProjectAttachment, SystemSetting, PasswordResetRequest } from '../types';
+import { Position, User, DynamicField, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowLog, ProjectStructure, StructurePositionNode, ProjectAttachment, SystemSetting, PasswordResetRequest, SmsRule, SmsLog, PublicSettings, UploadProgressInfo } from '../types';
 
 class ApiService {
   getToken(): string | null {
@@ -607,7 +607,7 @@ class ApiService {
   async uploadProjectAttachmentStream(
     projectId: string,
     file: File,
-    onProgress?: (percent: number) => void
+    onProgress?: (progress: UploadProgressInfo) => void
   ): Promise<ProjectAttachment> {
     const token = this.getToken();
     return new Promise((resolve, reject) => {
@@ -621,11 +621,27 @@ class ApiService {
         xhr.setRequestHeader('Authorization', `Bearer ${token}`);
       }
 
+      let lastTime = Date.now();
+      let lastLoaded = 0;
+      let calculatedSpeed = 0;
+
       if (xhr.upload && onProgress) {
         xhr.upload.onprogress = (event) => {
           if (event.lengthComputable && event.total > 0) {
+            const now = Date.now();
+            const elapsed = (now - lastTime) / 1000;
+            if (elapsed >= 0.25) {
+              calculatedSpeed = Math.round((event.loaded - lastLoaded) / elapsed);
+              lastTime = now;
+              lastLoaded = event.loaded;
+            }
             const percent = Math.min(100, Math.round((event.loaded / event.total) * 100));
-            onProgress(percent);
+            onProgress({
+              percent,
+              loaded: event.loaded,
+              total: event.total,
+              speed: calculatedSpeed,
+            });
           }
         };
       }
@@ -710,6 +726,106 @@ class ApiService {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'خطا در ذخیره تنظیمات');
     return data;
+  }
+
+  // Public Branding Settings (accessible without login)
+  async getPublicSettings(): Promise<PublicSettings> {
+    try {
+      const res = await fetch('/api/system/public-settings');
+      if (!res.ok) throw new Error('خطا در دریافت مشخصات ظاهری');
+      return await res.json();
+    } catch (e) {
+      return {
+        login_title: 'شورای تولید و ارزیابی',
+        login_subtitle: 'سامانه یکپارچه داوری، تایید و گردش‌کار تولیدات رسانه‌ای و محتوایی',
+        login_logo_url: null,
+        max_upload_size_mb: '1024',
+      };
+    }
+  }
+
+  // Upload Login Logo (Admin)
+  async uploadLoginLogo(logoData: string, fileName?: string): Promise<{ success: boolean; logoUrl: string }> {
+    const res = await fetch('/api/system/upload-logo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify({ logoData, fileName }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'خطا در بارگذاری لوگو');
+    return data;
+  }
+
+  // SMS API & Rules
+  async getSmsRules(): Promise<SmsRule[]> {
+    const res = await fetch('/api/sms/rules', {
+      headers: this.getAuthHeader(),
+    });
+    const data = await res.json();
+    return data.rules || [];
+  }
+
+  async createSmsRule(rule: Partial<SmsRule>): Promise<{ success: boolean; ruleId: string }> {
+    const res = await fetch('/api/sms/rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify(rule),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'خطا در ثبت شرط پیامک');
+    return data;
+  }
+
+  async updateSmsRule(id: string, rule: Partial<SmsRule>): Promise<void> {
+    const res = await fetch(`/api/sms/rules/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify(rule),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'خطا در ویرایش شرط پیامک');
+    }
+  }
+
+  async deleteSmsRule(id: string): Promise<void> {
+    const res = await fetch(`/api/sms/rules/${id}`, {
+      method: 'DELETE',
+      headers: this.getAuthHeader(),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'خطا در حذف شرط پیامک');
+    }
+  }
+
+  async toggleSmsRule(id: string): Promise<{ success: boolean; enabled: boolean }> {
+    const res = await fetch(`/api/sms/rules/${id}/toggle`, {
+      method: 'POST',
+      headers: this.getAuthHeader(),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'خطا در تغییر وضعیت شرط');
+    return data;
+  }
+
+  async sendTestSms(phone: string, message?: string): Promise<{ success: boolean; simulated: boolean; message: string }> {
+    const res = await fetch('/api/sms/send-test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify({ phone, message }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'خطا در ارسال پیامک آزمایشی');
+    return data;
+  }
+
+  async getSmsLogs(): Promise<SmsLog[]> {
+    const res = await fetch('/api/sms/logs', {
+      headers: this.getAuthHeader(),
+    });
+    const data = await res.json();
+    return data.logs || [];
   }
 }
 

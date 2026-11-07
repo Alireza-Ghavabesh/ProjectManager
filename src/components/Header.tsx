@@ -15,7 +15,8 @@ import {
   Sparkles, 
   FolderTree, 
   Settings,
-  Key
+  Key,
+  Bell
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -66,7 +67,6 @@ export const Header: React.FC<HeaderProps> = ({
           
           {/* Left / Center: Current Active View Title & Breadcrumb */}
           <div className="flex items-center gap-3">
-            
             {/* Mobile hamburger button to open right sidebar */}
             <button
               onClick={onOpenMobileMenu}
@@ -91,21 +91,24 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </div>
 
-          {/* Right side: Quick Switch Profile Badge & Change Password Button */}
-          <div className="flex items-center gap-2 sm:gap-3">
+          {/* Right side: Admin Password Resets Button + Quick Profile + Change Password */}
+          <div className="flex items-center gap-2 sm:gap-2.5">
             <PWAInstallButton />
+
+
 
             {/* Change Password Button for current user */}
             <button
               type="button"
               onClick={() => setShowPasswordModal(true)}
-              className="p-2 sm:px-3 sm:py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-indigo-50 hover:border-indigo-300 text-slate-700 hover:text-indigo-700 transition flex items-center gap-1.5 cursor-pointer text-xs font-semibold shadow-2xs"
+              className="p-2 sm:px-2.5 sm:py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-indigo-50 hover:border-indigo-300 text-slate-700 hover:text-indigo-700 transition flex items-center gap-1 cursor-pointer text-xs font-semibold shadow-2xs"
               title="تغییر رمز عبور حساب کاربری من"
             >
               <Key className="w-3.5 h-3.5 text-indigo-600" />
-              <span className="hidden sm:inline">تغییر رمز عبور</span>
+              <span className="hidden lg:inline">تغییر رمز</span>
             </button>
 
+            {/* User Profile Badge */}
             <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-slate-50 border border-slate-200/80">
               <div className="w-7 h-7 rounded-xl bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center">
                 {currentUser.name.charAt(0)}

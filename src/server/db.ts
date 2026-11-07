@@ -282,6 +282,31 @@ export function initDatabase() {
       resolvedAt TEXT,
       resolvedBy TEXT REFERENCES users(id) ON DELETE SET NULL
     );
+
+    CREATE TABLE IF NOT EXISTS sms_rules (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      eventType TEXT NOT NULL,
+      targetType TEXT NOT NULL,
+      targetPositionIds TEXT,
+      customPhones TEXT,
+      messageTemplate TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS sms_logs (
+      id TEXT PRIMARY KEY,
+      ruleId TEXT,
+      recipientPhone TEXT NOT NULL,
+      recipientName TEXT,
+      message TEXT NOT NULL,
+      eventType TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'SENT',
+      providerResponse TEXT,
+      sentAt TEXT NOT NULL
+    );
   `);
 
   // Safe columns migration for positions if already existed
@@ -688,14 +713,86 @@ function seedInitialData() {
     insertSetting.run('default_deadline_days', '14', 'مدت زمان پیش‌فرض مهلت ارزیابی پروژه‌ها (روز)', now);
     insertSetting.run('allow_creator_extension', 'true', 'امکان تمدید مهلت و بازگشایی مجدد رای‌گیری توسط ثبت‌کننده یا مدیر', now);
     insertSetting.run('max_file_size_mb', '1024', 'حداکثر حجم مجاز فایل‌های پیوست پروژه به مگابایت (تا ۱۰۲۴۰ مگابایت / ۱۰ گیگابایت)', now);
-  } else {
-    // Ensure max_file_size_mb exists even if settings were seeded previously
-    const maxFileSizeSetting = db.prepare("SELECT value FROM system_settings WHERE key = 'max_file_size_mb'").get() as any;
-    if (!maxFileSizeSetting) {
-      db.prepare('INSERT INTO system_settings (key, value, description, updatedAt) VALUES (?, ?, ?, ?)').run(
-        'max_file_size_mb',
-        '1024',
-        'حداکثر حجم مجاز فایل‌های پیوست پروژه به مگابایت (تا ۱۰۲۴۰ مگابایت / ۱۰ گیگابایت)',
+    // Helper to insert setting if missing
+    const ensureSetting = (k: string, val: string, desc: string) => {
+      const existing = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(k) as any;
+      if (!existing) {
+        db.prepare('INSERT INTO system_settings (key, value, description, updatedAt) VALUES (?, ?, ?, ?)').run(
+          k, val, desc, now
+        );
+      }
+    };
+
+    ensureSetting('enforce_deadline', 'true', 'جلوگیری از ثبت رای پس از اتمام مهلت ارزیابی');
+    ensureSetting('default_deadline_days', '14', 'مدت زمان پیش‌فرض مهلت ارزیابی پروژه‌ها (روز)');
+    ensureSetting('allow_creator_extension', 'true', 'امکان تمدید مهلت و بازگشایی مجدد رای‌گیری توسط ثبت‌کننده یا مدیر');
+    ensureSetting('max_file_size_mb', '1024', 'حداکثر حجم مجاز فایل‌های پیوست پروژه به مگابایت (تا ۱۰۲۴۰ مگابایت / ۱۰ گیگابایت)');
+    ensureSetting('login_title', 'شورای تولید و ارزیابی', 'عنوان بالای فرم ورود به سامانه');
+    ensureSetting('login_subtitle', 'سامانه جامع کارتابل مصوبات و مدیریت طرح‌ها', 'توضیحات و زیرعنوان فرم ورود');
+    ensureSetting('login_logo_url', '', 'آدرس تصویر یا لوگوی اختصاصی صفحه ورود');
+    ensureSetting('sms_enabled', 'true', 'فعال بودن کلی سامانه ارسال پیامک');
+    ensureSetting('sms_provider', 'smsir', 'ارائه‌دهنده وب‌سرویس پیامک (smsir, kavenegar, farazsms, ghasedak, custom)');
+    ensureSetting('sms_api_key', '', 'کلید دسترسی API ارائه‌دهنده پیامک');
+    ensureSetting('sms_sender_number', '10008585', 'شماره خط اختصاصی ارسال‌کننده پیامک');
+    ensureSetting('sms_api_url', '', 'آدرس وب‌سرویس در صورت استفاده از ارائه‌دهنده سفارشی');
+
+    // Seed default SMS rules if none exist
+    const rulesCount = (db.prepare('SELECT count(*) as count FROM sms_rules').get() as any)?.count || 0;
+    if (rulesCount === 0) {
+      const insertRule = db.prepare(`
+        INSERT INTO sms_rules (id, title, eventType, targetType, targetPositionIds, customPhones, messageTemplate, enabled, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      insertRule.run(
+        'rule-1',
+        'اطلاع‌رسانی ثبت پروژه جدید به اعضای شورا',
+        'PROJECT_CREATED',
+        'ALL_COUNCIL',
+        '[]',
+        '',
+        'همکار گرامی؛ طرح جدید «{project_title}» با کد {project_code} در سامانه شورا ثبت شد و در کارتابل ارزیابی شما قرار گرفت.',
+        1,
+        now,
+        now
+      );
+
+      insertRule.run(
+        'rule-2',
+        'اعلام تصویب نهایی طرح به ثبت‌کننده',
+        'PROJECT_APPROVED',
+        'PROJECT_CREATOR',
+        '[]',
+        '',
+        'طرح شما با عنوان «{project_title}» (کد: {project_code}) با اکثریت آرا به تصویب نهایی رسید.',
+        1,
+        now,
+        now
+      );
+
+      insertRule.run(
+        'rule-3',
+        'اطلاع‌رسانی نیاز به اصلاح طرح به ثبت‌کننده',
+        'PROJECT_NEEDS_REVISION',
+        'PROJECT_CREATOR',
+        '[]',
+        '',
+        'طرح شما «{project_title}» نیازمند اصلاح و بازنگری تشخیص داده شد. لطفاً جهت مشاهده نظرات به کارتابل مراجعه فرمایید.',
+        1,
+        now,
+        now
+      );
+
+      insertRule.run(
+        'rule-4',
+        'اطلاع‌رسانی رد طرح به ثبت‌کننده',
+        'PROJECT_REJECTED',
+        'PROJECT_CREATOR',
+        '[]',
+        '',
+        'طرح با عنوان «{project_title}» در جلسه ارزیابی شورا به حد نصاب موافقت نرسید و رد گردید.',
+        1,
+        now,
         now
       );
     }

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { DynamicField, Project, ProjectAttachment, Workflow } from '../types';
+import { DynamicField, Project, ProjectAttachment, Workflow, UploadProgressInfo } from '../types';
 import { api, fileToBase64, formatFileSize } from '../services/api';
 import { ProjectAttachments } from './ProjectAttachments';
 import { PersianDatePicker } from './PersianDatePicker';
@@ -105,6 +105,9 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
   const [maxFileSizeMb, setMaxFileSizeMb] = useState<number>(1024);
   const [uploadStatusText, setUploadStatusText] = useState<string | null>(null);
+  const [activeUploadProgress, setActiveUploadProgress] = useState<UploadProgressInfo | null>(null);
+  const [uploadingFileIndex, setUploadingFileIndex] = useState<number>(0);
+  const [uploadingFileName, setUploadingFileName] = useState<string>('');
 
   useEffect(() => {
     fetchAttachments();
@@ -176,6 +179,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     setLoading(true);
     setError('');
     setUploadStatusText(null);
+    setActiveUploadProgress(null);
 
     try {
       const payload = {
@@ -199,12 +203,18 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         targetProjectId = (res as any)?.projectId;
       }
 
-      // Upload any chosen files for the project with direct streaming
+      // Upload any chosen files for the project with direct streaming and real-time progress
       if (targetProjectId && selectedFiles.length > 0) {
         for (let i = 0; i < selectedFiles.length; i++) {
           const file = selectedFiles[i];
-          setUploadStatusText(`در حال استریم فایل (${i + 1}/${selectedFiles.length}): ${file.name}...`);
-          await api.uploadProjectAttachmentStream(targetProjectId, file);
+          setUploadingFileIndex(i + 1);
+          setUploadingFileName(file.name);
+          setActiveUploadProgress({ percent: 0, loaded: 0, total: file.size, speed: 0 });
+          setUploadStatusText(`در حال ارسال فایل (${i + 1}/${selectedFiles.length}): ${file.name}`);
+          
+          await api.uploadProjectAttachmentStream(targetProjectId, file, (progress) => {
+            setActiveUploadProgress(progress);
+          });
         }
       }
 
@@ -215,6 +225,9 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     } finally {
       setLoading(false);
       setUploadStatusText(null);
+      setActiveUploadProgress(null);
+      setUploadingFileIndex(0);
+      setUploadingFileName('');
     }
   };
 
@@ -567,6 +580,57 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                         </button>
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {/* Real Animated Upload Progress Bar */}
+                {activeUploadProgress && (
+                  <div className="mt-3 p-4 rounded-2xl bg-gradient-to-br from-indigo-950 via-slate-900 to-indigo-900 text-white shadow-xl border border-indigo-500/40 space-y-3 animate-in fade-in zoom-in-95 duration-200">
+                    <div className="flex items-center justify-between text-xs font-bold">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="relative flex h-3 w-3 shrink-0">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                        </span>
+                        <span className="text-indigo-200 shrink-0">
+                          در حال ارسال فایل ({uploadingFileIndex} از {selectedFiles.length}):
+                        </span>
+                        <span className="text-white font-mono truncate" dir="ltr">
+                          {uploadingFileName}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 font-mono text-emerald-400 text-sm font-bold shrink-0">
+                        <span>{activeUploadProgress.percent}٪</span>
+                      </div>
+                    </div>
+
+                    {/* Animated Gradient Bar with Shimmer */}
+                    <div className="relative w-full h-3.5 bg-slate-800/90 rounded-full overflow-hidden p-0.5 border border-white/10 shadow-inner">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-sky-400 to-emerald-400 transition-all duration-200 ease-out relative overflow-hidden shadow-md shadow-indigo-500/50"
+                        style={{ width: `${Math.max(2, activeUploadProgress.percent)}%` }}
+                      >
+                        <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(255,255,255,0.3)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.3)_50%,rgba(255,255,255,0.3)_75%,transparent_75%,transparent)] bg-[length:16px_16px] animate-[pulse_1.5s_infinite]" />
+                      </div>
+                    </div>
+
+                    {/* Transfer Metrics: Bytes & Speed */}
+                    <div className="flex items-center justify-between text-[11px] text-slate-300">
+                      <div className="flex items-center gap-1 text-slate-400">
+                        <span>حجم منتقل‌شده:</span>
+                        <span className="text-white font-bold font-mono">{formatFileSize(activeUploadProgress.loaded)}</span>
+                        <span>از</span>
+                        <span className="text-slate-300 font-mono">{formatFileSize(activeUploadProgress.total)}</span>
+                      </div>
+                      <div className="flex items-center gap-1 text-emerald-300">
+                        <span className="text-slate-400">سرعت انتقال:</span>
+                        <span className="font-bold font-mono">
+                          {(activeUploadProgress.speed || 0) > 0
+                            ? `${((activeUploadProgress.speed || 0) / (1024 * 1024)).toFixed(1)} MB/s`
+                            : 'در حال محاسبه...'}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
