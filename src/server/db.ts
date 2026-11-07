@@ -405,46 +405,49 @@ function seedInitialData() {
   }
 
   // 2. Seed Tree-structured Positions (چارت سازمانی درختی شورا)
-  const existingPos = db.prepare('SELECT count(*) as count FROM positions').get() as { count: number };
-  if (existingPos.count === 0) {
-    const insertPos = db.prepare(`
-      INSERT INTO positions (id, title, description, color, parentId, level, orderIndex, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+  // Use INSERT OR IGNORE so existing positions are kept intact, while missing standard positions are safely created
+  const insertPos = db.prepare(`
+    INSERT OR IGNORE INTO positions (id, title, description, color, parentId, level, orderIndex, createdAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
 
-    // Level 1: Root
-    insertPos.run('pos-root', 'ریاست عالیه شورا و مدیرکل', 'راهبری کلان، تنفیذ مصوبات نهایی و نظارت عالیه', 'rose', null, 1, 1, now);
+  // Level 1: Root
+  insertPos.run('pos-root', 'ریاست عالیه شورا و مدیرکل', 'راهبری کلان، تنفیذ مصوبات نهایی و نظارت عالیه', 'rose', null, 1, 1, now);
 
-    // Level 2: Directors / Secretaries
-    insertPos.run('pos-1', 'دبیر شورا و مدیر جلسه', 'مدیریت ثبت پروژه‌ها، هدایت جلسات و پیگیری گردش کار', 'indigo', 'pos-root', 2, 1, now);
-    insertPos.run('pos-dept-prod', 'مدیریت گروه تولید و برنامه‌ریزی', 'هماهنگی امور اجرایی، صحنه، فنی و لجستیک تولید', 'cyan', 'pos-root', 2, 2, now);
-    insertPos.run('pos-dept-eval', 'مدیریت نظارت، کیفی و برآورد', 'ارزیابی محتوایی، بودجه و تطبیق استانداردها', 'emerald', 'pos-root', 2, 3, now);
+  // Level 2: Directors / Secretaries
+  insertPos.run('pos-1', 'دبیر شورا و مدیر جلسه', 'مدیریت ثبت پروژه‌ها، هدایت جلسات و پیگیری گردش کار', 'indigo', 'pos-root', 2, 1, now);
+  insertPos.run('pos-dept-prod', 'مدیریت گروه تولید و برنامه‌ریزی', 'هماهنگی امور اجرایی، صحنه، فنی و لجستیک تولید', 'cyan', 'pos-root', 2, 2, now);
+  insertPos.run('pos-dept-eval', 'مدیریت نظارت، کیفی و برآورد', 'ارزیابی محتوایی، بودجه و تطبیق استانداردها', 'emerald', 'pos-root', 2, 3, now);
 
-    // Level 3: Specialists under Production Dept
-    insertPos.run('pos-3', 'مدیر فنی و تصویربرداری', 'ارزیابی تجهیزات، عوامل فنی و نیازهای استودیو', 'cyan', 'pos-dept-prod', 3, 1, now);
-    insertPos.run('pos-4', 'مدیر تولید و هماهنگی صحنه', 'برنامه‌ریزی اجرایی، عوامل صحنه، لوکیشن و زمان‌بندی', 'purple', 'pos-dept-prod', 3, 2, now);
+  // Level 3: Specialists under Production Dept
+  insertPos.run('pos-3', 'مدیر فنی و تصویربرداری', 'ارزیابی تجهیزات، عوامل فنی و نیازهای استودیو', 'cyan', 'pos-dept-prod', 3, 1, now);
+  insertPos.run('pos-4', 'مدیر تولید و هماهنگی صحنه', 'برنامه‌ریزی اجرایی، عوامل صحنه، لوکیشن و زمان‌بندی', 'purple', 'pos-dept-prod', 3, 2, now);
 
-    // Level 3: Specialists under Evaluation Dept
-    insertPos.run('pos-2', 'ناظر کیفی و محتوایی', 'بررسی فیلم‌نامه، چارچوب محتوایی و انطباق با سیاست‌ها', 'emerald', 'pos-dept-eval', 3, 1, now);
-    insertPos.run('pos-5', 'کارشناس برآورد و مالی', 'کنترل بودجه، دستمزدها و هزینه‌های عوامل تولید', 'amber', 'pos-dept-eval', 3, 2, now);
-  } else {
-    // Ensure parent links exist if database was previously created flat
-    try {
-      db.prepare("UPDATE positions SET parentId = 'pos-1', level = 3 WHERE id IN ('pos-2', 'pos-3', 'pos-4', 'pos-5') AND parentId IS NULL").run();
-      db.prepare("UPDATE positions SET level = 1 WHERE id = 'pos-1'").run();
-    } catch (e) {}
-  }
+  // Level 3: Specialists under Evaluation Dept
+  insertPos.run('pos-2', 'ناظر کیفی و محتوایی', 'بررسی فیلم‌نامه، چارچوب محتوایی و انطباق با سیاست‌ها', 'emerald', 'pos-dept-eval', 3, 1, now);
+  insertPos.run('pos-5', 'کارشناس برآورد و مالی', 'کنترل بودجه، دستمزدها و هزینه‌های عوامل تولید', 'amber', 'pos-dept-eval', 3, 2, now);
 
-  // Assign permissions to positions
+  // Auxiliary Organizational Positions for structures
+  insertPos.run('pos-fin', 'مدیر امور مالی و بودجه', 'مسئول تایید و کنترل بودجه، تراکنش‌ها و هزینه‌ها در ساختارهای مختلف', 'amber', null, 1, 0, now);
+  insertPos.run('pos-admin-affairs', 'مدیر امور اداری و پرسنلی', 'رسیدگی به امور کارکنان، مرخصی‌ها، احکام و رفاهیات', 'blue', null, 1, 0, now);
+  insertPos.run('pos-mission-lead', 'سرپرست ماموریت‌ها و اعزام', 'برنامه‌ریزی، تایید و هماهنگی ماموریت‌های کاری و لجستیک', 'purple', null, 1, 0, now);
+
+  // Assign permissions to positions safely based on existing positions
   const posPermCount = (db.prepare('SELECT count(*) as count FROM position_permissions').get() as any).count;
   if (posPermCount === 0) {
+    const existingPositions = (db.prepare('SELECT id FROM positions').all() as { id: string }[]).map(p => p.id);
+    const existingPosSet = new Set(existingPositions);
+    const allPerms = db.prepare('SELECT code FROM permissions').all() as { code: string }[];
     const insertPosPerm = db.prepare('INSERT OR IGNORE INTO position_permissions (positionId, permissionCode) VALUES (?, ?)');
     
-    // Admin position (pos-1 and pos-root) gets ALL permissions
-    const allPerms = db.prepare('SELECT code FROM permissions').all() as { code: string }[];
+    // Admin position (pos-1 and pos-root) gets ALL permissions if they exist
     for (const p of allPerms) {
-      insertPosPerm.run('pos-1', p.code);
-      insertPosPerm.run('pos-root', p.code);
+      if (existingPosSet.has('pos-1')) {
+        try { insertPosPerm.run('pos-1', p.code); } catch (e) {}
+      }
+      if (existingPosSet.has('pos-root')) {
+        try { insertPosPerm.run('pos-root', p.code); } catch (e) {}
+      }
     }
 
     // Standard Council Positions get voting, chat, view, and workflow forward
@@ -460,8 +463,10 @@ function seedInitialData() {
 
     const councilPosIds = ['pos-2', 'pos-3', 'pos-4', 'pos-5', 'pos-dept-prod', 'pos-dept-eval'];
     for (const posId of councilPosIds) {
-      for (const pCode of councilPerms) {
-        insertPosPerm.run(posId, pCode);
+      if (existingPosSet.has(posId)) {
+        for (const pCode of councilPerms) {
+          try { insertPosPerm.run(posId, pCode); } catch (e) {}
+        }
       }
     }
   }
@@ -626,6 +631,11 @@ function seedInitialData() {
   // 8. Seed Structure Positions and User Assignments per Structure
   const spCount = (db.prepare('SELECT count(*) as count FROM structure_positions').get() as any).count;
   if (spCount === 0) {
+    const existingPositions = (db.prepare('SELECT id FROM positions').all() as { id: string }[]).map(p => p.id);
+    const existingPosSet = new Set(existingPositions);
+    const existingUsers = (db.prepare('SELECT id FROM users').all() as { id: string }[]).map(u => u.id);
+    const existingUserSet = new Set(existingUsers);
+
     const insertSP = db.prepare(`
       INSERT INTO structure_positions (id, structureId, positionId, parentId, orderIndex, createdAt)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -635,108 +645,106 @@ function seedInitialData() {
       VALUES (?, ?)
     `);
 
+    const safeInsertNode = (spId: string, structId: string, posId: string, parentSpId: string | null, order: number, uId?: string) => {
+      if (existingPosSet.has(posId)) {
+        try {
+          insertSP.run(spId, structId, posId, parentSpId, order, now);
+          if (uId && existingUserSet.has(uId)) {
+            insertSPU.run(spId, uId);
+          }
+        } catch (e) {}
+      }
+    };
+
     // Structure 1: ساختار اصلی و راهبری شورا (pstr-org)
-    insertSP.run('sp-org-root', 'pstr-org', 'pos-1', null, 1, now); // دبیر شورا
-    insertSPU.run('sp-org-root', 'usr-admin');
-
-    insertSP.run('sp-org-c1', 'pstr-org', 'pos-2', 'sp-org-root', 1, now); // ناظر کیفی
-    insertSPU.run('sp-org-c1', 'usr-rezaei');
-
-    insertSP.run('sp-org-c2', 'pstr-org', 'pos-3', 'sp-org-root', 2, now); // مدیر فنی
-    insertSPU.run('sp-org-c2', 'usr-tehrani');
+    safeInsertNode('sp-org-root', 'pstr-org', 'pos-1', null, 1, 'usr-admin');
+    safeInsertNode('sp-org-c1', 'pstr-org', 'pos-2', 'sp-org-root', 1, 'usr-rezaei');
+    safeInsertNode('sp-org-c2', 'pstr-org', 'pos-3', 'sp-org-root', 2, 'usr-tehrani');
 
     // Structure 2: ساختار ماموریت‌ها و اعزام (pstr-mission)
-    // Here: مدیر مالی (pos-fin) is assigned in Mission structure!
-    insertSP.run('sp-mis-root', 'pstr-mission', 'pos-mission-lead', null, 1, now); // سرپرست ماموریت‌ها
-    insertSPU.run('sp-mis-root', 'usr-moradi');
-
-    insertSP.run('sp-mis-c1', 'pstr-mission', 'pos-fin', 'sp-mis-root', 1, now); // مدیر مالی در ساختار ماموریت!
-    insertSPU.run('sp-mis-c1', 'usr-hoseini');
+    safeInsertNode('sp-mis-root', 'pstr-mission', 'pos-mission-lead', null, 1, 'usr-moradi');
+    safeInsertNode('sp-mis-c1', 'pstr-mission', 'pos-fin', 'sp-mis-root', 1, 'usr-hoseini');
 
     // Structure 3: ساختار مرخصی و رفاهی پرسنل (pstr-leave)
-    // Here: مدیر مالی (pos-fin) is ALSO assigned in Leave structure!
-    insertSP.run('sp-lea-root', 'pstr-leave', 'pos-admin-affairs', null, 1, now); // مدیر امور اداری
-    insertSPU.run('sp-lea-root', 'usr-rezaei');
-
-    insertSP.run('sp-lea-c1', 'pstr-leave', 'pos-fin', 'sp-lea-root', 1, now); // مدیر مالی در ساختار مرخصی!
-    insertSPU.run('sp-lea-c1', 'usr-hoseini');
+    safeInsertNode('sp-lea-root', 'pstr-leave', 'pos-admin-affairs', null, 1, 'usr-rezaei');
+    safeInsertNode('sp-lea-c1', 'pstr-leave', 'pos-fin', 'sp-lea-root', 1, 'usr-hoseini');
 
     // Structure 4: ساختار مالی و بودجه (pstr-finance)
-    insertSP.run('sp-fin-root', 'pstr-finance', 'pos-fin', null, 1, now);
-    insertSPU.run('sp-fin-root', 'usr-hoseini');
+    safeInsertNode('sp-fin-root', 'pstr-finance', 'pos-fin', null, 1, 'usr-hoseini');
   }
 
   // 9. Seed Sample Project Attachments
   const attCount = (db.prepare('SELECT count(*) as count FROM project_attachments').get() as any).count;
   if (attCount === 0) {
-    const sampleTextPdf = `data:text/plain;charset=utf-8;base64,${Buffer.from(
-      'پیوست مستند شکوه زاگرس:\nطرح فیلم‌نامه، سیناپس ۱۰ قسمتی و برآورد تجهیزات تصویربرداری و کوهستانی.'
-    ).toString('base64')}`;
+    const prj101 = db.prepare("SELECT id, createdById FROM projects WHERE id = 'prj-101'").get() as any;
+    if (prj101) {
+      const uploader = prj101.createdById || 'usr-admin';
+      const sampleTextPdf = `data:text/plain;charset=utf-8;base64,${Buffer.from(
+        'پیوست مستند شکوه زاگرس:\nطرح فیلم‌نامه، سیناپس ۱۰ قسمتی و برآورد تجهیزات تصویربرداری و کوهستانی.'
+      ).toString('base64')}`;
 
-    const sampleTextExcel = `data:text/plain;charset=utf-8;base64,${Buffer.from(
-      'جدول ریز هزینه‌ها و دستمزد عوامل تولید مستند شکوه زاگرس فصل دوم - پاییز ۱۴۰۳'
-    ).toString('base64')}`;
+      const sampleTextExcel = `data:text/plain;charset=utf-8;base64,${Buffer.from(
+        'جدول ریز هزینه‌ها و دستمزد عوامل تولید مستند شکوه زاگرس فصل دوم - پاییز ۱۴۰۳'
+      ).toString('base64')}`;
 
-    const insertAtt = db.prepare(`
-      INSERT INTO project_attachments (id, projectId, fileName, fileSize, fileType, data, uploadedBy, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+      const insertAtt = db.prepare(`
+        INSERT INTO project_attachments (id, projectId, fileName, fileSize, fileType, data, uploadedBy, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
 
-    insertAtt.run(
-      'att-101',
-      'prj-101',
-      'طرح_فیلم‌نامه_و_سیناپس_زاگرس.pdf',
-      2457600, // ~2.4 MB
-      'application/pdf',
-      sampleTextPdf,
-      'usr-admin',
-      now
-    );
+      try {
+        insertAtt.run(
+          'att-101',
+          'prj-101',
+          'طرح_فیلم‌نامه_و_سیناپس_زاگرس.pdf',
+          2457600, // ~2.4 MB
+          'application/pdf',
+          sampleTextPdf,
+          uploader,
+          now
+        );
 
-    insertAtt.run(
-      'att-102',
-      'prj-101',
-      'جدول_برآورد_بودجه_عوامل.xlsx',
-      1048576, // 1 MB
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      sampleTextExcel,
-      'usr-admin',
-      now
-    );
+        insertAtt.run(
+          'att-102',
+          'prj-101',
+          'جدول_برآورد_بودجه_عوامل.xlsx',
+          1048576, // 1 MB
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          sampleTextExcel,
+          uploader,
+          now
+        );
+      } catch (e) {}
+    }
   }
 
   // 8. Seed System Settings
-  const settingCount = (db.prepare('SELECT count(*) as count FROM system_settings').get() as any)?.count || 0;
-  if (settingCount === 0) {
-    const insertSetting = db.prepare('INSERT INTO system_settings (key, value, description, updatedAt) VALUES (?, ?, ?, ?)');
-    insertSetting.run('enforce_deadline', 'true', 'جلوگیری از ثبت رای پس از اتمام مهلت ارزیابی', now);
-    insertSetting.run('default_deadline_days', '14', 'مدت زمان پیش‌فرض مهلت ارزیابی پروژه‌ها (روز)', now);
-    insertSetting.run('allow_creator_extension', 'true', 'امکان تمدید مهلت و بازگشایی مجدد رای‌گیری توسط ثبت‌کننده یا مدیر', now);
-    insertSetting.run('max_file_size_mb', '1024', 'حداکثر حجم مجاز فایل‌های پیوست پروژه به مگابایت (تا ۱۰۲۴۰ مگابایت / ۱۰ گیگابایت)', now);
-    // Helper to insert setting if missing
-    const ensureSetting = (k: string, val: string, desc: string) => {
+  const ensureSetting = (k: string, val: string, desc: string) => {
+    try {
       const existing = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(k) as any;
       if (!existing) {
         db.prepare('INSERT INTO system_settings (key, value, description, updatedAt) VALUES (?, ?, ?, ?)').run(
           k, val, desc, now
         );
       }
-    };
+    } catch (e) {}
+  };
 
-    ensureSetting('enforce_deadline', 'true', 'جلوگیری از ثبت رای پس از اتمام مهلت ارزیابی');
-    ensureSetting('default_deadline_days', '14', 'مدت زمان پیش‌فرض مهلت ارزیابی پروژه‌ها (روز)');
-    ensureSetting('allow_creator_extension', 'true', 'امکان تمدید مهلت و بازگشایی مجدد رای‌گیری توسط ثبت‌کننده یا مدیر');
-    ensureSetting('max_file_size_mb', '1024', 'حداکثر حجم مجاز فایل‌های پیوست پروژه به مگابایت (تا ۱۰۲۴۰ مگابایت / ۱۰ گیگابایت)');
-    ensureSetting('login_title', 'شورای تولید و ارزیابی', 'عنوان بالای فرم ورود به سامانه');
-    ensureSetting('login_subtitle', 'سامانه جامع کارتابل مصوبات و مدیریت طرح‌ها', 'توضیحات و زیرعنوان فرم ورود');
-    ensureSetting('login_logo_url', '', 'آدرس تصویر یا لوگوی اختصاصی صفحه ورود');
-    ensureSetting('sms_enabled', 'true', 'فعال بودن کلی سامانه ارسال پیامک');
-    ensureSetting('sms_provider', 'smsir', 'ارائه‌دهنده وب‌سرویس پیامک (smsir, kavenegar, farazsms, ghasedak, custom)');
-    ensureSetting('sms_api_key', '', 'کلید دسترسی API ارائه‌دهنده پیامک');
-    ensureSetting('sms_sender_number', '10008585', 'شماره خط اختصاصی ارسال‌کننده پیامک');
-    ensureSetting('sms_api_url', '', 'آدرس وب‌سرویس در صورت استفاده از ارائه‌دهنده سفارشی');
+  ensureSetting('enforce_deadline', 'true', 'جلوگیری از ثبت رای پس از اتمام مهلت ارزیابی');
+  ensureSetting('default_deadline_days', '14', 'مدت زمان پیش‌فرض مهلت ارزیابی پروژه‌ها (روز)');
+  ensureSetting('allow_creator_extension', 'true', 'امکان تمدید مهلت و بازگشایی مجدد رای‌گیری توسط ثبت‌کننده یا مدیر');
+  ensureSetting('max_file_size_mb', '1024', 'حداکثر حجم مجاز فایل‌های پیوست پروژه به مگابایت (تا ۱۰۲۴۰ مگابایت / ۱۰ گیگابایت)');
+  ensureSetting('login_title', 'شورای تولید و ارزیابی', 'عنوان بالای فرم ورود به سامانه');
+  ensureSetting('login_subtitle', 'سامانه جامع کارتابل مصوبات و مدیریت طرح‌ها', 'توضیحات و زیرعنوان فرم ورود');
+  ensureSetting('login_logo_url', '', 'آدرس تصویر یا لوگوی اختصاصی صفحه ورود');
+  ensureSetting('sms_enabled', 'true', 'فعال بودن کلی سامانه ارسال پیامک');
+  ensureSetting('sms_provider', 'smsir', 'ارائه‌دهنده وب‌سرویس پیامک (smsir, kavenegar, farazsms, ghasedak, custom)');
+  ensureSetting('sms_api_key', '', 'کلید دسترسی API ارائه‌دهنده پیامک');
+  ensureSetting('sms_sender_number', '10008585', 'شماره خط اختصاصی ارسال‌کننده پیامک');
+  ensureSetting('sms_api_url', '', 'آدرس وب‌سرویس در صورت استفاده از ارائه‌دهنده سفارشی');
 
-    // Seed default SMS rules if none exist
+  // Seed default SMS rules if none exist
+  try {
     const rulesCount = (db.prepare('SELECT count(*) as count FROM sms_rules').get() as any)?.count || 0;
     if (rulesCount === 0) {
       const insertRule = db.prepare(`
@@ -796,7 +804,7 @@ function seedInitialData() {
         now
       );
     }
-  }
+  } catch (e) {}
 }
 
 export { db };
