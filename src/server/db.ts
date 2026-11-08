@@ -10,7 +10,7 @@ const dbPath = path.join(projectRoot, 'council.db');
 
 const rawDb = new DatabaseSync(dbPath);
 rawDb.exec('PRAGMA journal_mode = WAL;');
-rawDb.exec('PRAGMA foreign_keys = ON;');
+// Foreign keys are enabled after schema initialization and seeding
 
 function normalizeArgs(args: any[]): any[] {
   const flatArgs = (args.length === 1 && Array.isArray(args[0])) ? args[0] : args;
@@ -92,6 +92,10 @@ export function generateOfflineAvatarSvg(name: string, seed: string): string {
 }
 
 export function initDatabase() {
+  try {
+    rawDb.exec('PRAGMA foreign_keys = OFF;');
+  } catch (e) {}
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS positions (
       id TEXT PRIMARY KEY,
@@ -343,7 +347,15 @@ export function initDatabase() {
     db.prepare('ALTER TABLE users ADD COLUMN hasCustomPermissions INTEGER DEFAULT 0').run();
   } catch (e) {}
 
-  seedInitialData();
+  try {
+    seedInitialData();
+  } catch (err) {
+    console.warn('Warning during seedInitialData:', err);
+  } finally {
+    try {
+      rawDb.exec('PRAGMA foreign_keys = ON;');
+    } catch (e) {}
+  }
 }
 
 function seedInitialData() {

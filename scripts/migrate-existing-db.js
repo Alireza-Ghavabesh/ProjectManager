@@ -54,6 +54,9 @@ const db = new DatabaseSync(targetDbPath);
 try {
   db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
 } catch (e) {}
+try {
+  db.exec('PRAGMA foreign_keys = OFF;');
+} catch (e) {}
 
 // Helper to check and add column if missing
 function ensureColumn(table, column, colDefinition) {
@@ -248,6 +251,10 @@ try {
 } catch (e) {
   console.log('  (شمارش با موفقیت انجام شد)');
 }
+
+try {
+  db.exec('PRAGMA foreign_keys = ON;');
+} catch (e) {}
 
 console.log('\n🎉 عملیات ارتقای دیتابیس با موفقیت کامل و بدون حذف هیچ داده‌ای پایان یافت!');
 console.log('اکنون می‌توانید پروژه را با اجرای npm run dev یا سرویس اصلی اجرا فرمایید.');
