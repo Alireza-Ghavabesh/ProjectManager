@@ -596,14 +596,6 @@ function seedInitialData() {
   }
 
   // 6. Seed Organizational Structures (ساختارهای سازمانی مانند مرخصی، ماموریت، مالی، شورا)
-  const isOldDramaStruct = db.prepare("SELECT count(*) as count FROM project_structures WHERE code = 'DRAMA_SERIES'").get() as { count: number };
-  if (isOldDramaStruct.count > 0) {
-    // Migrate to organizational structures
-    db.prepare('DELETE FROM structure_position_users').run();
-    db.prepare('DELETE FROM structure_positions').run();
-    db.prepare('DELETE FROM project_structures').run();
-  }
-
   // Ensure standard positions exist in library
   const insertPosIfMissing = db.prepare(`
     INSERT OR IGNORE INTO positions (id, title, description, color, parentId, level, orderIndex, createdAt)

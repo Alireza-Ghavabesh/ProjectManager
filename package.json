@@ -11,6 +11,7 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "migrate:db": "node scripts/migrate-existing-db.js",
+    "restore:db": "node scripts/restore-backup.js",
     "createUser": "node scripts/create-user.js"
   },
   "dependencies": {
