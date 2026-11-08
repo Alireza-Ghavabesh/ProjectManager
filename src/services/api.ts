@@ -733,11 +733,18 @@ class ApiService {
     try {
       const res = await fetch('/api/system/public-settings');
       if (!res.ok) throw new Error('خطا در دریافت مشخصات ظاهری');
-      return await res.json();
+      const data = await res.json();
+      const s = data.settings || data;
+      return {
+        login_title: s.login_title || 'شورای تولید و ارزیابی',
+        login_subtitle: s.login_subtitle !== undefined ? s.login_subtitle : 'سامانه جامع کارتابل مصوبات و مدیریت طرح‌ها',
+        login_logo_url: s.login_logo_url || null,
+        max_upload_size_mb: s.max_upload_size_mb || '1024',
+      };
     } catch (e) {
       return {
         login_title: 'شورای تولید و ارزیابی',
-        login_subtitle: 'سامانه یکپارچه داوری، تایید و گردش‌کار تولیدات رسانه‌ای و محتوایی',
+        login_subtitle: 'سامانه جامع کارتابل مصوبات و مدیریت طرح‌ها',
         login_logo_url: null,
         max_upload_size_mb: '1024',
       };

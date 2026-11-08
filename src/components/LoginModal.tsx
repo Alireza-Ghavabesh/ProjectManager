@@ -57,16 +57,40 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onSuccess }) => {
   const [logoLoadError, setLogoLoadError] = useState(false);
 
   useEffect(() => {
-    api.getPublicSettings().then((res) => {
-      if (res) {
+    const fetchBranding = () => {
+      api.getPublicSettings().then((res: any) => {
+        const s = res?.settings || res;
+        if (s) {
+          setPublicSettings({
+            login_title: s.login_title || 'شورای تولید و ارزیابی',
+            login_subtitle: s.login_subtitle !== undefined ? s.login_subtitle : 'سامانه جامع کارتابل مصوبات و مدیریت طرح‌ها',
+            login_logo_url: s.login_logo_url || null,
+            max_upload_size_mb: s.max_upload_size_mb || '1024',
+          });
+          setLogoLoadError(false);
+        }
+      }).catch(() => {});
+    };
+
+    fetchBranding();
+
+    const handleBrandingUpdate = (e: any) => {
+      if (e.detail) {
         setPublicSettings((prev) => ({
           ...prev,
-          ...res,
-          login_title: res.login_title || prev.login_title,
-          login_subtitle: res.login_subtitle !== undefined ? res.login_subtitle : prev.login_subtitle,
+          ...e.detail,
+          login_title: e.detail.login_title || prev.login_title,
+          login_subtitle: e.detail.login_subtitle !== undefined ? e.detail.login_subtitle : prev.login_subtitle,
+          login_logo_url: e.detail.login_logo_url !== undefined ? (e.detail.login_logo_url || null) : prev.login_logo_url,
         }));
+        setLogoLoadError(false);
+      } else {
+        fetchBranding();
       }
-    }).catch(() => {});
+    };
+
+    window.addEventListener('council_branding_updated', handleBrandingUpdate);
+    return () => window.removeEventListener('council_branding_updated', handleBrandingUpdate);
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {

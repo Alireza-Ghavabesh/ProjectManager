@@ -152,6 +152,17 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
       setSettings((prev) => ({ ...prev, ...res.settings }));
       setSavedSuccess(true);
       setTimeout(() => setSavedSuccess(false), 4000);
+
+      // Dispatch live branding event to update Sidebar and LoginModal in real-time
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('council_branding_updated', {
+          detail: {
+            login_title: settings.login_title,
+            login_subtitle: settings.login_subtitle,
+            login_logo_url: settings.login_logo_url,
+          }
+        }));
+      }
     } catch (err: any) {
       setError(err.message || 'خطا در ذخیره تنظیمات');
     } finally {
@@ -185,6 +196,17 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
       }));
       setSavedSuccess(true);
       setTimeout(() => setSavedSuccess(false), 4000);
+
+      // Immediately notify all components of the new logo
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('council_branding_updated', {
+          detail: {
+            login_title: settings.login_title,
+            login_subtitle: settings.login_subtitle,
+            login_logo_url: res.logoUrl,
+          }
+        }));
+      }
     } catch (err: any) {
       alert(err.message || 'خطا در بارگذاری لوگو');
     } finally {
@@ -202,6 +224,16 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
       await api.updateSettings(updated);
       setSavedSuccess(true);
       setTimeout(() => setSavedSuccess(false), 4000);
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('council_branding_updated', {
+          detail: {
+            login_title: settings.login_title,
+            login_subtitle: settings.login_subtitle,
+            login_logo_url: null,
+          }
+        }));
+      }
     } catch (e: any) {
       setError(e.message || 'خطا در حذف لوگو');
     }

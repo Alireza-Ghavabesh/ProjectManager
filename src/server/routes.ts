@@ -2367,7 +2367,13 @@ apiRouter.get('/system/public-settings', (req: Request, res: Response) => {
   for (const item of list) {
     settings[item.key] = item.value;
   }
-  res.json({ settings });
+  res.json({
+    settings,
+    ...settings,
+    login_title: settings.login_title,
+    login_subtitle: settings.login_subtitle,
+    login_logo_url: settings.login_logo_url || null,
+  });
 });
 
 // Upload login logo image (Admin only)

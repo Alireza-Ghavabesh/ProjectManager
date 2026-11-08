@@ -26,6 +26,11 @@ interface SidebarProps {
   setMobileOpen: (open: boolean) => void;
   collapsed: boolean;
   setCollapsed: (collapsed: boolean) => void;
+  branding?: {
+    login_title?: string;
+    login_subtitle?: string;
+    login_logo_url?: string | null;
+  } | null;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -38,7 +43,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setMobileOpen,
   collapsed,
   setCollapsed,
+  branding,
 }) => {
+  const [logoLoadError, setLogoLoadError] = React.useState(false);
+
+  React.useEffect(() => {
+    setLogoLoadError(false);
+  }, [branding?.login_logo_url]);
   // Check if current user has permission
   const hasAccess = (permissionCode?: string): boolean => {
     if (!permissionCode) return true;
@@ -198,22 +209,40 @@ export const Sidebar: React.FC<SidebarProps> = ({
           collapsed ? 'justify-center px-2' : 'justify-between px-4'
         }`}>
           <div className={`flex items-center gap-3 overflow-hidden ${collapsed ? 'justify-center' : ''}`}>
-            <div
-              onClick={() => collapsed && setCollapsed(false)}
-              className={`w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 to-blue-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/25 shrink-0 ${
-                collapsed ? 'cursor-pointer hover:scale-105 transition' : ''
-              }`}
-              title={collapsed ? 'شورای تولید و ارزیابی (کلیک جهت باز شدن منو)' : 'شورای تولید و ارزیابی'}
-            >
-              <Building2 className="w-5 h-5" />
-            </div>
+            {branding?.login_logo_url && !logoLoadError ? (
+              <div
+                onClick={() => collapsed && setCollapsed(false)}
+                className={`w-10 h-10 rounded-2xl bg-white border border-slate-200/90 shadow-md flex items-center justify-center p-1.5 shrink-0 overflow-hidden ${
+                  collapsed ? 'cursor-pointer hover:scale-105 transition' : ''
+                }`}
+                title={collapsed ? `${branding.login_title || 'شورای تولید و ارزیابی'} (کلیک جهت باز شدن)` : (branding.login_title || 'لوگو')}
+              >
+                <img
+                  src={branding.login_logo_url}
+                  alt={branding.login_title || 'لوگو'}
+                  className="max-w-full max-h-full object-contain"
+                  onError={() => setLogoLoadError(true)}
+                />
+              </div>
+            ) : (
+              <div
+                onClick={() => collapsed && setCollapsed(false)}
+                className={`w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 to-blue-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/25 shrink-0 ${
+                  collapsed ? 'cursor-pointer hover:scale-105 transition' : ''
+                }`}
+                title={collapsed ? `${branding?.login_title || 'شورای تولید و ارزیابی'} (کلیک جهت باز شدن)` : (branding?.login_title || 'شورای تولید و ارزیابی')}
+              >
+                <Building2 className="w-5 h-5" />
+              </div>
+            )}
+
             {!collapsed && (
               <div className="overflow-hidden">
-                <span className="font-extrabold text-sm text-slate-900 tracking-tight block truncate">
-                  شورای تولید و ارزیابی
+                <span className="font-extrabold text-sm text-slate-900 tracking-tight block truncate" title={branding?.login_title || 'شورای تولید و ارزیابی'}>
+                  {branding?.login_title || 'شورای تولید و ارزیابی'}
                 </span>
-                <span className="text-[10px] text-indigo-600 font-semibold block truncate">
-                  سامانه کارتابل و مصوبات
+                <span className="text-[10px] text-indigo-600 font-semibold block truncate" title={branding?.login_subtitle || 'سامانه کارتابل و مصوبات'}>
+                  {branding?.login_subtitle || 'سامانه کارتابل و مصوبات'}
                 </span>
               </div>
             )}

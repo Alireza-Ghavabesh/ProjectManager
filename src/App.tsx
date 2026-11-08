@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User, Project, DynamicField, Position, DashboardStats, ProjectStructure, Workflow, PasswordResetRequest } from './types';
+import { User, Project, DynamicField, Position, DashboardStats, ProjectStructure, Workflow, PasswordResetRequest, PublicSettings } from './types';
 import { api } from './services/api';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -34,6 +34,13 @@ export default function App() {
   const [authChecked, setAuthChecked] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // Branding (Custom Title, Subtitle, and Custom Logo in Sidebar & Login)
+  const [branding, setBranding] = useState<PublicSettings>({
+    login_title: 'شورای تولید و ارزیابی',
+    login_subtitle: 'سامانه جامع کارتابل مصوبات و مدیریت طرح‌ها',
+    login_logo_url: null,
+  });
 
   // App Data
   const [projects, setProjects] = useState<Project[]>([]);
@@ -96,6 +103,36 @@ export default function App() {
       setCurrentUser(null);
       setAuthChecked(true);
     }
+  }, []);
+
+  // Sync branding on mount & listen to live updates from Settings
+  useEffect(() => {
+    const fetchBranding = () => {
+      api.getPublicSettings().then((res) => {
+        if (res) {
+          setBranding(res);
+          if (res.login_title) {
+            document.title = `${res.login_title} | سامانه کارتابل و مصوبات`;
+          }
+        }
+      }).catch(() => {});
+    };
+
+    fetchBranding();
+
+    const handleBrandingLiveUpdate = (e: any) => {
+      if (e.detail) {
+        setBranding((prev) => ({ ...prev, ...e.detail }));
+        if (e.detail.login_title) {
+          document.title = `${e.detail.login_title} | سامانه کارتابل و مصوبات`;
+        }
+      } else {
+        fetchBranding();
+      }
+    };
+
+    window.addEventListener('council_branding_updated', handleBrandingLiveUpdate);
+    return () => window.removeEventListener('council_branding_updated', handleBrandingLiveUpdate);
   }, []);
 
   // Fetch all council data
@@ -236,6 +273,7 @@ export default function App() {
         setMobileOpen={setMobileMenuOpen}
         collapsed={sidebarCollapsed}
         setCollapsed={setSidebarCollapsed}
+        branding={branding}
       />
 
       {/* Main Content Area (Spaced on the right according to sidebar width) */}
