@@ -120,24 +120,67 @@ export async function sendSmsViaProvider(
     }
 
     if (provider === 'ghasedak') {
-      const url = 'https://api.ghasedak.me/v2/sms/send/simple';
-      const params = new URLSearchParams({
-        message,
-        receptor: phone.trim(),
-        linenumber: senderNumber,
-      });
+      const cleanPhone = phone.trim();
+      const cleanSender = senderNumber ? senderNumber.trim() : '';
 
-      const res = await fetch(url, {
+      // Try 1: Modern Ghasedak v1 REST API (gateway.ghasedak.me)
+      try {
+        const modernUrl = 'https://gateway.ghasedak.me/rest/api/v1/webservice/sendsinglesms';
+        const modernPayload: Record<string, any> = {
+          message,
+          receptor: cleanPhone,
+        };
+        if (cleanSender && cleanSender !== '10008585' && cleanSender !== 'default') {
+          modernPayload.lineNumber = cleanSender;
+        }
+
+        const modernRes = await fetch(modernUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'ApiKey': apiKey,
+            'Accept': 'application/json',
+          },
+          body: JSON.stringify(modernPayload),
+        });
+
+        const modernData = await modernRes.json().catch(() => ({}));
+        if (modernRes.ok && (modernData.result?.code === 200 || modernData.result?.code === 201 || modernData.code === 200 || modernData.isSuccess === true)) {
+          return {
+            success: true,
+            simulated: false,
+            providerResponse: JSON.stringify(modernData),
+          };
+        }
+      } catch (err) {}
+
+      // Try 2: Classic Ghasedak v2 URL-encoded API (api.ghasedak.me)
+      const v2Url = 'https://api.ghasedak.me/v2/sms/send/simple';
+      const paramsObj: Record<string, string> = {
+        message,
+        receptor: cleanPhone,
+      };
+      if (cleanSender && cleanSender !== '10008585' && cleanSender !== 'default') {
+        paramsObj.linenumber = cleanSender;
+      }
+
+      const params = new URLSearchParams(paramsObj);
+      const res = await fetch(v2Url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
           'apikey': apiKey,
+          'ApiKey': apiKey,
+          'Accept': 'application/json',
         },
         body: params.toString(),
       });
+
       const data = await res.json().catch(() => ({}));
+      const isSuccess = res.ok && (data.result?.code === 200 || data.result?.code === 201 || data.code === 200);
+
       return {
-        success: res.ok,
+        success: isSuccess,
         simulated: false,
         providerResponse: JSON.stringify(data),
       };

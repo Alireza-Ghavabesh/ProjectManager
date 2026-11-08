@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 
 /**
- * اسکریپت بازیابی بک‌آپ‌های دیتابیس سامانه شورای ارزیابی
+ * SQLite Database Backup Restoration Script
  * 
- * نحوه استفاده:
- * 1. لیست کردن تمام بک‌آپ‌های موجود:
+ * Usage:
+ * 1. List available backups:
  *    npm run restore:db -- --list
  * 
- * 2. بازیابی آخرین بک‌آپ موجود:
+ * 2. Restore the latest backup automatically:
  *    npm run restore:db
  * 
- * 3. بازیابی یک فایل بک‌آپ خاص:
+ * 3. Restore a specific backup file:
  *    npm run restore:db -- council.db.backup-1794076647710
  */
 
@@ -21,7 +21,7 @@ const projectRoot = process.cwd();
 const targetDbName = 'council.db';
 const targetDbPath = path.resolve(projectRoot, targetDbName);
 
-// پیدا کردن تمام فایل‌های بک‌آپ در ریشه پروژه
+// Find all backup files in root directory
 const files = fs.readdirSync(projectRoot);
 const backupFiles = files.filter(f => 
   (f.startsWith('council.db.backup-') || f.startsWith('database.sqlite.backup-') || f.includes('.backup')) &&
@@ -40,24 +40,24 @@ const backupFiles = files.filter(f =>
 const args = process.argv.slice(2);
 
 console.log('======================================================');
-console.log('📦 مدیریت و بازیابی نسخه‌های پشتیبان دیتابیس (Restore)');
+console.log('📦 SQLite Database Backup Restore Utility');
 console.log('======================================================\n');
 
 if (args.includes('--list') || args.includes('-l')) {
   if (backupFiles.length === 0) {
-    console.log('⚠️ هیچ فایل بک‌آپی در پوشه پروژه یافت نشد.');
+    console.log('⚠️ No backup files found in project directory.');
   } else {
-    console.log(`📋 لیست فایل‌های بک‌آپ موجود (${backupFiles.length} نسخه):`);
+    console.log(`📋 Available backups (${backupFiles.length} files found):`);
     backupFiles.forEach((b, idx) => {
-      console.log(`  [${idx + 1}] ${b.name} (${b.size}) - تاریخ: ${b.mtime.toLocaleString('fa-IR')}`);
+      console.log(`  [${idx + 1}] ${b.name} (${b.size}) - Date: ${b.mtime.toISOString()}`);
     });
-    console.log('\n💡 برای بازیابی هر کدام، دستور زیر را اجرا کنید:');
+    console.log('\n💡 To restore any backup, run:');
     console.log(`   npm run restore:db -- ${backupFiles[0].name}`);
   }
   process.exit(0);
 }
 
-// انتخاب فایل بک‌آپ برای بازیابی
+// Select backup file
 let selectedBackup = null;
 const specificFile = args.find(a => !a.startsWith('-'));
 
@@ -69,40 +69,39 @@ if (specificFile) {
       path: customPath
     };
   } else {
-    console.error(`❌ فایل بک‌آپ مشخص‌شده یافت نشد: ${specificFile}`);
-    console.log('💡 برای دیدن لیست بک‌آپ‌های موجود دستور زیر را بزنید:');
+    console.error(`❌ Specified backup file not found: ${specificFile}`);
+    console.log('💡 To list available backups, run:');
     console.log('   npm run restore:db -- --list');
     process.exit(1);
   }
 } else {
-  // استفاده از جدیدترین بک‌آپ به صورت خودکار
   if (backupFiles.length === 0) {
-    console.error('❌ هیچ فایل بک‌آپی یافت نشد!');
-    console.log('بررسی کنید آیا فایل بک‌آپی با نام council.db.backup-* وجود دارد یا خیر.');
+    console.error('❌ No backup files found!');
+    console.log('Please check if any council.db.backup-* file exists in your project directory.');
     process.exit(1);
   }
   selectedBackup = backupFiles[0];
 }
 
-console.log(`🎯 نسخه انتخاب‌شده جهت بازیابی: ${selectedBackup.name}`);
+console.log(`🎯 Selected backup for restoration: ${selectedBackup.name}`);
 
-// پیش از جایگزینی، یک کپی ایمنی از وضعیت فعلی council.db می‌گیریم
+// Create safety copy of current db before replacing
 if (fs.existsSync(targetDbPath)) {
   const emergencyBackup = `${targetDbPath}.safety-before-restore-${Date.now()}`;
   fs.copyFileSync(targetDbPath, emergencyBackup);
-  console.log(`🛡️ جهت اطمینان، از دیتابیس فعلی نسخه ایمنی تهیه شد:\n   ${path.basename(emergencyBackup)}`);
+  console.log(`🛡️ Safety copy of current database saved to:\n   ${path.basename(emergencyBackup)}`);
 }
 
-// پاکسازی فایل‌های WAL و SHM فعلی تا دیتابیس جدید بی‌نقص جایگزین شود
+// Clean up current WAL and SHM files
 const walPath = `${targetDbPath}-wal`;
 const shmPath = `${targetDbPath}-shm`;
 if (fs.existsSync(walPath)) try { fs.unlinkSync(walPath); } catch (e) {}
 if (fs.existsSync(shmPath)) try { fs.unlinkSync(shmPath); } catch (e) {}
 
-// کپی فایل بک‌آپ بر روی council.db
+// Copy backup file over target db
 fs.copyFileSync(selectedBackup.path, targetDbPath);
 
-// همچنین کپی فایل‌های wal و shm بک‌آپ در صورت وجود
+// Also copy wal and shm if present in backup
 if (fs.existsSync(`${selectedBackup.path}-wal`)) {
   fs.copyFileSync(`${selectedBackup.path}-wal`, walPath);
 }
@@ -110,7 +109,7 @@ if (fs.existsSync(`${selectedBackup.path}-shm`)) {
   fs.copyFileSync(`${selectedBackup.path}-shm`, shmPath);
 }
 
-console.log('\n✅ دیتابیس با موفقیت به نسخه پشتیبان انتخابی شما بازگردانده شد!');
-console.log('📁 فایل council.db اکنون حاوی اطلاعات نسخه بک‌آپ است.');
-console.log('🚀 اکنون می‌توانید سامانه را با دستور زیر اجرا فرمایید:');
+console.log('\n✅ Database successfully restored to the selected backup!');
+console.log('📁 council.db is now active with your restored data.');
+console.log('🚀 You can now start the application with:');
 console.log('   npm run dev\n');

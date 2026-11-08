@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 
 /**
- * اسکریپت ساخت یا ارتقای کاربر با دسترسی کامل (Super Admin)
+ * Script to create or update a user with full Super Admin privileges
  * 
- * نحوه اجرا:
+ * Usage:
  * npm run createUser -- --username=ghavabesh --password=hesoyam123
- * یا:
- * npm run createUser -- --username ghavabesh --password hesoyam123 --name "علیرضا غوابش"
- * یا به صورت خلاصه:
+ * npm run createUser -- --username ghavabesh --password hesoyam123 --name "Alireza Ghavabesh"
  * npm run createUser ghavabesh hesoyam123
  */
 
@@ -15,7 +13,6 @@ import fs from 'fs';
 import path from 'path';
 import { DatabaseSync } from 'node:sqlite';
 
-// Helper to generate offline SVG avatar
 function generateOfflineAvatarSvg(name, id) {
   const initials = (name || 'U')
     .split(' ')
@@ -59,7 +56,7 @@ const args = process.argv.slice(2);
 let username = '';
 let password = '';
 let name = '';
-let role = 'ADMIN'; // پیش‌فرض فول دسترسی (کاربر ارشد)
+let role = 'ADMIN';
 let phone = '09120000000';
 let dbPath = '';
 
@@ -97,7 +94,6 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
-// Fallback to positional arguments if not specified via flags
 if (!username && positionalArgs[0]) username = positionalArgs[0];
 if (!password && positionalArgs[1]) password = positionalArgs[1];
 if (!name && positionalArgs[2]) name = positionalArgs[2];
@@ -105,19 +101,18 @@ if (positionalArgs[3]) role = positionalArgs[3].toUpperCase();
 
 if (!username || !password) {
   console.log('======================================================');
-  console.log('❌ خطا: نام کاربری یا رمز عبور مشخص نشده است.');
+  console.log('❌ Error: Username or password not specified.');
   console.log('======================================================');
-  console.log('\n📖 نحوه استفاده:');
-  console.log('  npm run createUser -- --username=<نام_کاربری> --password=<رمز_عبور>');
-  console.log('\n💡 مثال‌ها:');
+  console.log('\n📖 Usage:');
+  console.log('  npm run createUser -- --username=<USERNAME> --password=<PASSWORD>');
+  console.log('\n💡 Examples:');
   console.log('  npm run createUser -- --username=ghavabesh --password=hesoyam123');
-  console.log('  npm run createUser -- --username=ghavabesh --password=hesoyam123 --name="علیرضا غوابش"');
+  console.log('  npm run createUser -- --username=ghavabesh --password=hesoyam123 --name="Alireza Ghavabesh"');
   console.log('  npm run createUser ghavabesh hesoyam123');
   console.log('======================================================\n');
   process.exit(1);
 }
 
-// Resolve SQLite Database path
 if (!dbPath) {
   if (fs.existsSync(path.resolve(process.cwd(), 'council.db'))) {
     dbPath = path.resolve(process.cwd(), 'council.db');
@@ -129,27 +124,26 @@ if (!dbPath) {
 }
 
 console.log('======================================================');
-console.log('👤 ایجاد / ویرایش کاربر ارشد سامانه (Full Access)');
+console.log('👤 Create / Update Super-Admin User (Full Access)');
 console.log('======================================================');
-console.log(`📁 فایل دیتابیس: ${dbPath}`);
-console.log(`🔑 نام کاربری: ${username}`);
-console.log(`🛡️ سطح دسترسی: ${role} (کاربر ارشد با دسترسی کامل)`);
+console.log(`📁 Database path: ${dbPath}`);
+console.log(`🔑 Username: ${username}`);
+console.log(`🛡️ Role: ${role} (Full administrative access)`);
 
 if (!fs.existsSync(dbPath)) {
-  console.error(`❌ فایل دیتابیس یافت نشد: ${dbPath}`);
+  console.error(`❌ Database file not found: ${dbPath}`);
   process.exit(1);
 }
 
 const db = new DatabaseSync(dbPath);
 
 try {
-  db.exec('PRAGMA foreign_keys = OFF;'); // موقتاً غیرفعال برای درج ایمن
+  db.exec('PRAGMA foreign_keys = OFF;');
 } catch (e) {}
 
 const now = new Date().toISOString();
 const displayName = name || username;
 
-// Check which position to link (pos-root or pos-1)
 let positionId = null;
 try {
   const rootPos = db.prepare("SELECT id FROM positions WHERE id = 'pos-root'").get();
@@ -161,7 +155,6 @@ try {
   }
 } catch (e) {}
 
-// Check if user already exists
 const existingUser = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
 let userId = '';
 
@@ -176,7 +169,7 @@ if (existingUser) {
         positionId = COALESCE(?, positionId)
     WHERE username = ?
   `).run(password, role, displayName, positionId, username);
-  console.log(`✅ کاربر موجود «${username}» با رمز عبور و دسترسی ارشد جدید به‌روزرسانی شد.`);
+  console.log(`✅ Existing user [${username}] updated with new password and ADMIN role.`);
 } else {
   userId = `usr-${username.toLowerCase().replace(/[^a-z0-9_-]/g, '') || Date.now()}`;
   const avatar = generateOfflineAvatarSvg(displayName, userId);
@@ -185,10 +178,9 @@ if (existingUser) {
     INSERT INTO users (id, username, password, name, role, positionId, avatar, phone, hasCustomPermissions, createdAt)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
   `).run(userId, username, password, displayName, role, positionId, avatar, phone, now);
-  console.log(`✨ کاربر جدید «${username}» با شناسه «${userId}» ایجاد گردید.`);
+  console.log(`✨ New user [${username}] created with ID [${userId}].`);
 }
 
-// Grant ALL system permissions to this user in user_permissions table
 let grantedCount = 0;
 try {
   const allPerms = db.prepare('SELECT code FROM permissions').all();
@@ -197,9 +189,7 @@ try {
     insertUserPerm.run(userId, p.code);
     grantedCount++;
   }
-} catch (e) {
-  // If permissions table doesn't exist yet, it's fine since role is ADMIN
-}
+} catch (e) {}
 
 try {
   db.exec('PRAGMA foreign_keys = ON;');
@@ -207,12 +197,12 @@ try {
 } catch (e) {}
 
 console.log('------------------------------------------------------');
-console.log(`🎉 کاربر «${username}» با موفقیت ثبت شد!`);
-console.log(`🔐 نام کاربری: ${username}`);
-console.log(`🔑 کلمه عبور: ${password}`);
-console.log(`👑 نقش: ${role} (دسترسی نامحدود به تمامی بخش‌ها و منوها)`);
+console.log(`🎉 User [${username}] successfully saved!`);
+console.log(`🔐 Username: ${username}`);
+console.log(`🔑 Password: ${password}`);
+console.log(`👑 Role: ${role} (Full administrative access)`);
 if (grantedCount > 0) {
-  console.log(`⭐ تعداد ${grantedCount} مجوز سیستمی به صورت اختصاصی به این کاربر تخصیص یافت.`);
+  console.log(`⭐ Assigned ${grantedCount} individual system permissions to this user.`);
 }
 console.log('======================================================');
-console.log('اکنون می‌توانید با این مشخصات وارد سامانه شوید.');
+console.log('You can now log in with these credentials.');

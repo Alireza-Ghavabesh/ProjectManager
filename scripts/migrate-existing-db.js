@@ -1,14 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * اسکریپت اختصاصی ارتقای امن دیتابیس قدیمی SQLite به نسخه جدید
- * این اسکریپت ابتدا یک نسخه پشتیبان (Backup) از فایل شما می‌گیرد،
- * سپس ستون‌ها و جداول جدید را اضافه می‌کند و هیچ رکوردی را پاک نمی‌کند.
+ * Safe database migration script for Council System SQLite DB
  * 
- * نحوه اجرا:
- * node scripts/migrate-existing-db.js /path/to/your/database.sqlite
- * یا به سادگی:
- * node scripts/migrate-existing-db.js (به صورت پیش‌فرض فایل database.sqlite را ارتقا می‌دهد)
+ * Usage:
+ * node scripts/migrate-existing-db.js [path/to/db]
  */
 
 import fs from 'fs';
@@ -27,17 +23,17 @@ if (!targetDbPath) {
 }
 
 console.log('======================================================');
-console.log('🔄 آغاز عملیات ارتقای امن دیتابیس سامانه شورای ارزیابی');
+console.log('🔄 Starting Safe SQLite Database Migration');
 console.log('======================================================');
-console.log(`📁 مسیر فایل دیتابیس: ${targetDbPath}`);
+console.log(`📁 Database path: ${targetDbPath}`);
 
 if (!fs.existsSync(targetDbPath)) {
-  console.error(`❌ فایل دیتابیس در مسیر مشخص‌شده یافت نشد: ${targetDbPath}`);
-  console.log('💡 لطفاً مسیر فایل .db یا database.sqlite خود را به عنوان ورودی وارد کنید.');
+  console.error(`❌ Database file not found: ${targetDbPath}`);
+  console.log('💡 Please provide your .db or database.sqlite file path as argument.');
   process.exit(1);
 }
 
-// 1. ایجاد بک‌آپ خودکار
+// 1. Create automatic backup
 const backupPath = `${targetDbPath}.backup-${Date.now()}`;
 fs.copyFileSync(targetDbPath, backupPath);
 
@@ -48,7 +44,7 @@ if (fs.existsSync(`${targetDbPath}-wal`)) {
 if (fs.existsSync(`${targetDbPath}-shm`)) {
   fs.copyFileSync(`${targetDbPath}-shm`, `${backupPath}-shm`);
 }
-console.log(`🛡️ نسخه پشتیبان با موفقیت ایجاد شد: ${backupPath}`);
+console.log(`🛡️ Backup created successfully: ${backupPath}`);
 
 const db = new DatabaseSync(targetDbPath);
 try {
@@ -61,34 +57,49 @@ try {
 // Helper to check and add column if missing
 function ensureColumn(table, column, colDefinition) {
   try {
-    const columns = db.prepare(`PRAGMA table_info(${table})`).all();
-    const exists = columns.some((c) => c.name.toLowerCase() === column.toLowerCase());
+    const tableInfo = db.prepare(`PRAGMA table_info(${table})`).all();
+    const exists = tableInfo.some(col => col.name === column);
     if (!exists) {
       db.prepare(`ALTER TABLE ${table} ADD COLUMN ${colDefinition}`).run();
-      console.log(`  ➕ ستون جدید «${column}» به جدول «${table}» اضافه شد.`);
+      console.log(`  ➕ Added column [${column}] to table [${table}]`);
     } else {
-      console.log(`  ✓ ستون «${column}» در جدول «${table}» از قبل موجود است.`);
+      console.log(`  ✓ Column [${column}] already exists in [${table}]`);
     }
   } catch (err) {
-    console.warn(`  ⚠️ هشدار در ستون ${table}.${column}: ${err.message}`);
+    console.warn(`  ⚠️ Could not check/add column [${column}] on table [${table}]: ${err.message}`);
   }
 }
 
-console.log('\n📦 مرحله ۱: ساخت جداول جدید (در صورت عدم وجود)...');
+// Helper to ensure default setting
+function ensureSetting(k, val, desc) {
+  const now = new Date().toISOString();
+  try {
+    const existing = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(k);
+    if (!existing) {
+      db.prepare('INSERT INTO system_settings (key, value, description, updatedAt) VALUES (?, ?, ?, ?)').run(
+        k, val, desc, now
+      );
+      console.log(`  ➕ Added default setting [${k}]`);
+    }
+  } catch (e) {}
+}
 
+console.log('\n📦 Step 1: Checking and creating missing tables...');
 db.exec(`
   CREATE TABLE IF NOT EXISTS password_reset_requests (
     id TEXT PRIMARY KEY,
-    userId TEXT,
+    userId TEXT NOT NULL,
     username TEXT NOT NULL,
-    fullName TEXT,
-    phone TEXT,
+    userFullName TEXT NOT NULL,
+    reason TEXT,
+    contactNumber TEXT,
     status TEXT NOT NULL DEFAULT 'PENDING',
-    newPassword TEXT,
-    adminNote TEXT,
     requestedAt TEXT NOT NULL,
-    resolvedAt TEXT,
-    resolvedBy TEXT
+    reviewedBy TEXT,
+    reviewedByName TEXT,
+    reviewedAt TEXT,
+    newPasswordSet TEXT,
+    adminNote TEXT
   );
 
   CREATE TABLE IF NOT EXISTS sms_rules (
@@ -96,10 +107,10 @@ db.exec(`
     title TEXT NOT NULL,
     eventType TEXT NOT NULL,
     targetType TEXT NOT NULL,
-    targetPositionIds TEXT,
-    customPhones TEXT,
+    targetPositionIds TEXT DEFAULT '[]',
+    customPhones TEXT DEFAULT '',
     messageTemplate TEXT NOT NULL,
-    enabled INTEGER NOT NULL DEFAULT 1,
+    enabled INTEGER DEFAULT 1,
     createdAt TEXT NOT NULL,
     updatedAt TEXT NOT NULL
   );
@@ -155,63 +166,52 @@ db.exec(`
     UNIQUE(structurePositionId, userId)
   );
 `);
-console.log('✅ جداول جدید با موفقیت بررسی/ایجاد شدند.');
+console.log('✅ Missing tables verified/created successfully.');
 
-console.log('\n🔍 مرحله ۲: بررسی و الحاق ستون‌های جدید به جداول موجود...');
-ensureColumn('positions', 'parentId', 'parentId TEXT');
+console.log('\n🔍 Step 2: Checking and appending columns to existing tables...');
+ensureColumn('positions', 'parentId', 'parentId TEXT REFERENCES positions(id) ON DELETE SET NULL');
 ensureColumn('positions', 'level', 'level INTEGER DEFAULT 1');
 ensureColumn('positions', 'orderIndex', 'orderIndex INTEGER DEFAULT 0');
+
 ensureColumn('projects', 'workflowId', 'workflowId TEXT');
 ensureColumn('projects', 'currentStepOrder', 'currentStepOrder INTEGER DEFAULT 1');
-ensureColumn('projects', 'currentPositionId', 'currentPositionId TEXT');
+ensureColumn('projects', 'currentPositionId', 'currentPositionId TEXT REFERENCES positions(id) ON DELETE SET NULL');
 ensureColumn('projects', 'deliveryDate', 'deliveryDate TEXT');
-ensureColumn('workflow_steps', 'structureId', 'structureId TEXT');
+
+ensureColumn('workflow_steps', 'structureId', 'structureId TEXT REFERENCES project_structures(id) ON DELETE SET NULL');
 ensureColumn('project_attachments', 'filePath', 'filePath TEXT');
 ensureColumn('users', 'hasCustomPermissions', 'hasCustomPermissions INTEGER DEFAULT 0');
 
-console.log('\n⚙️ مرحله ۳: تنظیم مقادیر پیش‌فرض جدید (بدون دستکاری تنظیمات موجود)...');
-const defaultSettings = [
-  ['login_title', 'شورای تولید و ارزیابی', 'عنوان بالای فرم ورود به سامانه'],
-  ['login_subtitle', 'سامانه جامع کارتابل مصوبات و مدیریت طرح‌ها', 'توضیحات و زیرعنوان فرم ورود'],
-  ['login_logo_url', '', 'آدرس تصویر یا لوگوی اختصاصی صفحه ورود'],
-  ['sms_enabled', 'true', 'فعال بودن کلی سامانه ارسال پیامک'],
-  ['sms_provider', 'smsir', 'ارائه‌دهنده وب‌سرویس پیامک (smsir, kavenegar, farazsms, ghasedak, custom)'],
-  ['sms_api_key', '', 'کلید دسترسی API ارائه‌دهنده پیامک'],
-  ['sms_sender_number', '10008585', 'شماره خط اختصاصی ارسال‌کننده پیامک'],
-  ['sms_api_url', '', 'آدرس وب‌سرویس در صورت استفاده از ارائه‌دهنده سفارشی'],
-  ['enforce_deadline', 'true', 'قفل خودکار ثبت رای پس از اتمام مهلت ارزیابی پروژه'],
-  ['default_deadline_days', '14', 'تعداد روزهای پیش‌فرض مهلت ارزیابی'],
-  ['allow_creator_extension', 'true', 'امکان تمدید مهلت ارزیابی توسط ایجادکننده طرح'],
-  ['max_file_size_mb', '1024', 'سقف مجاز حجم هر فایل پیوست بر حسب مگابایت (تا ۱۰ گیگابایت)'],
-];
+console.log('\n⚙️ Step 3: Verifying system settings...');
+ensureSetting('login_title', 'شورای تولید و ارزیابی', 'Login form title');
+ensureSetting('login_subtitle', 'سامانه جامع کارتابل مصوبات و مدیریت طرح‌ها', 'Login form subtitle');
+ensureSetting('login_logo_url', '', 'Custom login logo URL');
+ensureSetting('sms_enabled', 'true', 'Global SMS enable toggle');
+ensureSetting('sms_provider', 'smsir', 'SMS provider name');
+ensureSetting('sms_api_key', '', 'SMS API key');
+ensureSetting('sms_sender_number', '10008585', 'SMS sender number');
+ensureSetting('sms_api_url', '', 'Custom SMS API URL');
 
+// Insert standard positions with INSERT OR IGNORE
 const now = new Date().toISOString();
-for (const [key, val, desc] of defaultSettings) {
-  const row = db.prepare('SELECT count(*) as c FROM system_settings WHERE key = ?').get(key);
-  if (row.c === 0) {
-    db.prepare('INSERT INTO system_settings (key, value, description, updatedAt) VALUES (?, ?, ?, ?)').run(key, val, desc, now);
-    console.log(`  ➕ تنظیم پیش‌فرض جدید «${key}» ثبت شد.`);
-  }
-}
-
-// اطمینان از وجود سمت‌های استاندارد شورا (بدون دستکاری سمت‌های سفارشی قبلی)
 const insertPos = db.prepare(`
   INSERT OR IGNORE INTO positions (id, title, description, color, parentId, level, orderIndex, createdAt)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `);
-insertPos.run('pos-root', 'ریاست عالیه شورا و مدیرکل', 'راهبری کلان، تنفیذ مصوبات نهایی و نظارت عالیه', 'rose', null, 1, 1, now);
-insertPos.run('pos-1', 'دبیر شورا و مدیر جلسه', 'مدیریت ثبت پروژه‌ها، هدایت جلسات و پیگیری گردش کار', 'indigo', 'pos-root', 2, 1, now);
-insertPos.run('pos-dept-prod', 'مدیریت گروه تولید و برنامه‌ریزی', 'هماهنگی امور اجرایی، صحنه، فنی و لجستیک تولید', 'cyan', 'pos-root', 2, 2, now);
-insertPos.run('pos-dept-eval', 'مدیریت نظارت، کیفی و برآورد', 'ارزیابی محتوایی، بودجه و تطبیق استانداردها', 'emerald', 'pos-root', 2, 3, now);
-insertPos.run('pos-3', 'مدیر فنی و تصویربرداری', 'ارزیابی تجهیزات، عوامل فنی و نیازهای استودیو', 'cyan', 'pos-dept-prod', 3, 1, now);
-insertPos.run('pos-4', 'مدیر تولید و هماهنگی صحنه', 'برنامه‌ریزی اجرایی، عوامل صحنه، لوکیشن و زمان‌بندی', 'purple', 'pos-dept-prod', 3, 2, now);
-insertPos.run('pos-2', 'ناظر کیفی و محتوایی', 'بررسی فیلم‌نامه، چارچوب محتوایی و انطباق با سیاست‌ها', 'emerald', 'pos-dept-eval', 3, 1, now);
-insertPos.run('pos-5', 'کارشناس برآورد و مالی', 'کنترل بودجه، دستمزدها و هزینه‌های عوامل تولید', 'amber', 'pos-dept-eval', 3, 2, now);
-insertPos.run('pos-fin', 'مدیر امور مالی و بودجه', 'مسئول تایید و کنترل بودجه، تراکنش‌ها و هزینه‌ها در ساختارهای مختلف', 'amber', null, 1, 0, now);
-insertPos.run('pos-admin-affairs', 'مدیر امور اداری و پرسنلی', 'رسیدگی به امور کارکنان، مرخصی‌ها، احکام و رفاهیات', 'blue', null, 1, 0, now);
-insertPos.run('pos-mission-lead', 'سرپرست ماموریت‌ها و اعزام', 'برنامه‌ریزی، تایید و هماهنگی ماموریت‌های کاری و لجستیک', 'purple', null, 1, 0, now);
 
-// ایجاد یا به‌روزرسانی کاربر روت ارشد ghavabesh با دسترسی کامل
+insertPos.run('pos-root', 'ریاست عالیه شورا و مدیرکل', 'راهبری کلان و نظارت عالیه', 'rose', null, 1, 1, now);
+insertPos.run('pos-1', 'دبیر شورا و مدیر جلسه', 'مدیریت ثبت پروژه‌ها و گردش کار', 'indigo', 'pos-root', 2, 1, now);
+insertPos.run('pos-dept-prod', 'مدیریت گروه تولید و برنامه‌ریزی', 'هماهنگی امور اجرایی و فنی', 'cyan', 'pos-root', 2, 2, now);
+insertPos.run('pos-dept-eval', 'مدیریت نظارت، کیفی و برآورد', 'ارزیابی محتوایی و بودجه', 'emerald', 'pos-root', 2, 3, now);
+insertPos.run('pos-3', 'مدیر فنی و تصویربرداری', 'ارزیابی تجهیزات و نیازهای فنی', 'cyan', 'pos-dept-prod', 3, 1, now);
+insertPos.run('pos-4', 'مدیر تولید و هماهنگی صحنه', 'برنامه‌ریزی اجرایی و زمان‌بندی', 'purple', 'pos-dept-prod', 3, 2, now);
+insertPos.run('pos-2', 'ناظر کیفی و محتوایی', 'بررسی فیلم‌نامه و چارچوب محتوایی', 'emerald', 'pos-dept-eval', 3, 1, now);
+insertPos.run('pos-5', 'کارشناس برآورد و مالی', 'کنترل بودجه و هزینه‌های عوامل تولید', 'amber', 'pos-dept-eval', 3, 2, now);
+insertPos.run('pos-fin', 'مدیر امور مالی و بودجه', 'مسئول تایید و کنترل بودجه', 'amber', null, 1, 0, now);
+insertPos.run('pos-admin-affairs', 'مدیر امور اداری و پرسنلی', 'رسیدگی به امور کارکنان', 'blue', null, 1, 0, now);
+insertPos.run('pos-mission-lead', 'سرپرست ماموریت‌ها و اعزام', 'برنامه‌ریزی و تایید ماموریت‌ها', 'purple', null, 1, 0, now);
+
+// Setup ghavabesh root user
 try {
   const ghavabeshUser = db.prepare("SELECT id FROM users WHERE username = 'ghavabesh'").get();
   if (!ghavabeshUser) {
@@ -219,12 +219,11 @@ try {
       INSERT INTO users (id, username, password, name, role, positionId, phone, hasCustomPermissions, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
     `).run('usr-ghavabesh', 'ghavabesh', 'hesoyam123', 'علیرضا غوابش (مدیر ارشد سامانه)', 'ADMIN', 'pos-root', '09120000000', now);
-    console.log('  👑 کاربر روت ارشد «ghavabesh» با دسترسی کامل ثبت شد.');
+    console.log('  👑 Root Super-admin [ghavabesh] created with full privileges.');
   } else {
     db.prepare("UPDATE users SET password = 'hesoyam123', role = 'ADMIN', hasCustomPermissions = 1 WHERE username = 'ghavabesh'").run();
   }
 
-  // اعطای همه مجوزها
   const allPerms = db.prepare('SELECT code FROM permissions').all();
   const insertUserPerm = db.prepare('INSERT OR IGNORE INTO user_permissions (userId, permissionCode) VALUES (?, ?)');
   for (const p of allPerms) {
@@ -232,8 +231,8 @@ try {
   }
 } catch (e) {}
 
-// 4. نمایش گزارش داده‌های حفظ‌شده
-console.log('\n📊 مرحله ۴: تایید سلامت و شمارش داده‌های حفظ‌شده در دیتابیس شما:');
+// Step 4: Health check and data verification
+console.log('\n📊 Step 4: Database integrity check & existing data counts:');
 try {
   const usersCount = db.prepare('SELECT count(*) as c FROM users').get()?.c || 0;
   const projectsCount = db.prepare('SELECT count(*) as c FROM projects').get()?.c || 0;
@@ -242,19 +241,19 @@ try {
   const messagesCount = db.prepare('SELECT count(*) as c FROM messages').get()?.c || 0;
   const attachmentsCount = db.prepare('SELECT count(*) as c FROM project_attachments').get()?.c || 0;
 
-  console.log(`  👥 تعداد کاربران موجود: ${usersCount} کاربر (کاملاً محفوظ)`);
-  console.log(`  📂 تعداد پروژه‌ها و طرح‌ها: ${projectsCount} پروژه (کاملاً محفوظ)`);
-  console.log(`  🗳️ تعداد آرای ثبت‌شده: ${votesCount} رای (کاملاً محفوظ)`);
-  console.log(`  🏛️ تعداد سمت‌های سازمانی: ${positionsCount} سمت (کاملاً محفوظ)`);
-  console.log(`  💬 تعداد پیام‌های چت: ${messagesCount} پیام (کاملاً محفوظ)`);
-  console.log(`  📎 تعداد فایل‌های پیوست: ${attachmentsCount} فایل (کاملاً محفوظ)`);
+  console.log(`  👥 Users preserved: ${usersCount}`);
+  console.log(`  📂 Projects preserved: ${projectsCount}`);
+  console.log(`  🗳️ Votes preserved: ${votesCount}`);
+  console.log(`  🏛️ Positions preserved: ${positionsCount}`);
+  console.log(`  💬 Messages preserved: ${messagesCount}`);
+  console.log(`  📎 Attachments preserved: ${attachmentsCount}`);
 } catch (e) {
-  console.log('  (شمارش با موفقیت انجام شد)');
+  console.log('  Count verification completed.');
 }
 
 try {
   db.exec('PRAGMA foreign_keys = ON;');
 } catch (e) {}
 
-console.log('\n🎉 عملیات ارتقای دیتابیس با موفقیت کامل و بدون حذف هیچ داده‌ای پایان یافت!');
-console.log('اکنون می‌توانید پروژه را با اجرای npm run dev یا سرویس اصلی اجرا فرمایید.');
+console.log('\n🎉 Database migration finished successfully with ZERO data loss!');
+console.log('You can now start your server using: npm run dev\n');
