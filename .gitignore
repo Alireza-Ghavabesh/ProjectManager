@@ -16,3 +16,6 @@ council.db*
 
 # Uploaded files
 uploads/
+
+# PWA dev artifacts
+dev-dist/
