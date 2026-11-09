@@ -154,7 +154,39 @@ export async function sendSmsViaProvider(
         }
       } catch (err) {}
 
-      // Try 2: Classic Ghasedak v2 URL-encoded API (api.ghasedak.me)
+      // Try 2: Classic bulk2 API (api.ghasedaksms.com/v2/sms/send/bulk2 & api.ghasedak.me/v2/sms/send/bulk2)
+      try {
+        const bulk2Url = 'https://api.ghasedaksms.com/v2/sms/send/bulk2';
+        const bulkParams: Record<string, string> = {
+          message,
+          receptor: cleanPhone,
+        };
+        if (cleanSender && cleanSender !== '10008585') {
+          bulkParams.sender = cleanSender;
+          bulkParams.linenumber = cleanSender;
+        }
+
+        const bulkRes = await fetch(bulk2Url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'apikey': apiKey,
+            'ApiKey': apiKey,
+            'Accept': 'application/json',
+          },
+          body: new URLSearchParams(bulkParams).toString(),
+        });
+        const bulkData = await bulkRes.json().catch(() => ({}));
+        if (bulkRes.ok && (bulkData.result?.code === 200 || bulkData.result?.code === 201 || bulkData.code === 200)) {
+          return {
+            success: true,
+            simulated: false,
+            providerResponse: JSON.stringify(bulkData),
+          };
+        }
+      } catch (err) {}
+
+      // Try 3: Classic simple API (api.ghasedak.me/v2/sms/send/simple)
       const v2Url = 'https://api.ghasedak.me/v2/sms/send/simple';
       const paramsObj: Record<string, string> = {
         message,
@@ -162,6 +194,7 @@ export async function sendSmsViaProvider(
       };
       if (cleanSender && cleanSender !== '10008585' && cleanSender !== 'default') {
         paramsObj.linenumber = cleanSender;
+        paramsObj.sender = cleanSender;
       }
 
       const params = new URLSearchParams(paramsObj);

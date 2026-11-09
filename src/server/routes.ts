@@ -2748,7 +2748,7 @@ apiRouter.post('/sms/test-direct', async (req: Request, res: Response) => {
 
           results.push({
             endpoint: 'https://api.ghasedak.me/v2/sms/send/simple',
-            name: 'Classic v2 (x-www-form-urlencoded, Header: apikey)',
+            name: 'Classic v2 Simple (x-www-form-urlencoded, Header: apikey)',
             status: resB.status,
             statusText: resB.statusText,
             durationMs: timeB,
@@ -2760,6 +2760,53 @@ apiRouter.post('/sms/test-direct', async (req: Request, res: Response) => {
         } catch (err: any) {
           results.push({
             endpoint: 'api.ghasedak.me',
+            error: err.message,
+          });
+        }
+      }
+
+      // Method B2: Classic bulk2 (api.ghasedaksms.com/v2/sms/send/bulk2)
+      if (!method || method === 'bulk2') {
+        try {
+          const paramsBulk2: Record<string, string> = {
+            message: testMessage,
+            receptor: cleanPhone,
+          };
+          if (cleanSender) {
+            paramsBulk2.sender = cleanSender;
+            paramsBulk2.linenumber = cleanSender;
+          }
+
+          const startB2 = Date.now();
+          const resB2 = await fetch('https://api.ghasedaksms.com/v2/sms/send/bulk2', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'apikey': cleanKey,
+              'ApiKey': cleanKey,
+              'Accept': 'application/json',
+            },
+            body: new URLSearchParams(paramsBulk2).toString(),
+          });
+          const timeB2 = Date.now() - startB2;
+          const textB2 = await resB2.text();
+          let jsonB2 = null;
+          try { jsonB2 = JSON.parse(textB2); } catch (e) {}
+
+          results.push({
+            endpoint: 'https://api.ghasedaksms.com/v2/sms/send/bulk2',
+            name: 'Classic bulk2 (api.ghasedaksms.com/v2/sms/send/bulk2)',
+            status: resB2.status,
+            statusText: resB2.statusText,
+            durationMs: timeB2,
+            headersSent: { 'apikey': cleanKey ? `${cleanKey.slice(0, 4)}...${cleanKey.slice(-4)}` : '(none)' },
+            payloadSent: paramsBulk2,
+            responseBody: jsonB2 || textB2,
+            isSuccess: resB2.ok && (jsonB2?.result?.code === 200 || jsonB2?.result?.code === 201 || jsonB2?.code === 200),
+          });
+        } catch (err: any) {
+          results.push({
+            endpoint: 'api.ghasedaksms.com bulk2',
             error: err.message,
           });
         }
