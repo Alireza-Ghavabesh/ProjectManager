@@ -123,22 +123,22 @@ export async function sendSmsViaProvider(
       const cleanPhone = phone.trim();
       const cleanSender = senderNumber ? senderNumber.trim() : '';
 
-      // Try 1: Modern Ghasedak v1 REST API (gateway.ghasedak.me)
+      // Try 1: Exact doc.ghasedak.me SendSingleSMS REST v1 Endpoint
       try {
-        const modernUrl = 'https://gateway.ghasedak.me/rest/api/v1/webservice/sendsinglesms';
+        const modernUrl = 'https://gateway.ghasedak.me/rest/api/v1/WebService/SendSingleSMS';
         const modernPayload: Record<string, any> = {
           message,
           receptor: cleanPhone,
+          lineNumber: cleanSender || '90009729',
+          ApiKey: apiKey,
         };
-        if (cleanSender && cleanSender !== '10008585' && cleanSender !== 'default') {
-          modernPayload.lineNumber = cleanSender;
-        }
 
         const modernRes = await fetch(modernUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'ApiKey': apiKey,
+            'apikey': apiKey,
             'Accept': 'application/json',
           },
           body: JSON.stringify(modernPayload),

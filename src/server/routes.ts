@@ -2676,21 +2676,23 @@ apiRouter.post('/sms/test-direct', async (req: Request, res: Response) => {
     if (provider === 'ghasedak') {
       const results: any[] = [];
 
-      // Method A: Modern REST Gateway (gateway.ghasedak.me)
+      // Method A: Exact doc.ghasedak.me SendSingleSMS REST v1 (gateway.ghasedak.me)
       if (!method || method === 'gateway_v1') {
         try {
           const modernPayload: Record<string, any> = {
             message: testMessage,
             receptor: cleanPhone,
+            lineNumber: cleanSender || '90009729',
+            ApiKey: cleanKey,
           };
-          if (cleanSender) modernPayload.lineNumber = cleanSender;
 
           const startA = Date.now();
-          const resA = await fetch('https://gateway.ghasedak.me/rest/api/v1/webservice/sendsinglesms', {
+          const resA = await fetch('https://gateway.ghasedak.me/rest/api/v1/WebService/SendSingleSMS', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'ApiKey': cleanKey,
+              'apikey': cleanKey,
               'Accept': 'application/json',
             },
             body: JSON.stringify(modernPayload),
@@ -2701,8 +2703,8 @@ apiRouter.post('/sms/test-direct', async (req: Request, res: Response) => {
           try { jsonA = JSON.parse(textA); } catch (e) {}
 
           results.push({
-            endpoint: 'https://gateway.ghasedak.me/rest/api/v1/webservice/sendsinglesms',
-            name: 'REST Gateway v1 (JSON, Header: ApiKey)',
+            endpoint: 'https://gateway.ghasedak.me/rest/api/v1/WebService/SendSingleSMS',
+            name: 'رسمی مستندات قاصدک (SendSingleSMS JSON)',
             status: resA.status,
             statusText: resA.statusText,
             durationMs: timeA,
@@ -2713,7 +2715,7 @@ apiRouter.post('/sms/test-direct', async (req: Request, res: Response) => {
           });
         } catch (err: any) {
           results.push({
-            endpoint: 'gateway.ghasedak.me',
+            endpoint: 'gateway.ghasedak.me (SendSingleSMS)',
             error: err.message,
           });
         }
