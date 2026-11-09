@@ -2676,6 +2676,50 @@ apiRouter.post('/sms/test-direct', async (req: Request, res: Response) => {
     if (provider === 'ghasedak') {
       const results: any[] = [];
 
+      // Method 0: Official ghasedaksms Node.js SDK (doc.ghasedak.me/nodejs)
+      if (!method || method === 'sdk') {
+        try {
+          const GhasedakModule = await import('ghasedaksms');
+          const GhasedakClass = (GhasedakModule as any).default || GhasedakModule;
+          const ghasedakClient = new GhasedakClass(cleanKey);
+
+          const sdkPayload: Record<string, any> = {
+            message: testMessage,
+            receptor: cleanPhone,
+            sendDate: new Date().toISOString(),
+            clientReferenceId: `ref-${Date.now()}`,
+            udh: false,
+          };
+          if (cleanSender) sdkPayload.linenumber = cleanSender;
+
+          const start0 = Date.now();
+          const sdkRes = await ghasedakClient.sendSimpleSms(sdkPayload);
+          const time0 = Date.now() - start0;
+
+          results.push({
+            endpoint: 'ghasedaksms (Official Node.js Package)',
+            name: 'پکیج رسمی Node.js قاصدک (ghasedaksms.sendSimpleSms)',
+            status: 200,
+            statusText: 'OK',
+            durationMs: time0,
+            headersSent: { 'SDK Engine': 'ghasedaksms npm package' },
+            payloadSent: sdkPayload,
+            responseBody: sdkRes,
+            isSuccess: Boolean(sdkRes && (sdkRes.result?.code === 200 || sdkRes.result?.code === 201 || sdkRes.code === 200 || sdkRes.isSuccess === true)),
+          });
+        } catch (err: any) {
+          results.push({
+            endpoint: 'ghasedaksms NPM Package',
+            name: 'پکیج رسمی Node.js قاصدک (ghasedaksms.sendSimpleSms)',
+            status: 500,
+            statusText: 'SDK Error',
+            error: err.message,
+            responseBody: err.response?.data || err.message,
+            isSuccess: false,
+          });
+        }
+      }
+
       // Method A: Exact doc.ghasedak.me SendSingleSMS REST v1 (gateway.ghasedak.me)
       if (!method || method === 'gateway_v1') {
         try {

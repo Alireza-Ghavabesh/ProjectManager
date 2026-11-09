@@ -123,6 +123,35 @@ export async function sendSmsViaProvider(
       const cleanPhone = phone.trim();
       const cleanSender = senderNumber ? senderNumber.trim() : '';
 
+      // Try 0: Official ghasedaksms Node.js NPM Package (https://doc.ghasedak.me/nodejs)
+      try {
+        const GhasedakModule = await import('ghasedaksms');
+        const GhasedakClass = (GhasedakModule as any).default || GhasedakModule;
+        const ghasedakClient = new GhasedakClass(apiKey);
+
+        const sdkPayload: Record<string, any> = {
+          message,
+          receptor: cleanPhone,
+          sendDate: new Date().toISOString(),
+          clientReferenceId: `ref-${Date.now()}`,
+          udh: false,
+        };
+        if (cleanSender && cleanSender !== '10008585') {
+          sdkPayload.linenumber = cleanSender;
+        }
+
+        const sdkRes = await ghasedakClient.sendSimpleSms(sdkPayload);
+        if (sdkRes && (sdkRes.result?.code === 200 || sdkRes.result?.code === 201 || sdkRes.code === 200 || sdkRes.isSuccess === true)) {
+          return {
+            success: true,
+            simulated: false,
+            providerResponse: typeof sdkRes === 'object' ? JSON.stringify(sdkRes) : String(sdkRes),
+          };
+        }
+      } catch (sdkErr: any) {
+        console.warn('Ghasedak SDK attempt failed:', sdkErr?.message || sdkErr);
+      }
+
       // Try 1: Exact doc.ghasedak.me SendSingleSMS REST v1 Endpoint
       try {
         const modernUrl = 'https://gateway.ghasedak.me/rest/api/v1/WebService/SendSingleSMS';

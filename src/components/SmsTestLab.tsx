@@ -21,7 +21,7 @@ import { api } from '../services/api';
 export const SmsTestLab: React.FC = () => {
   // Provider Selection
   const [provider, setProvider] = useState<'ghasedak' | 'smsir' | 'kavenegar' | 'farazsms'>('ghasedak');
-  const [method, setMethod] = useState<'all' | 'gateway_v1' | 'classic_v2'>('all');
+  const [method, setMethod] = useState<'all' | 'sdk' | 'gateway_v1' | 'classic_v2' | 'bulk2'>('all');
 
   // Credentials & Payload
   const [apiKey, setApiKey] = useState('');
@@ -185,11 +185,12 @@ export const SmsTestLab: React.FC = () => {
                     روش ارسال به قاصدک (Endpoint Type):
                   </span>
                 </div>
-                <div className="grid grid-cols-3 gap-2 pt-1">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
                   {[
-                    { id: 'all', title: 'تست هر دو متد همزمان (پیشنهادی)' },
-                    { id: 'gateway_v1', title: 'فقط گیت‌وی جدید (gateway.ghasedak.me)' },
-                    { id: 'classic_v2', title: 'فقط کلاسیک v2 (api.ghasedak.me)' },
+                    { id: 'all', title: 'تست همه روش‌ها همزمان' },
+                    { id: 'sdk', title: 'پکیج رسمی Node.js (ghasedaksms)' },
+                    { id: 'gateway_v1', title: 'گیت‌وی REST جدید (SendSingleSMS)' },
+                    { id: 'bulk2', title: 'متد کلاسیک bulk2' },
                   ].map((m) => (
                     <button
                       key={m.id}
