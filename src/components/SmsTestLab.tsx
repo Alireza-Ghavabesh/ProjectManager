@@ -378,7 +378,7 @@ export const SmsTestLab: React.FC = () => {
                   }`}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2 pb-2 mb-2 border-b border-slate-700/60">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="text-xs font-bold text-white">{att.name}</span>
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-slate-950 text-slate-400">
                         HTTP {att.status} {att.statusText}
@@ -389,6 +389,12 @@ export const SmsTestLab: React.FC = () => {
                         زمان پاسخ: {att.durationMs}ms
                       </span>
                     )}
+                  </div>
+
+                  {/* Target Endpoint URL display */}
+                  <div className="mb-3 p-2 rounded-xl bg-slate-950/70 border border-slate-800 text-[11px] font-mono flex items-center gap-2 text-sky-300" dir="ltr">
+                    <span className="text-slate-500 shrink-0 text-[10px]">URL:</span>
+                    <span className="select-all break-all">{att.endpoint}</span>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-mono" dir="ltr">
