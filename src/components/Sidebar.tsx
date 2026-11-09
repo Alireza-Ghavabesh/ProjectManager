@@ -13,13 +13,14 @@ import {
   X,
   FolderTree,
   GitBranch,
-  Settings
+  Settings,
+  Radio
 } from 'lucide-react';
 
 interface SidebarProps {
   currentUser: User;
-  activeTab: 'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings';
-  setActiveTab: (tab: 'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings') => void;
+  activeTab: 'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings' | 'smstest';
+  setActiveTab: (tab: 'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings' | 'smstest') => void;
   onLogout: () => void;
   pendingVotesCount?: number;
   mobileOpen: boolean;

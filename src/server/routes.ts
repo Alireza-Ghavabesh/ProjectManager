@@ -2645,3 +2645,183 @@ apiRouter.get('/sms/logs', (req: Request, res: Response) => {
   res.json({ logs });
 });
 
+// Dedicated Interactive SMS Diagnostic & Test Endpoint
+apiRouter.post('/sms/test-direct', async (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) {
+    return res.status(401).json({ error: 'ابتدا وارد سامانه شوید.' });
+  }
+
+  const { provider, apiKey, senderNumber, phone, message, method } = req.body;
+
+  if (!phone || !phone.trim()) {
+    return res.status(400).json({ error: 'شماره گیرنده الزامی است.' });
+  }
+
+  const cleanPhone = phone.trim();
+  const cleanKey = (apiKey || '').trim();
+  const cleanSender = (senderNumber || '').trim();
+  const testMessage = (message || '').trim() || 'تست ارسال پیامک از سامانه شورای ارزیابی';
+
+  const diagnostics: Record<string, any> = {
+    provider: provider || 'ghasedak',
+    phone: cleanPhone,
+    senderNumber: cleanSender,
+    hasApiKey: Boolean(cleanKey),
+    apiKeyLength: cleanKey.length,
+    requestedAt: new Date().toISOString(),
+  };
+
+  try {
+    if (provider === 'ghasedak') {
+      const results: any[] = [];
+
+      // Method A: Modern REST Gateway (gateway.ghasedak.me)
+      if (!method || method === 'gateway_v1') {
+        try {
+          const modernPayload: Record<string, any> = {
+            message: testMessage,
+            receptor: cleanPhone,
+          };
+          if (cleanSender) modernPayload.lineNumber = cleanSender;
+
+          const startA = Date.now();
+          const resA = await fetch('https://gateway.ghasedak.me/rest/api/v1/webservice/sendsinglesms', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'ApiKey': cleanKey,
+              'Accept': 'application/json',
+            },
+            body: JSON.stringify(modernPayload),
+          });
+          const timeA = Date.now() - startA;
+          const textA = await resA.text();
+          let jsonA = null;
+          try { jsonA = JSON.parse(textA); } catch (e) {}
+
+          results.push({
+            endpoint: 'https://gateway.ghasedak.me/rest/api/v1/webservice/sendsinglesms',
+            name: 'REST Gateway v1 (JSON, Header: ApiKey)',
+            status: resA.status,
+            statusText: resA.statusText,
+            durationMs: timeA,
+            headersSent: { 'ApiKey': cleanKey ? `${cleanKey.slice(0, 4)}...${cleanKey.slice(-4)}` : '(none)' },
+            payloadSent: modernPayload,
+            responseBody: jsonA || textA,
+            isSuccess: resA.ok && (jsonA?.result?.code === 200 || jsonA?.result?.code === 201 || jsonA?.code === 200 || jsonA?.isSuccess === true),
+          });
+        } catch (err: any) {
+          results.push({
+            endpoint: 'gateway.ghasedak.me',
+            error: err.message,
+          });
+        }
+      }
+
+      // Method B: Classic Form (api.ghasedak.me)
+      if (!method || method === 'classic_v2') {
+        try {
+          const paramsB: Record<string, string> = {
+            message: testMessage,
+            receptor: cleanPhone,
+          };
+          if (cleanSender) paramsB.linenumber = cleanSender;
+
+          const startB = Date.now();
+          const resB = await fetch('https://api.ghasedak.me/v2/sms/send/simple', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'apikey': cleanKey,
+              'ApiKey': cleanKey,
+              'Accept': 'application/json',
+            },
+            body: new URLSearchParams(paramsB).toString(),
+          });
+          const timeB = Date.now() - startB;
+          const textB = await resB.text();
+          let jsonB = null;
+          try { jsonB = JSON.parse(textB); } catch (e) {}
+
+          results.push({
+            endpoint: 'https://api.ghasedak.me/v2/sms/send/simple',
+            name: 'Classic v2 (x-www-form-urlencoded, Header: apikey)',
+            status: resB.status,
+            statusText: resB.statusText,
+            durationMs: timeB,
+            headersSent: { 'apikey': cleanKey ? `${cleanKey.slice(0, 4)}...${cleanKey.slice(-4)}` : '(none)' },
+            payloadSent: paramsB,
+            responseBody: jsonB || textB,
+            isSuccess: resB.ok && (jsonB?.result?.code === 200 || jsonB?.result?.code === 201 || jsonB?.code === 200),
+          });
+        } catch (err: any) {
+          results.push({
+            endpoint: 'api.ghasedak.me',
+            error: err.message,
+          });
+        }
+      }
+
+      // Method C: OTP / Verify template (اگر پترن داشته باشد)
+      if (req.body.templateName) {
+        try {
+          const otpPayload = {
+            receptor: cleanPhone,
+            type: 1,
+            template: req.body.templateName,
+            param1: req.body.param1 || '1234',
+          };
+          const resC = await fetch('https://api.ghasedak.me/v2/verification/send/simple', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'apikey': cleanKey,
+              'ApiKey': cleanKey,
+            },
+            body: new URLSearchParams(otpPayload as any).toString(),
+          });
+          const textC = await resC.text();
+          let jsonC = null;
+          try { jsonC = JSON.parse(textC); } catch (e) {}
+
+          results.push({
+            endpoint: 'https://api.ghasedak.me/v2/verification/send/simple',
+            name: 'OTP Verify Service (قالب/پترن)',
+            status: resC.status,
+            responseBody: jsonC || textC,
+            isSuccess: resC.ok && (jsonC?.result?.code === 200 || jsonC?.code === 200),
+          });
+        } catch (err: any) {}
+      }
+
+      return res.json({
+        provider: 'ghasedak',
+        diagnostics,
+        attempts: results,
+        overallSuccess: results.some(r => r.isSuccess),
+      });
+    }
+
+    // Fallback standard provider
+    const settings: Record<string, string> = {
+      sms_provider: provider || 'ghasedak',
+      sms_api_key: cleanKey,
+      sms_sender_number: cleanSender,
+    };
+    const standardResult = await sendSmsViaProvider(cleanPhone, testMessage, settings);
+    return res.json({
+      provider,
+      diagnostics,
+      standardResult,
+      overallSuccess: standardResult.success,
+    });
+  } catch (globalErr: any) {
+    return res.status(500).json({
+      error: globalErr.message,
+      diagnostics,
+    });
+  }
+});
+
+

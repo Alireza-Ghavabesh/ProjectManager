@@ -21,7 +21,7 @@ import {
 
 interface HeaderProps {
   currentUser: User;
-  activeTab: 'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings';
+  activeTab: 'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings' | 'smstest';
   onOpenMobileMenu: () => void;
 }
 
@@ -50,6 +50,8 @@ export const Header: React.FC<HeaderProps> = ({
         return { title: 'تالار گفتگوی شورا', icon: MessageSquare, desc: 'چت گروهی و پیام‌رسانی خصوصی (پی‌وی) بین اعضا' };
       case 'settings':
         return { title: 'تنظیمات سامانه و مهلت ارزیابی', icon: Settings, desc: 'سیاست‌های مهلت بررسی، قفل خودکار رای‌گیری و ضوابط تمدید توسط ثبت‌کننده طرح' };
+      case 'smstest':
+        return { title: 'آزمایشگاه تست ارسال پیامک', icon: Settings, desc: 'ابزار زنده تست مستقیم وب‌سرویس‌های پیامک و خطایابی بدون واسطه' };
       case 'stats':
         return { title: 'داشبورد و آمار تحلیلی مصوبات', icon: BarChart3, desc: 'گزارش تجمیعی آرا، مشارکت و شاخص‌های شورا' };
       default:

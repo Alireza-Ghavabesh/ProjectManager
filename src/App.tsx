@@ -14,6 +14,7 @@ import { OrgHierarchyChart } from './components/OrgHierarchyChart';
 import { CouncilChat } from './components/CouncilChat';
 import { StatsView } from './components/StatsView';
 import { SystemSettingsView } from './components/SystemSettingsView';
+import { SmsTestLab } from './components/SmsTestLab';
 import { LoginModal } from './components/LoginModal';
 import { OfflineIndicator } from './pwa/PWAComponents';
 import { 
@@ -58,7 +59,7 @@ export default function App() {
   const [cartableFeedbackMsg, setCartableFeedbackMsg] = useState('');
 
   // Navigation & Filters
-  const [activeTab, setActiveTab] = useState<'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings'>('projects');
+  const [activeTab, setActiveTab] = useState<'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings' | 'smstest'>('projects');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING_MY_VOTE' | 'APPROVED' | 'NEEDS_REVISION' | 'REJECTED'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -133,6 +134,25 @@ export default function App() {
 
     window.addEventListener('council_branding_updated', handleBrandingLiveUpdate);
     return () => window.removeEventListener('council_branding_updated', handleBrandingLiveUpdate);
+  }, []);
+
+  // Secret URL routing for /testsms
+  useEffect(() => {
+    const checkSecretRoute = () => {
+      const path = window.location.pathname.toLowerCase();
+      const hash = window.location.hash.toLowerCase();
+      if (path === '/testsms' || path === '/testsms/' || hash === '#testsms' || hash === '#/testsms') {
+        setActiveTab('smstest');
+      }
+    };
+
+    checkSecretRoute();
+    window.addEventListener('popstate', checkSecretRoute);
+    window.addEventListener('hashchange', checkSecretRoute);
+    return () => {
+      window.removeEventListener('popstate', checkSecretRoute);
+      window.removeEventListener('hashchange', checkSecretRoute);
+    };
   }, []);
 
   // Fetch all council data
@@ -625,6 +645,11 @@ export default function App() {
             <SystemSettingsView
               currentUser={currentUser}
             />
+          )}
+
+          {/* ===================== TAB: SMS TEST LAB (صفحه اختصاصی تست ارسال پیامک) ===================== */}
+          {activeTab === 'smstest' && (
+            <SmsTestLab />
           )}
 
         </main>
