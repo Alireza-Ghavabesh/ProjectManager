@@ -2785,144 +2785,20 @@ apiRouter.post('/sms/test-direct', async (req: Request, res: Response) => {
     if (provider === 'ghasedak') {
       const results: any[] = [];
 
-      // Check 0: Validate API Key & Account Info via GetAccountInformation
-      try {
-        const infoStart = Date.now();
-        const infoRes = await fetch('https://gateway.ghasedak.me/rest/api/v1/WebService/GetAccountInformation', {
-          method: 'GET',
-          headers: {
-            'ApiKey': cleanKey,
-            'apikey': cleanKey,
-            'Accept': 'application/json',
-          },
-        });
-        const infoTime = Date.now() - infoStart;
-        const infoText = await infoRes.text();
-        let infoJson = null;
-        try { infoJson = JSON.parse(infoText); } catch (e) {}
-
-        results.push({
-          endpoint: 'https://gateway.ghasedak.me/rest/api/v1/WebService/GetAccountInformation',
-          name: '🔍 استعلام مشخصات و اعتبار کلید قاصدک (GetAccountInformation)',
-          status: infoRes.status,
-          statusText: infoRes.statusText,
-          durationMs: infoTime,
-          headersSent: { 'ApiKey': cleanKey ? `${cleanKey.slice(0, 4)}...${cleanKey.slice(-4)}` : '(none)' },
-          responseBody: infoJson || infoText,
-          isSuccess: infoRes.ok,
-          accountDetails: infoJson?.items || null,
-        });
-      } catch (e: any) {
-        results.push({
-          endpoint: 'GetAccountInformation',
-          name: '🔍 استعلام مشخصات و اعتبار کلید قاصدک',
-          error: e.message,
-        });
-      }
-
-      // Method 0: Official ghasedaksms Node.js SDK (doc.ghasedak.me/nodejs)
-      if (!method || method === 'sdk') {
+      // ۱. ارسال تکی به یک نفر: api.ghasedaksms.com/v2/sms/send/simple
+      if (!method || method === 'simple' || method === 'all') {
         try {
-          const GhasedakModule = await import('ghasedaksms');
-          const GhasedakClass = (GhasedakModule as any).default || GhasedakModule;
-          const ghasedakClient = new GhasedakClass(cleanKey);
-
-          const sdkPayload: Record<string, any> = {
+          const paramsSimple: Record<string, string> = {
             message: testMessage,
-            receptor: cleanPhone,
-            sendDate: new Date().toISOString(),
-            clientReferenceId: `ref-${Date.now()}`,
-            udh: false,
-          };
-          if (cleanSender) sdkPayload.linenumber = cleanSender;
-
-          const start0 = Date.now();
-          const sdkRes = await ghasedakClient.sendSimpleSms(sdkPayload);
-          const time0 = Date.now() - start0;
-
-          results.push({
-            endpoint: 'ghasedaksms (Official Node.js Package)',
-            name: 'پکیج رسمی Node.js قاصدک (ghasedaksms.sendSimpleSms)',
-            status: 200,
-            statusText: 'OK',
-            durationMs: time0,
-            headersSent: { 'SDK Engine': 'ghasedaksms npm package' },
-            payloadSent: sdkPayload,
-            responseBody: sdkRes,
-            isSuccess: Boolean(sdkRes && (sdkRes.result?.code === 200 || sdkRes.result?.code === 201 || sdkRes.code === 200 || sdkRes.isSuccess === true)),
-          });
-        } catch (err: any) {
-          results.push({
-            endpoint: 'ghasedaksms NPM Package',
-            name: 'پکیج رسمی Node.js قاصدک (ghasedaksms.sendSimpleSms)',
-            status: 500,
-            statusText: 'SDK Error',
-            error: err.message,
-            responseBody: err.response?.data || err.message,
-            isSuccess: false,
-          });
-        }
-      }
-
-      // Method A: Exact doc.ghasedak.me SendSingleSMS REST v1 (gateway.ghasedak.me)
-      if (!method || method === 'gateway_v1') {
-        try {
-          const modernPayload: Record<string, any> = {
-            message: testMessage,
-            receptor: cleanPhone,
-            lineNumber: cleanSender || '90009729',
-            ApiKey: cleanKey,
-          };
-
-          const startA = Date.now();
-          const resA = await fetch('https://gateway.ghasedak.me/rest/api/v1/WebService/SendSingleSMS', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'ApiKey': cleanKey,
-              'apikey': cleanKey,
-              'Accept': 'application/json',
-            },
-            body: JSON.stringify(modernPayload),
-          });
-          const timeA = Date.now() - startA;
-          const textA = await resA.text();
-          let jsonA = null;
-          try { jsonA = JSON.parse(textA); } catch (e) {}
-
-          results.push({
-            endpoint: 'https://gateway.ghasedak.me/rest/api/v1/WebService/SendSingleSMS',
-            name: 'رسمی مستندات قاصدک (SendSingleSMS JSON)',
-            status: resA.status,
-            statusText: resA.statusText,
-            durationMs: timeA,
-            headersSent: { 'ApiKey': cleanKey ? `${cleanKey.slice(0, 4)}...${cleanKey.slice(-4)}` : '(none)' },
-            payloadSent: modernPayload,
-            responseBody: jsonA || textA,
-            isSuccess: resA.ok && (jsonA?.result?.code === 200 || jsonA?.result?.code === 201 || jsonA?.code === 200 || jsonA?.isSuccess === true),
-          });
-        } catch (err: any) {
-          results.push({
-            endpoint: 'gateway.ghasedak.me (SendSingleSMS)',
-            error: err.message,
-          });
-        }
-      }
-
-      // Method B: Official Support Endpoint: https://api.ghasedaksms.com/v2/sms/send/simple
-      if (!method || method === 'classic_v2' || method === 'simple') {
-        try {
-          const paramsB: Record<string, string> = {
-            message: testMessage,
-            receptor: cleanPhone,
+            receptor: cleanPhone.split(/[,;\s]+/)[0] || cleanPhone,
           };
           if (cleanSender && cleanSender !== '10008585' && cleanSender !== 'default') {
-            paramsB.linenumber = cleanSender;
-            paramsB.sender = cleanSender;
+            paramsSimple.linenumber = cleanSender;
+            paramsSimple.sender = cleanSender;
           }
 
-          const startB = Date.now();
-          const resB = await fetch('https://api.ghasedaksms.com/v2/sms/send/simple', {
+          const startSimple = Date.now();
+          const resSimple = await fetch('https://api.ghasedaksms.com/v2/sms/send/simple', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/x-www-form-urlencoded',
@@ -2930,44 +2806,44 @@ apiRouter.post('/sms/test-direct', async (req: Request, res: Response) => {
               'ApiKey': cleanKey,
               'Accept': 'application/json',
             },
-            body: new URLSearchParams(paramsB).toString(),
+            body: new URLSearchParams(paramsSimple).toString(),
           });
-          const timeB = Date.now() - startB;
-          const textB = await resB.text();
-          let jsonB = null;
-          try { jsonB = JSON.parse(textB); } catch (e) {}
+          const timeSimple = Date.now() - startSimple;
+          const textSimple = await resSimple.text();
+          let jsonSimple = null;
+          try { jsonSimple = JSON.parse(textSimple); } catch (e) {}
 
           results.push({
             endpoint: 'https://api.ghasedaksms.com/v2/sms/send/simple',
-            name: '🎯 آدرس تاییدشده پشتیبانی قاصدک (api.ghasedaksms.com/v2/sms/send/simple)',
-            status: resB.status,
-            statusText: resB.statusText,
-            durationMs: timeB,
+            name: '۱. ارسال تکی به یک نفر (send/simple)',
+            status: resSimple.status,
+            statusText: resSimple.statusText,
+            durationMs: timeSimple,
             headersSent: {
               'apikey': cleanKey ? `${cleanKey.slice(0, 4)}...${cleanKey.slice(-4)}` : '(none)',
               'Content-Type': 'application/x-www-form-urlencoded',
             },
-            payloadSent: paramsB,
-            responseBody: jsonB || textB,
-            isSuccess: resB.ok && (jsonB?.result?.code === 200 || jsonB?.result?.code === 201 || jsonB?.code === 200 || jsonB?.isSuccess === true),
+            payloadSent: paramsSimple,
+            responseBody: jsonSimple || textSimple,
+            isSuccess: resSimple.ok && (jsonSimple?.result?.code === 200 || jsonSimple?.result?.code === 201 || jsonSimple?.code === 200 || jsonSimple?.isSuccess === true),
           });
         } catch (err: any) {
           results.push({
             endpoint: 'https://api.ghasedaksms.com/v2/sms/send/simple',
-            name: '🎯 آدرس تاییدشده پشتیبانی قاصدک (api.ghasedaksms.com/v2/sms/send/simple)',
+            name: '۱. ارسال تکی به یک نفر (send/simple)',
             error: err.message,
           });
         }
       }
 
-      // Method B2: Classic bulk2 (api.ghasedaksms.com/v2/sms/send/bulk2)
-      if (!method || method === 'bulk2') {
+      // ۲. ارسال گروهی: api.ghasedaksms.com/v2/sms/send/bulk2
+      if (!method || method === 'bulk2' || method === 'all') {
         try {
           const paramsBulk2: Record<string, string> = {
             message: testMessage,
             receptor: cleanPhone,
           };
-          if (cleanSender) {
+          if (cleanSender && cleanSender !== '10008585' && cleanSender !== 'default') {
             paramsBulk2.sender = cleanSender;
             paramsBulk2.linenumber = cleanSender;
           }
@@ -2990,53 +2866,25 @@ apiRouter.post('/sms/test-direct', async (req: Request, res: Response) => {
 
           results.push({
             endpoint: 'https://api.ghasedaksms.com/v2/sms/send/bulk2',
-            name: 'Classic bulk2 (api.ghasedaksms.com/v2/sms/send/bulk2)',
+            name: '۲. ارسال گروهی (send/bulk2)',
             status: resB2.status,
             statusText: resB2.statusText,
             durationMs: timeB2,
-            headersSent: { 'apikey': cleanKey ? `${cleanKey.slice(0, 4)}...${cleanKey.slice(-4)}` : '(none)' },
+            headersSent: {
+              'apikey': cleanKey ? `${cleanKey.slice(0, 4)}...${cleanKey.slice(-4)}` : '(none)',
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
             payloadSent: paramsBulk2,
             responseBody: jsonB2 || textB2,
-            isSuccess: resB2.ok && (jsonB2?.result?.code === 200 || jsonB2?.result?.code === 201 || jsonB2?.code === 200),
+            isSuccess: resB2.ok && (jsonB2?.result?.code === 200 || jsonB2?.result?.code === 201 || jsonB2?.code === 200 || jsonB2?.isSuccess === true),
           });
         } catch (err: any) {
           results.push({
-            endpoint: 'api.ghasedaksms.com bulk2',
+            endpoint: 'https://api.ghasedaksms.com/v2/sms/send/bulk2',
+            name: '۲. ارسال گروهی (send/bulk2)',
             error: err.message,
           });
         }
-      }
-
-      // Method C: OTP / Verify template (اگر پترن داشته باشد)
-      if (req.body.templateName) {
-        try {
-          const otpPayload = {
-            receptor: cleanPhone,
-            type: 1,
-            template: req.body.templateName,
-            param1: req.body.param1 || '1234',
-          };
-          const resC = await fetch('https://api.ghasedak.me/v2/verification/send/simple', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-              'apikey': cleanKey,
-              'ApiKey': cleanKey,
-            },
-            body: new URLSearchParams(otpPayload as any).toString(),
-          });
-          const textC = await resC.text();
-          let jsonC = null;
-          try { jsonC = JSON.parse(textC); } catch (e) {}
-
-          results.push({
-            endpoint: 'https://api.ghasedak.me/v2/verification/send/simple',
-            name: 'OTP Verify Service (قالب/پترن)',
-            status: resC.status,
-            responseBody: jsonC || textC,
-            isSuccess: resC.ok && (jsonC?.result?.code === 200 || jsonC?.code === 200),
-          });
-        } catch (err: any) {}
       }
 
       return res.json({

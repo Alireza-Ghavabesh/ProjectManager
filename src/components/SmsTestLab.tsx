@@ -21,7 +21,7 @@ import { api } from '../services/api';
 export const SmsTestLab: React.FC = () => {
   // Provider Selection
   const [provider, setProvider] = useState<'ghasedak' | 'smsir' | 'kavenegar' | 'farazsms'>('ghasedak');
-  const [method, setMethod] = useState<'all' | 'sdk' | 'gateway_v1' | 'classic_v2' | 'bulk2' | 'simple'>('all');
+  const [method, setMethod] = useState<'all' | 'simple' | 'bulk2'>('simple');
 
   // Credentials & Payload
   const [apiKey, setApiKey] = useState('');
@@ -185,19 +185,17 @@ export const SmsTestLab: React.FC = () => {
                     روش ارسال به قاصدک (Endpoint Type):
                   </span>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
                   {[
-                    { id: 'all', title: 'تست همه روش‌ها همزمان' },
-                    { id: 'simple', title: '🎯 آدرس پشتیبانی (send/simple)' },
-                    { id: 'bulk2', title: 'متد کلاسیک bulk2' },
-                    { id: 'sdk', title: 'پکیج رسمی Node.js (ghasedaksms)' },
-                    { id: 'gateway_v1', title: 'گیت‌وی جدید (SendSingleSMS)' },
+                    { id: 'simple', title: '🎯 ارسال تکی به یک نفر (send/simple)' },
+                    { id: 'bulk2', title: '👥 ارسال گروهی (send/bulk2)' },
+                    { id: 'all', title: 'تست هر دو آدرس همزمان' },
                   ].map((m) => (
                     <button
                       key={m.id}
                       type="button"
                       onClick={() => setMethod(m.id as any)}
-                      className={`p-2 rounded-xl text-[11px] font-bold border transition text-center cursor-pointer ${
+                      className={`p-2.5 rounded-xl text-xs font-bold border transition text-center cursor-pointer ${
                         method === m.id
                           ? 'bg-white text-indigo-700 border-indigo-500 shadow-xs ring-1 ring-indigo-400'
                           : 'bg-indigo-100/40 text-indigo-900/70 border-indigo-200/50 hover:bg-white'
@@ -308,26 +306,26 @@ export const SmsTestLab: React.FC = () => {
         <div className="lg:col-span-5 space-y-4">
           <div className="bg-slate-50 rounded-3xl p-5 border border-slate-200 space-y-3">
             <h3 className="text-xs font-black text-slate-900 flex items-center gap-2">
-              <HelpCircle className="w-4 h-4 text-amber-600" />
-              <span>راهنمای تحلیل کد خطای ۴۱۹ قاصدک</span>
+              <HelpCircle className="w-4 h-4 text-indigo-600" />
+              <span>تنها ۲ آدرس رسمی فعال قاصدک</span>
             </h3>
             <ul className="text-xs text-slate-600 space-y-2 leading-relaxed">
               <li className="flex items-start gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 mt-1.5 shrink-0" />
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 mt-1.5 shrink-0" />
                 <span>
-                  <strong>محدودیت IP:</strong> اگر در پنل قاصدک برای این کلید، IP سرور دیگری ثبت شده باشد، سرور قاصدک درخواست‌های ارسال‌شده از سرور شما را با ارور ۴۱۹ ریجکت می‌کند.
+                  <strong>۱. ارسال تکی به یک نفر:</strong> <code>https://api.ghasedaksms.com/v2/sms/send/simple</code>
                 </span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 mt-1.5 shrink-0" />
                 <span>
-                  <strong>خط ۹۰۰۰:</strong> خطوط ۹۰۰۰ خدماتی هستند و برای ارسال متن آزاد، برخی مواقع نیاز به خالی گذاشتن شماره خط در ریکوئست دارند تا با خط پیش‌فرض عمومی فرستاده شود.
+                  <strong>۲. ارسال گروهی به چند نفر:</strong> <code>https://api.ghasedaksms.com/v2/sms/send/bulk2</code>
                 </span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 mt-1.5 shrink-0" />
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-600 mt-1.5 shrink-0" />
                 <span>
-                  <strong>گیت‌وی v1 در برابر v2:</strong> گیت‌وی جدید هدر <code>ApiKey</code> با فرمت JSON می‌خواهد و نسخه قدیمی با فرمت Form کار می‌کند. این آزمایشگاه هر دو را تست می‌کند.
+                  <strong>فرمت استاندارد:</strong> ارسال با <code>x-www-form-urlencoded</code> و هدر <code>apikey</code>.
                 </span>
               </li>
             </ul>

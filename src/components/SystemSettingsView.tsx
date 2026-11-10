@@ -830,7 +830,7 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
                   <p className="text-[11px] text-emerald-800 mt-1.5 bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl flex items-center gap-1.5 leading-relaxed">
                     <Sparkles className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
                     <span>
-                      <strong>وب‌سرویس فعال قاصدک (آدرس تاییدشده پشتیبانی):</strong> پیامک‌ها به آدرس رسمی <code>https://api.ghasedaksms.com/v2/sms/send/simple</code> با هدر <code>apikey</code> ارسال می‌شوند. شماره خط فرستنده اختیاری است و در صورت خالی بودن، خط پیش‌فرض قاصدک ارسال را انجام می‌دهد.
+                      <strong>وب‌سرویس رسمی قاصدک:</strong> ارسال تکی به یک نفر از طریق <code>https://api.ghasedaksms.com/v2/sms/send/simple</code> و ارسال گروهی از طریق <code>https://api.ghasedaksms.com/v2/sms/send/bulk2</code> انجام می‌پذیرد.
                     </span>
                   </p>
                 )}

@@ -120,22 +120,23 @@ export async function sendSmsViaProvider(
     }
 
     if (provider === 'ghasedak') {
-      const cleanPhone = phone.trim();
+      const cleanPhones = phone.split(/[,;\s]+/).map(p => p.trim()).filter(p => p.length >= 10);
+      const isBulk = cleanPhones.length > 1;
       const cleanSender = senderNumber ? senderNumber.trim() : '';
 
-      // Priority 1: Official Ghasedak Support Confirmed Endpoint: https://api.ghasedaksms.com/v2/sms/send/simple
-      try {
-        const primaryUrl = 'https://api.ghasedaksms.com/v2/sms/send/simple';
-        const paramsObj: Record<string, string> = {
+      if (isBulk) {
+        // ۱. ارسال گروهی: api.ghasedaksms.com/v2/sms/send/bulk2
+        const bulkUrl = 'https://api.ghasedaksms.com/v2/sms/send/bulk2';
+        const bulkParams = new URLSearchParams({
           message,
-          receptor: cleanPhone,
-        };
+          receptor: cleanPhones.join(','),
+        });
         if (cleanSender && cleanSender !== '10008585' && cleanSender !== 'default') {
-          paramsObj.linenumber = cleanSender;
-          paramsObj.sender = cleanSender;
+          bulkParams.append('linenumber', cleanSender);
+          bulkParams.append('sender', cleanSender);
         }
 
-        const resPrimary = await fetch(primaryUrl, {
+        const res = await fetch(bulkUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
@@ -143,143 +144,47 @@ export async function sendSmsViaProvider(
             'ApiKey': apiKey,
             'Accept': 'application/json',
           },
-          body: new URLSearchParams(paramsObj).toString(),
+          body: bulkParams.toString(),
         });
+        const data = await res.json().catch(() => ({}));
+        const isSuccess = res.ok && (data.result?.code === 200 || data.result?.code === 201 || data.code === 200 || data.isSuccess === true);
 
-        const dataPrimary = await resPrimary.json().catch(() => ({}));
-        if (resPrimary.ok && (dataPrimary.result?.code === 200 || dataPrimary.result?.code === 201 || dataPrimary.code === 200 || dataPrimary.isSuccess === true)) {
-          return {
-            success: true,
-            simulated: false,
-            providerResponse: JSON.stringify(dataPrimary),
-          };
+        return {
+          success: isSuccess,
+          simulated: false,
+          providerResponse: JSON.stringify(data),
+        };
+      } else {
+        // ۲. ارسال تکی به یک نفر: api.ghasedaksms.com/v2/sms/send/simple
+        const singleUrl = 'https://api.ghasedaksms.com/v2/sms/send/simple';
+        const singleParams = new URLSearchParams({
+          message,
+          receptor: cleanPhones[0] || phone.trim(),
+        });
+        if (cleanSender && cleanSender !== '10008585' && cleanSender !== 'default') {
+          singleParams.append('linenumber', cleanSender);
+          singleParams.append('sender', cleanSender);
         }
 
-        // If returned an explicit response (even error like 401 with reason), keep it if other fallbacks also fail
-        if (dataPrimary && dataPrimary.result?.message) {
-          console.warn('Ghasedak send/simple response:', dataPrimary.result.message);
-        }
-      } catch (err: any) {
-        console.warn('Ghasedak primary send/simple error:', err.message);
+        const res = await fetch(singleUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'apikey': apiKey,
+            'ApiKey': apiKey,
+            'Accept': 'application/json',
+          },
+          body: singleParams.toString(),
+        });
+        const data = await res.json().catch(() => ({}));
+        const isSuccess = res.ok && (data.result?.code === 200 || data.result?.code === 201 || data.code === 200 || data.isSuccess === true);
+
+        return {
+          success: isSuccess,
+          simulated: false,
+          providerResponse: JSON.stringify(data),
+        };
       }
-
-      // Priority 2: Classic bulk2 API (https://api.ghasedaksms.com/v2/sms/send/bulk2)
-      try {
-        const bulk2Url = 'https://api.ghasedaksms.com/v2/sms/send/bulk2';
-        const bulkParams: Record<string, string> = {
-          message,
-          receptor: cleanPhone,
-        };
-        if (cleanSender && cleanSender !== '10008585') {
-          bulkParams.sender = cleanSender;
-          bulkParams.linenumber = cleanSender;
-        }
-
-        const bulkRes = await fetch(bulk2Url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'apikey': apiKey,
-            'ApiKey': apiKey,
-            'Accept': 'application/json',
-          },
-          body: new URLSearchParams(bulkParams).toString(),
-        });
-        const bulkData = await bulkRes.json().catch(() => ({}));
-        if (bulkRes.ok && (bulkData.result?.code === 200 || bulkData.result?.code === 201 || bulkData.code === 200)) {
-          return {
-            success: true,
-            simulated: false,
-            providerResponse: JSON.stringify(bulkData),
-          };
-        }
-      } catch (err) {}
-
-      // Priority 3: Official ghasedaksms Node.js NPM Package (https://doc.ghasedak.me/nodejs)
-      try {
-        const GhasedakModule = await import('ghasedaksms');
-        const GhasedakClass = (GhasedakModule as any).default || GhasedakModule;
-        const ghasedakClient = new GhasedakClass(apiKey);
-
-        const sdkPayload: Record<string, any> = {
-          message,
-          receptor: cleanPhone,
-          sendDate: new Date().toISOString(),
-          clientReferenceId: `ref-${Date.now()}`,
-          udh: false,
-        };
-        if (cleanSender && cleanSender !== '10008585') {
-          sdkPayload.linenumber = cleanSender;
-        }
-
-        const sdkRes = await ghasedakClient.sendSimpleSms(sdkPayload);
-        if (sdkRes && (sdkRes.result?.code === 200 || sdkRes.result?.code === 201 || sdkRes.code === 200 || sdkRes.isSuccess === true)) {
-          return {
-            success: true,
-            simulated: false,
-            providerResponse: typeof sdkRes === 'object' ? JSON.stringify(sdkRes) : String(sdkRes),
-          };
-        }
-      } catch (sdkErr: any) {}
-
-      // Priority 4: Exact doc.ghasedak.me SendSingleSMS REST v1 Endpoint (gateway.ghasedak.me)
-      try {
-        const modernUrl = 'https://gateway.ghasedak.me/rest/api/v1/WebService/SendSingleSMS';
-        const modernPayload: Record<string, any> = {
-          message,
-          receptor: cleanPhone,
-          lineNumber: cleanSender || '90009729',
-          ApiKey: apiKey,
-        };
-
-        const modernRes = await fetch(modernUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'ApiKey': apiKey,
-            'apikey': apiKey,
-            'Accept': 'application/json',
-          },
-          body: JSON.stringify(modernPayload),
-        });
-
-        const modernData = await modernRes.json().catch(() => ({}));
-        if (modernRes.ok && (modernData.result?.code === 200 || modernData.result?.code === 201 || modernData.code === 200 || modernData.isSuccess === true)) {
-          return {
-            success: true,
-            simulated: false,
-            providerResponse: JSON.stringify(modernData),
-          };
-        }
-      } catch (err) {}
-
-      // Final attempt: api.ghasedaksms.com/v2/sms/send/simple with final raw text response
-      const finalUrl = 'https://api.ghasedaksms.com/v2/sms/send/simple';
-      const finalParams = new URLSearchParams({
-        message,
-        receptor: cleanPhone,
-        ...(cleanSender ? { linenumber: cleanSender, sender: cleanSender } : {}),
-      });
-
-      const finalRes = await fetch(finalUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'apikey': apiKey,
-          'ApiKey': apiKey,
-          'Accept': 'application/json',
-        },
-        body: finalParams.toString(),
-      });
-
-      const finalData = await finalRes.json().catch(() => ({}));
-      const isSuccess = finalRes.ok && (finalData.result?.code === 200 || finalData.result?.code === 201 || finalData.code === 200);
-
-      return {
-        success: isSuccess,
-        simulated: false,
-        providerResponse: JSON.stringify(finalData),
-      };
     }
 
     if (provider === 'custom' && apiUrl) {
