@@ -139,10 +139,9 @@ export async function sendSmsViaProvider(
         const res = await fetch(bulkUrl, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
             'apikey': apiKey,
-            'ApiKey': apiKey,
-            'Accept': 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'cache-control': 'no-cache',
           },
           body: bulkParams.toString(),
         });
@@ -169,10 +168,9 @@ export async function sendSmsViaProvider(
         const res = await fetch(singleUrl, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
             'apikey': apiKey,
-            'ApiKey': apiKey,
-            'Accept': 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'cache-control': 'no-cache',
           },
           body: singleParams.toString(),
         });

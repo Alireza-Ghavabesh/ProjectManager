@@ -81,10 +81,9 @@ try {
   const res1 = await fetch('https://api.ghasedaksms.com/v2/sms/send/simple', {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
       'apikey': apiKey,
-      'ApiKey': apiKey,
-      'Accept': 'application/json',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'cache-control': 'no-cache',
     },
     body: params1.toString(),
   });
@@ -111,10 +110,9 @@ try {
   const res2 = await fetch('https://api.ghasedaksms.com/v2/sms/send/bulk2', {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
       'apikey': apiKey,
-      'ApiKey': apiKey,
-      'Accept': 'application/json',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'cache-control': 'no-cache',
     },
     body: params2.toString(),
   });

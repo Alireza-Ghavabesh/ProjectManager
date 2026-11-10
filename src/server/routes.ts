@@ -2801,10 +2801,9 @@ apiRouter.post('/sms/test-direct', async (req: Request, res: Response) => {
           const resSimple = await fetch('https://api.ghasedaksms.com/v2/sms/send/simple', {
             method: 'POST',
             headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
               'apikey': cleanKey,
-              'ApiKey': cleanKey,
-              'Accept': 'application/json',
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'cache-control': 'no-cache',
             },
             body: new URLSearchParams(paramsSimple).toString(),
           });
@@ -2822,6 +2821,7 @@ apiRouter.post('/sms/test-direct', async (req: Request, res: Response) => {
             headersSent: {
               'apikey': cleanKey ? `${cleanKey.slice(0, 4)}...${cleanKey.slice(-4)}` : '(none)',
               'Content-Type': 'application/x-www-form-urlencoded',
+              'cache-control': 'no-cache',
             },
             payloadSent: paramsSimple,
             responseBody: jsonSimple || textSimple,
@@ -2852,10 +2852,9 @@ apiRouter.post('/sms/test-direct', async (req: Request, res: Response) => {
           const resB2 = await fetch('https://api.ghasedaksms.com/v2/sms/send/bulk2', {
             method: 'POST',
             headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
               'apikey': cleanKey,
-              'ApiKey': cleanKey,
-              'Accept': 'application/json',
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'cache-control': 'no-cache',
             },
             body: new URLSearchParams(paramsBulk2).toString(),
           });
@@ -2873,6 +2872,7 @@ apiRouter.post('/sms/test-direct', async (req: Request, res: Response) => {
             headersSent: {
               'apikey': cleanKey ? `${cleanKey.slice(0, 4)}...${cleanKey.slice(-4)}` : '(none)',
               'Content-Type': 'application/x-www-form-urlencoded',
+              'cache-control': 'no-cache',
             },
             payloadSent: paramsBulk2,
             responseBody: jsonB2 || textB2,
