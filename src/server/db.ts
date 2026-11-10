@@ -346,6 +346,18 @@ export function initDatabase() {
   try {
     db.prepare('ALTER TABLE users ADD COLUMN hasCustomPermissions INTEGER DEFAULT 0').run();
   } catch (e) {}
+  try {
+    db.prepare('ALTER TABLE sms_rules ADD COLUMN actorPositionIds TEXT DEFAULT "[]"').run();
+  } catch (e) {}
+  try {
+    db.prepare('ALTER TABLE sms_rules ADD COLUMN actorUserIds TEXT DEFAULT "[]"').run();
+  } catch (e) {}
+  try {
+    db.prepare('ALTER TABLE sms_rules ADD COLUMN actionConditions TEXT DEFAULT "{}"').run();
+  } catch (e) {}
+  try {
+    db.prepare('ALTER TABLE sms_rules ADD COLUMN description TEXT').run();
+  } catch (e) {}
 
   try {
     seedInitialData();

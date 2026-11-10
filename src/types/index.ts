@@ -271,16 +271,18 @@ export type SmsTargetType =
 
 export interface SmsRule {
   id: string;
-  title?: string;
-  event: SmsEventType;
-  eventType?: SmsEventType;
-  target: SmsTargetType;
-  targetType?: SmsTargetType;
+  title: string;
+  event?: SmsEventType;
+  eventType: SmsEventType;
+  target?: SmsTargetType;
+  targetType: SmsTargetType;
+  actorPositionIds?: string[]; // شرط سمت انجام‌دهنده رویداد (خالی یعنی هر سمتی)
+  actorUserIds?: string[]; // شرط کاربر خاص انجام‌دهنده
   targetPositionIds?: string[];
   targetCustomNumbers?: string[];
   customPhones?: string;
-  template: string;
-  messageTemplate?: string;
+  template?: string;
+  messageTemplate: string;
   description?: string;
   enabled: boolean;
   createdAt: string;

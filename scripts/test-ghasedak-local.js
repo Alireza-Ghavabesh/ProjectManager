@@ -66,8 +66,60 @@ console.log(`📱 گیرنده: ${phone}`);
 console.log(`🔢 خط فرستنده: ${sender}`);
 console.log('------------------------------------------------------\n');
 
-// تست روش ۱: پکیج رسمی Node.js (ghasedaksms)
-console.log('⏳ ۱. در حال تست با پکیج رسمی Node.js (ghasedaksms)...');
+// تست روش ۰: بررسی مستقیم صحت کلید و وضعیت حساب (GetAccountInformation)
+console.log('⏳ ۰. در حال استعلام مستقیم وضعیت کلید و مشخصات حساب کاربری (GetAccountInformation)...');
+try {
+  const res0 = await fetch('https://gateway.ghasedak.me/rest/api/v1/WebService/GetAccountInformation', {
+    method: 'GET',
+    headers: {
+      'ApiKey': apiKey,
+      'Accept': 'application/json',
+    },
+  });
+  const text0 = await res0.text();
+  console.log(`📊 کد HTTP وضعیت حساب: ${res0.status} ${res0.statusText}`);
+  console.log('پاسخ سرور قاصدک:');
+  console.log(text0);
+  if (!res0.ok) {
+    console.log('\n⚠️ توجه: اگر پیام "شناسه IP سرویس مبدا با تنظیمات مطابقت ندارد" دریافت کرده‌اید، آی‌پی سیستم شما با آی‌پی ثبت‌شده در پنل یکی نیست. در پنل قاصدک فیلد IP را خالی بگذارید.');
+    console.log('⚠️ اگر پیام "ApiKey معتبر نمی باشد" دریافت کرده‌اید، کلید کپی‌شده اشتباه است یا در پنل کلید جدید ایجاد شده و کلید قبلی باطل شده است.');
+  }
+} catch (err) {
+  console.error('❌ خطای ارتباط با GetAccountInformation:', err.message);
+}
+
+// تست روش ۱ (اصلی): آدرس رسمی تاییدشده پشتیبانی قاصدک (api.ghasedaksms.com/v2/sms/send/simple)
+console.log('\n⏳ ۱. 🎯 در حال تست آدرس تاییدشده پشتیبانی: https://api.ghasedaksms.com/v2/sms/send/simple...');
+try {
+  const params1 = new URLSearchParams({
+    message,
+    receptor: phone,
+  });
+  if (sender) {
+    params1.append('linenumber', sender);
+    params1.append('sender', sender);
+  }
+
+  const res1 = await fetch('https://api.ghasedaksms.com/v2/sms/send/simple', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'apikey': apiKey,
+      'ApiKey': apiKey,
+      'Accept': 'application/json',
+    },
+    body: params1.toString(),
+  });
+  const text1 = await res1.text();
+  console.log(`📊 کد HTTP روش simple: ${res1.status} ${res1.statusText}`);
+  console.log('پاسخ سرور قاصدک:');
+  console.log(text1);
+} catch (err) {
+  console.error('❌ خطای ارتباط با send/simple:', err.message);
+}
+
+// تست روش ۲: پکیج رسمی Node.js (ghasedaksms)
+console.log('\n⏳ ۲. در حال تست با پکیج رسمی Node.js (ghasedaksms)...');
 try {
   const ghasedak = new Ghasedak(apiKey);
   const sdkPayload = {

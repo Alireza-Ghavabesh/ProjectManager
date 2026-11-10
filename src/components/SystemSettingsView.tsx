@@ -79,8 +79,10 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
   const logoInputRef = useRef<HTMLInputElement>(null);
 
   // Rule Form State
+  const [ruleTitle, setRuleTitle] = useState('');
   const [ruleEvent, setRuleEvent] = useState<SmsEventType>('PROJECT_CREATED');
   const [ruleTarget, setRuleTarget] = useState<SmsTargetType>('ALL_COUNCIL');
+  const [ruleActorPositions, setRuleActorPositions] = useState<string[]>([]);
   const [ruleCustomNumbers, setRuleCustomNumbers] = useState('');
   const [ruleSelectedPositions, setRuleSelectedPositions] = useState<string[]>([]);
   const [ruleTemplate, setRuleTemplate] = useState('');
@@ -270,11 +272,13 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
   // Rule actions
   const openNewRuleModal = () => {
     setEditingRule(null);
+    setRuleTitle('اطلاع‌رسانی ثبت پروژه جدید به اعضای شورا');
     setRuleEvent('PROJECT_CREATED');
+    setRuleActorPositions([]);
     setRuleTarget('ALL_COUNCIL');
     setRuleCustomNumbers('');
     setRuleSelectedPositions([]);
-    setRuleTemplate('طرح جدید «{project_title}» (کد: {project_code}) در شورا ثبت شد و در کارتابل شما قرار گرفت.');
+    setRuleTemplate('طرح جدید «{project_title}» (کد: {project_code}) توسط {actor_name} ({actor_position}) ثبت شد و در کارتابل شما قرار گرفت.');
     setRuleDescription('ارسال پیامک اطلاع‌رسانی ثبت پروژه جدید به اعضای شورا');
     setRuleEnabled(true);
     setShowRuleModal(true);
@@ -282,11 +286,13 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
 
   const openEditRuleModal = (rule: SmsRule) => {
     setEditingRule(rule);
-    setRuleEvent(rule.event);
-    setRuleTarget(rule.target);
-    setRuleCustomNumbers(rule.targetCustomNumbers?.join(', ') || '');
+    setRuleTitle(rule.title || rule.description || 'شرط ارسال پیامک');
+    setRuleEvent(rule.eventType || rule.event || 'PROJECT_CREATED');
+    setRuleActorPositions(rule.actorPositionIds || []);
+    setRuleTarget(rule.targetType || rule.target || 'ALL_COUNCIL');
+    setRuleCustomNumbers(rule.targetCustomNumbers?.join(', ') || rule.customPhones || '');
     setRuleSelectedPositions(rule.targetPositionIds || []);
-    setRuleTemplate(rule.template);
+    setRuleTemplate(rule.messageTemplate || rule.template || '');
     setRuleDescription(rule.description || '');
     setRuleEnabled(Boolean(rule.enabled));
     setShowRuleModal(true);
@@ -299,18 +305,26 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
       return;
     }
 
+    const finalTitle = (ruleTitle.trim() || ruleDescription.trim() || 'شرط ارسال پیامک');
+
     const customNums = ruleCustomNumbers
       .split(/[,،\n]/)
       .map((s) => s.trim())
       .filter((s) => s.length >= 10);
 
-    const ruleData: Partial<SmsRule> = {
+    const ruleData: any = {
+      title: finalTitle,
+      description: ruleDescription.trim() || finalTitle,
+      eventType: ruleEvent,
       event: ruleEvent,
+      actorPositionIds: ruleActorPositions,
+      targetType: ruleTarget,
       target: ruleTarget,
-      targetCustomNumbers: customNums,
       targetPositionIds: ruleSelectedPositions,
+      targetCustomNumbers: customNums,
+      customPhones: customNums.join(', '),
+      messageTemplate: ruleTemplate.trim(),
       template: ruleTemplate.trim(),
-      description: ruleDescription.trim(),
       enabled: ruleEnabled,
     };
 
@@ -812,6 +826,14 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
                     </span>
                   </p>
                 )}
+                {settings.sms_provider === 'ghasedak' && (
+                  <p className="text-[11px] text-emerald-800 mt-1.5 bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl flex items-center gap-1.5 leading-relaxed">
+                    <Sparkles className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
+                    <span>
+                      <strong>وب‌سرویس فعال قاصدک (آدرس تاییدشده پشتیبانی):</strong> پیامک‌ها به آدرس رسمی <code>https://api.ghasedaksms.com/v2/sms/send/simple</code> با هدر <code>apikey</code> ارسال می‌شوند. شماره خط فرستنده اختیاری است و در صورت خالی بودن، خط پیش‌فرض قاصدک ارسال را انجام می‌دهد.
+                    </span>
+                  </p>
+                )}
               </div>
 
               {settings.sms_provider === 'custom' && (
@@ -952,22 +974,54 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
                         : 'bg-slate-100/60 border-slate-200 opacity-60'
                     }`}
                   >
-                    <div className="space-y-1.5 flex-1 min-w-0">
+                    <div className="space-y-2 flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        {getEventBadge(rule.event)}
-                        <span className="text-xs text-slate-400">← گیرندگان:</span>
+                        {rule.title && (
+                          <span className="text-xs font-black text-slate-900 bg-white border border-slate-300 shadow-2xs px-2.5 py-1 rounded-lg">
+                            {rule.title}
+                          </span>
+                        )}
+                        {getEventBadge(rule.event || rule.eventType)}
+                        
+                        {/* Actor Position condition badge */}
+                        {rule.actorPositionIds && rule.actorPositionIds.length > 0 ? (
+                          <span className="text-[11px] font-bold text-amber-900 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md flex items-center gap-1">
+                            <span className="text-amber-700 font-normal">توسط سمت:</span>
+                            <span>
+                              {rule.actorPositionIds
+                                .map((id) => positions.find((p) => p.id === id)?.title || id)
+                                .join(' یا ')}
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md">
+                            توسط: هر سمتی
+                          </span>
+                        )}
+
+                        <span className="text-xs text-slate-400">← به گیرنده:</span>
                         <span className="text-xs font-bold text-indigo-700 bg-white border border-slate-200 px-2 py-0.5 rounded-md">
-                          {getTargetBadge(rule.target)}
+                          {getTargetBadge(rule.target || rule.targetType)}
+                          {rule.target === 'SPECIFIC_POSITIONS' && rule.targetPositionIds && rule.targetPositionIds.length > 0 && (
+                            <span className="text-[11px] text-indigo-900 font-semibold mr-1">
+                              (
+                              {rule.targetPositionIds
+                                .map((id) => positions.find((p) => p.id === id)?.title || id)
+                                .join('، ')}
+                              )
+                            </span>
+                          )}
                         </span>
-                        {rule.description && (
-                          <span className="text-xs text-slate-600 font-medium truncate">
+
+                        {rule.description && rule.description !== rule.title && (
+                          <span className="text-xs text-slate-500 font-medium truncate">
                             ({rule.description})
                           </span>
                         )}
                       </div>
 
                       <div className="p-2.5 rounded-xl bg-white border border-slate-200/80 text-xs text-slate-800 leading-relaxed font-mono">
-                        {rule.template}
+                        {rule.template || rule.messageTemplate}
                       </div>
 
                       {rule.target === 'CUSTOM_NUMBERS' && rule.targetCustomNumbers && rule.targetCustomNumbers.length > 0 && (
@@ -1264,10 +1318,25 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
 
             <form onSubmit={handleSaveRule} className="p-6 space-y-4">
               
+              {/* Rule Title */}
+              <div>
+                <label className="block text-xs font-bold text-slate-800 mb-1">
+                  عنوان مشخص این شرط پیامک *
+                </label>
+                <input
+                  type="text"
+                  value={ruleTitle}
+                  onChange={(e) => setRuleTitle(e.target.value)}
+                  placeholder="مثال: اطلاع‌رسانی رد طرح به ثبت‌کننده / تایید توسط مدیر فنی"
+                  className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:border-indigo-500 shadow-2xs"
+                  required
+                />
+              </div>
+
               {/* Event Selector */}
               <div>
                 <label className="block text-xs font-bold text-slate-800 mb-1">
-                  ۱. رویداد فعال‌ساز ارسال پیامک (Trigger Event) *
+                  ۱. رویداد فعال‌ساز (چه اتفاقی در سیستم رخ دهد؟) *
                 </label>
                 <select
                   value={ruleEvent}
@@ -1278,15 +1347,49 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
                   <option value="PROJECT_APPROVED">تایید نهایی پروژه توسط شورا (PROJECT_APPROVED)</option>
                   <option value="PROJECT_REJECTED">رد نهایی پروژه توسط شورا (PROJECT_REJECTED)</option>
                   <option value="PROJECT_NEEDS_REVISION">اعلام نیاز به اصلاح و بازنگری پروژه (PROJECT_NEEDS_REVISION)</option>
-                  <option value="NEW_VOTE_CAST">ثبت رای جدید توسط داوران (NEW_VOTE_CAST)</option>
+                  <option value="NEW_VOTE_CAST">ثبت رای تخصصی توسط داوران (NEW_VOTE_CAST)</option>
                   <option value="PASSWORD_RESET">صدور رمز عبور جدید توسط مدیر ارشد (PASSWORD_RESET)</option>
                 </select>
+              </div>
+
+              {/* Actor Condition (توسط چه کسی یا چه سمتی انجام شود؟) */}
+              <div className="p-3.5 rounded-2xl bg-indigo-50/60 border border-indigo-100 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-indigo-950">
+                    ۲. شرط سمت انجام‌دهنده (رویداد اگر توسط چه سمتی انجام شد؟):
+                  </label>
+                  <span className="text-[10px] text-indigo-700 font-medium">
+                    {ruleActorPositions.length === 0 ? 'هر سمتی (بدون محدودیت)' : `${ruleActorPositions.length} سمت انتخاب‌شده`}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  اگر تیک سمتی را بزنید، پیامک فقط وقتی ارسال می‌شود که این رویداد توسط کاربری با این سمت انجام گیرد. (خالی گذاشتن = توسط هر کسی).
+                </p>
+                <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto bg-white p-2.5 rounded-xl border border-indigo-100">
+                  {positions.map((pos) => (
+                    <label key={`actor-${pos.id}`} className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={ruleActorPositions.includes(pos.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setRuleActorPositions((prev) => [...prev, pos.id]);
+                          } else {
+                            setRuleActorPositions((prev) => prev.filter((id) => id !== pos.id));
+                          }
+                        }}
+                        className="rounded text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span className="truncate">{pos.title}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
 
               {/* Target Selector */}
               <div>
                 <label className="block text-xs font-bold text-slate-800 mb-1">
-                  ۲. گیرندگان پیامک (Target Audience) *
+                  ۳. گیرندگان پیامک (پیام برای چه کسانی یا چه سمت‌هایی ارسال شود؟) *
                 </label>
                 <select
                   value={ruleTarget}
@@ -1348,28 +1451,38 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
 
               {/* Template & Tags */}
               <div>
-                <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
                   <label className="text-xs font-bold text-slate-800">
-                    ۳. متن قالب پیامک *
+                    ۴. متن قالب پیامک (کاملاً داینامیک و متغیرمحور) *
                   </label>
-                  <span className="text-[10px] text-slate-400">کلیک روی متغیرها برای درج در متن</span>
+                  <span className="text-[10px] text-slate-400 font-medium">کلیک روی هر متغیر برای درج خودکار در متن:</span>
                 </div>
 
-                <div className="flex flex-wrap gap-1.5 mb-2">
+                <div className="flex flex-wrap gap-1.5 mb-2.5 p-2 rounded-xl bg-slate-50 border border-slate-200">
                   {[
-                    { tag: 'project_title', label: 'نام پروژه' },
-                    { tag: 'project_code', label: 'کد پروژه' },
-                    { tag: 'creator_name', label: 'نام ثبت‌کننده' },
-                    { tag: 'status', label: 'وضعیت شورا' },
+                    { tag: 'project_title', label: 'نام طرح' },
+                    { tag: 'project_code', label: 'کد طرح' },
+                    { tag: 'actor_name', label: 'نام اقدام‌کننده' },
+                    { tag: 'actor_position', label: 'سمت اقدام‌کننده' },
+                    { tag: 'creator_name', label: 'نام طراح/ثبت‌کننده' },
+                    { tag: 'recipient_name', label: 'نام گیرنده پیامک' },
+                    { tag: 'project_status', label: 'وضعیت پروژه' },
+                    { tag: 'budget', label: 'مبلغ برآورد' },
+                    { tag: 'deadline', label: 'مهلت ارزیابی' },
+                    { tag: 'location', label: 'محل اجرای طرح' },
                     { tag: 'date', label: 'تاریخ شمسی' },
+                    { tag: 'time', label: 'ساعت' },
                   ].map((v) => (
                     <button
                       key={v.tag}
                       type="button"
                       onClick={() => insertVariableTag(v.tag)}
-                      className="px-2 py-0.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[10px] font-bold transition cursor-pointer"
+                      className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 border border-slate-300 hover:border-indigo-300 text-indigo-700 text-[10px] font-bold transition shadow-2xs cursor-pointer flex items-center gap-1"
+                      title={`درج متغیر {${v.tag}}`}
                     >
-                      +{v.label} ({`{${v.tag}}`})
+                      <span className="text-indigo-400 font-mono">+</span>
+                      <span>{v.label}</span>
+                      <span className="text-[9px] font-mono text-slate-400 font-normal">{`{${v.tag}}`}</span>
                     </button>
                   ))}
                 </div>

@@ -123,67 +123,47 @@ export async function sendSmsViaProvider(
       const cleanPhone = phone.trim();
       const cleanSender = senderNumber ? senderNumber.trim() : '';
 
-      // Try 0: Official ghasedaksms Node.js NPM Package (https://doc.ghasedak.me/nodejs)
+      // Priority 1: Official Ghasedak Support Confirmed Endpoint: https://api.ghasedaksms.com/v2/sms/send/simple
       try {
-        const GhasedakModule = await import('ghasedaksms');
-        const GhasedakClass = (GhasedakModule as any).default || GhasedakModule;
-        const ghasedakClient = new GhasedakClass(apiKey);
-
-        const sdkPayload: Record<string, any> = {
+        const primaryUrl = 'https://api.ghasedaksms.com/v2/sms/send/simple';
+        const paramsObj: Record<string, string> = {
           message,
           receptor: cleanPhone,
-          sendDate: new Date().toISOString(),
-          clientReferenceId: `ref-${Date.now()}`,
-          udh: false,
         };
-        if (cleanSender && cleanSender !== '10008585') {
-          sdkPayload.linenumber = cleanSender;
+        if (cleanSender && cleanSender !== '10008585' && cleanSender !== 'default') {
+          paramsObj.linenumber = cleanSender;
+          paramsObj.sender = cleanSender;
         }
 
-        const sdkRes = await ghasedakClient.sendSimpleSms(sdkPayload);
-        if (sdkRes && (sdkRes.result?.code === 200 || sdkRes.result?.code === 201 || sdkRes.code === 200 || sdkRes.isSuccess === true)) {
-          return {
-            success: true,
-            simulated: false,
-            providerResponse: typeof sdkRes === 'object' ? JSON.stringify(sdkRes) : String(sdkRes),
-          };
-        }
-      } catch (sdkErr: any) {
-        console.warn('Ghasedak SDK attempt failed:', sdkErr?.message || sdkErr);
-      }
-
-      // Try 1: Exact doc.ghasedak.me SendSingleSMS REST v1 Endpoint
-      try {
-        const modernUrl = 'https://gateway.ghasedak.me/rest/api/v1/WebService/SendSingleSMS';
-        const modernPayload: Record<string, any> = {
-          message,
-          receptor: cleanPhone,
-          lineNumber: cleanSender || '90009729',
-          ApiKey: apiKey,
-        };
-
-        const modernRes = await fetch(modernUrl, {
+        const resPrimary = await fetch(primaryUrl, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
-            'ApiKey': apiKey,
+            'Content-Type': 'application/x-www-form-urlencoded',
             'apikey': apiKey,
+            'ApiKey': apiKey,
             'Accept': 'application/json',
           },
-          body: JSON.stringify(modernPayload),
+          body: new URLSearchParams(paramsObj).toString(),
         });
 
-        const modernData = await modernRes.json().catch(() => ({}));
-        if (modernRes.ok && (modernData.result?.code === 200 || modernData.result?.code === 201 || modernData.code === 200 || modernData.isSuccess === true)) {
+        const dataPrimary = await resPrimary.json().catch(() => ({}));
+        if (resPrimary.ok && (dataPrimary.result?.code === 200 || dataPrimary.result?.code === 201 || dataPrimary.code === 200 || dataPrimary.isSuccess === true)) {
           return {
             success: true,
             simulated: false,
-            providerResponse: JSON.stringify(modernData),
+            providerResponse: JSON.stringify(dataPrimary),
           };
         }
-      } catch (err) {}
 
-      // Try 2: Classic bulk2 API (api.ghasedaksms.com/v2/sms/send/bulk2 & api.ghasedak.me/v2/sms/send/bulk2)
+        // If returned an explicit response (even error like 401 with reason), keep it if other fallbacks also fail
+        if (dataPrimary && dataPrimary.result?.message) {
+          console.warn('Ghasedak send/simple response:', dataPrimary.result.message);
+        }
+      } catch (err: any) {
+        console.warn('Ghasedak primary send/simple error:', err.message);
+      }
+
+      // Priority 2: Classic bulk2 API (https://api.ghasedaksms.com/v2/sms/send/bulk2)
       try {
         const bulk2Url = 'https://api.ghasedaksms.com/v2/sms/send/bulk2';
         const bulkParams: Record<string, string> = {
@@ -215,19 +195,73 @@ export async function sendSmsViaProvider(
         }
       } catch (err) {}
 
-      // Try 3: Classic simple API (api.ghasedak.me/v2/sms/send/simple)
-      const v2Url = 'https://api.ghasedak.me/v2/sms/send/simple';
-      const paramsObj: Record<string, string> = {
+      // Priority 3: Official ghasedaksms Node.js NPM Package (https://doc.ghasedak.me/nodejs)
+      try {
+        const GhasedakModule = await import('ghasedaksms');
+        const GhasedakClass = (GhasedakModule as any).default || GhasedakModule;
+        const ghasedakClient = new GhasedakClass(apiKey);
+
+        const sdkPayload: Record<string, any> = {
+          message,
+          receptor: cleanPhone,
+          sendDate: new Date().toISOString(),
+          clientReferenceId: `ref-${Date.now()}`,
+          udh: false,
+        };
+        if (cleanSender && cleanSender !== '10008585') {
+          sdkPayload.linenumber = cleanSender;
+        }
+
+        const sdkRes = await ghasedakClient.sendSimpleSms(sdkPayload);
+        if (sdkRes && (sdkRes.result?.code === 200 || sdkRes.result?.code === 201 || sdkRes.code === 200 || sdkRes.isSuccess === true)) {
+          return {
+            success: true,
+            simulated: false,
+            providerResponse: typeof sdkRes === 'object' ? JSON.stringify(sdkRes) : String(sdkRes),
+          };
+        }
+      } catch (sdkErr: any) {}
+
+      // Priority 4: Exact doc.ghasedak.me SendSingleSMS REST v1 Endpoint (gateway.ghasedak.me)
+      try {
+        const modernUrl = 'https://gateway.ghasedak.me/rest/api/v1/WebService/SendSingleSMS';
+        const modernPayload: Record<string, any> = {
+          message,
+          receptor: cleanPhone,
+          lineNumber: cleanSender || '90009729',
+          ApiKey: apiKey,
+        };
+
+        const modernRes = await fetch(modernUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'ApiKey': apiKey,
+            'apikey': apiKey,
+            'Accept': 'application/json',
+          },
+          body: JSON.stringify(modernPayload),
+        });
+
+        const modernData = await modernRes.json().catch(() => ({}));
+        if (modernRes.ok && (modernData.result?.code === 200 || modernData.result?.code === 201 || modernData.code === 200 || modernData.isSuccess === true)) {
+          return {
+            success: true,
+            simulated: false,
+            providerResponse: JSON.stringify(modernData),
+          };
+        }
+      } catch (err) {}
+
+      // Final attempt: api.ghasedaksms.com/v2/sms/send/simple with final raw text response
+      const finalUrl = 'https://api.ghasedaksms.com/v2/sms/send/simple';
+      const finalParams = new URLSearchParams({
         message,
         receptor: cleanPhone,
-      };
-      if (cleanSender && cleanSender !== '10008585' && cleanSender !== 'default') {
-        paramsObj.linenumber = cleanSender;
-        paramsObj.sender = cleanSender;
-      }
+        ...(cleanSender ? { linenumber: cleanSender, sender: cleanSender } : {}),
+      });
 
-      const params = new URLSearchParams(paramsObj);
-      const res = await fetch(v2Url, {
+      const finalRes = await fetch(finalUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -235,16 +269,16 @@ export async function sendSmsViaProvider(
           'ApiKey': apiKey,
           'Accept': 'application/json',
         },
-        body: params.toString(),
+        body: finalParams.toString(),
       });
 
-      const data = await res.json().catch(() => ({}));
-      const isSuccess = res.ok && (data.result?.code === 200 || data.result?.code === 201 || data.code === 200);
+      const finalData = await finalRes.json().catch(() => ({}));
+      const isSuccess = finalRes.ok && (finalData.result?.code === 200 || finalData.result?.code === 201 || finalData.code === 200);
 
       return {
         success: isSuccess,
         simulated: false,
-        providerResponse: JSON.stringify(data),
+        providerResponse: JSON.stringify(finalData),
       };
     }
 
@@ -309,17 +343,44 @@ export async function triggerSmsForEvent(params: TriggerEventParams): Promise<{ 
   const dispatchedLogs: any[] = [];
 
   for (const rule of rules) {
+    // 2.1 Condition Check: Check if this rule is restricted to specific actor positions or users
+    if (rule.actorPositionIds) {
+      try {
+        const allowedPositions: string[] = JSON.parse(rule.actorPositionIds);
+        if (allowedPositions.length > 0) {
+          const actorPosId = actor?.positionId;
+          if (!actorPosId || !allowedPositions.includes(actorPosId)) {
+            // Actor's position does not match the rule's condition
+            continue;
+          }
+        }
+      } catch (e) {}
+    }
+
+    if (rule.actorUserIds) {
+      try {
+        const allowedUsers: string[] = JSON.parse(rule.actorUserIds);
+        if (allowedUsers.length > 0) {
+          const actorId = actor?.id;
+          if (!actorId || !allowedUsers.includes(actorId)) {
+            // Actor user does not match the rule's condition
+            continue;
+          }
+        }
+      } catch (e) {}
+    }
+
     // Determine recipients
     const recipients: { phone: string; name?: string }[] = [];
 
     if (rule.targetType === 'ALL_COUNCIL') {
       const councilUsers = db.prepare("SELECT name, phone FROM users WHERE role = 'COUNCIL' AND phone IS NOT NULL AND phone != ''").all() as any[];
       councilUsers.forEach((u) => recipients.push({ phone: u.phone.trim(), name: u.name }));
-    } else if (rule.targetType === 'ADMINS') {
+    } else if (rule.targetType === 'ADMINS' || rule.targetType === 'ALL_ADMINS') {
       const adminUsers = db.prepare("SELECT name, phone FROM users WHERE role = 'ADMIN' AND phone IS NOT NULL AND phone != ''").all() as any[];
       adminUsers.forEach((u) => recipients.push({ phone: u.phone.trim(), name: u.name }));
     } else if (rule.targetType === 'PROJECT_CREATOR') {
-      const creatorId = project?.authorId || project?.creatorId;
+      const creatorId = project?.authorId || project?.creatorId || project?.createdById;
       if (creatorId) {
         const creator = db.prepare("SELECT name, phone FROM users WHERE id = ?").get(creatorId) as any;
         if (creator?.phone) {
@@ -362,15 +423,35 @@ export async function triggerSmsForEvent(params: TriggerEventParams): Promise<{ 
       }
     });
 
+    // Lookup actor position title if available
+    let actorPositionTitle = '';
+    if (actor?.positionId) {
+      const posRow = db.prepare('SELECT title FROM positions WHERE id = ?').get(actor.positionId) as any;
+      if (posRow?.title) actorPositionTitle = posRow.title;
+    }
+
     // Format & dispatch
     for (const [phone, name] of uniqueMap.entries()) {
       const templateVars: Record<string, string> = {
+        // اطلاعات پروژه
         project_title: project?.title || 'طرح شورا',
         project_code: project?.code || '---',
-        creator_name: project?.author || 'ثبت‌کننده طرح',
-        recipient_name: name || 'همکار گرامی',
+        project_status: project?.majorityResult || project?.status || '',
+        status: project?.majorityResult || project?.status || '',
+        creator_name: project?.author || project?.creatorName || 'ثبت‌کننده طرح',
+        budget: project?.budgetEstimated || project?.budget || '',
+        deadline: project?.deadline || '',
+        location: project?.location || '',
+
+        // اطلاعات اقدام‌کننده (چه کسی رویداد را ایجاد کرد)
         actor_name: actor?.name || 'مدیر سامانه',
-        status: project?.majorityResult || '',
+        actor_role: actor?.role === 'ADMIN' ? 'مدیر ارشد' : 'عضو شورا',
+        actor_position: actorPositionTitle || actor?.positionTitle || 'سمت سازمانی',
+
+        // اطلاعات گیرنده
+        recipient_name: name || 'همکار گرامی',
+
+        // زمان و تاریخ
         date: new Date().toLocaleDateString('fa-IR'),
         time: new Date().toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' }),
         ...(extraData || {}),

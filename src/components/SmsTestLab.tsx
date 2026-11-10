@@ -21,7 +21,7 @@ import { api } from '../services/api';
 export const SmsTestLab: React.FC = () => {
   // Provider Selection
   const [provider, setProvider] = useState<'ghasedak' | 'smsir' | 'kavenegar' | 'farazsms'>('ghasedak');
-  const [method, setMethod] = useState<'all' | 'sdk' | 'gateway_v1' | 'classic_v2' | 'bulk2'>('all');
+  const [method, setMethod] = useState<'all' | 'sdk' | 'gateway_v1' | 'classic_v2' | 'bulk2' | 'simple'>('all');
 
   // Credentials & Payload
   const [apiKey, setApiKey] = useState('');
@@ -185,12 +185,13 @@ export const SmsTestLab: React.FC = () => {
                     روش ارسال به قاصدک (Endpoint Type):
                   </span>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
                   {[
                     { id: 'all', title: 'تست همه روش‌ها همزمان' },
-                    { id: 'sdk', title: 'پکیج رسمی Node.js (ghasedaksms)' },
-                    { id: 'gateway_v1', title: 'گیت‌وی REST جدید (SendSingleSMS)' },
+                    { id: 'simple', title: '🎯 آدرس پشتیبانی (send/simple)' },
                     { id: 'bulk2', title: 'متد کلاسیک bulk2' },
+                    { id: 'sdk', title: 'پکیج رسمی Node.js (ghasedaksms)' },
+                    { id: 'gateway_v1', title: 'گیت‌وی جدید (SendSingleSMS)' },
                   ].map((m) => (
                     <button
                       key={m.id}
@@ -198,7 +199,7 @@ export const SmsTestLab: React.FC = () => {
                       onClick={() => setMethod(m.id as any)}
                       className={`p-2 rounded-xl text-[11px] font-bold border transition text-center cursor-pointer ${
                         method === m.id
-                          ? 'bg-white text-indigo-700 border-indigo-400 shadow-xs'
+                          ? 'bg-white text-indigo-700 border-indigo-500 shadow-xs ring-1 ring-indigo-400'
                           : 'bg-indigo-100/40 text-indigo-900/70 border-indigo-200/50 hover:bg-white'
                       }`}
                     >
@@ -364,6 +365,21 @@ export const SmsTestLab: React.FC = () => {
               </span>
             )}
           </div>
+
+          {/* Server Outbound IP banner */}
+          {rawResponse.diagnostics?.serverOutboundIp && (
+            <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-400">آی‌پی خروجی سرور برنامه (Outbound IP):</span>
+                <span className="font-mono font-bold text-amber-400 bg-amber-950/60 border border-amber-800/60 px-2 py-0.5 rounded-md select-all">
+                  {rawResponse.diagnostics.serverOutboundIp}
+                </span>
+              </div>
+              <span className="text-[11px] text-slate-400">
+                💡 نکته: در پنل قاصدک اگر فیلد IP را کاملاً خالی بگذارید، محدودیت IP برداشته می‌شود.
+              </span>
+            </div>
+          )}
 
           {/* If Ghasedak multi-attempt output */}
           {Array.isArray(rawResponse.attempts) ? (

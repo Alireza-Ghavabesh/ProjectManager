@@ -1671,6 +1671,10 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
         code: prjCode,
         author: currentUser.name,
         creatorId: currentUser.id,
+        budget: budgetEstimated,
+        budgetEstimated,
+        deadline,
+        location,
       },
       actor: currentUser,
     }).catch(console.error);
@@ -2124,11 +2128,22 @@ apiRouter.post('/projects/:id/vote', (req: Request, res: Response) => {
   `).run(majorityInfo.majority, now, projectId);
 
   // Trigger SMS rules for vote and majority outcome
-  const prj = db.prepare('SELECT id, title, code, createdById FROM projects WHERE id = ?').get(projectId) as any;
+  const prj = db.prepare('SELECT id, title, code, createdById, budgetEstimated, deadline, location FROM projects WHERE id = ?').get(projectId) as any;
   if (prj) {
+    const projectPayload = {
+      id: prj.id,
+      title: prj.title,
+      code: prj.code,
+      creatorId: prj.createdById,
+      budget: prj.budgetEstimated,
+      budgetEstimated: prj.budgetEstimated,
+      deadline: prj.deadline,
+      location: prj.location,
+    };
+
     triggerSmsForEvent({
       eventType: 'NEW_VOTE_CAST',
-      project: { id: prj.id, title: prj.title, code: prj.code, creatorId: prj.createdById },
+      project: projectPayload,
       actor: currentUser,
       extraData: { vote_status: status },
     }).catch(console.error);
@@ -2136,19 +2151,19 @@ apiRouter.post('/projects/:id/vote', (req: Request, res: Response) => {
     if (majorityInfo.majority === 'APPROVED') {
       triggerSmsForEvent({
         eventType: 'PROJECT_APPROVED',
-        project: { id: prj.id, title: prj.title, code: prj.code, creatorId: prj.createdById, majorityResult: 'APPROVED' },
+        project: { ...projectPayload, majorityResult: 'APPROVED' },
         actor: currentUser,
       }).catch(console.error);
     } else if (majorityInfo.majority === 'REJECTED') {
       triggerSmsForEvent({
         eventType: 'PROJECT_REJECTED',
-        project: { id: prj.id, title: prj.title, code: prj.code, creatorId: prj.createdById, majorityResult: 'REJECTED' },
+        project: { ...projectPayload, majorityResult: 'REJECTED' },
         actor: currentUser,
       }).catch(console.error);
     } else if (majorityInfo.majority === 'NEEDS_REVISION') {
       triggerSmsForEvent({
         eventType: 'PROJECT_NEEDS_REVISION',
-        project: { id: prj.id, title: prj.title, code: prj.code, creatorId: prj.createdById, majorityResult: 'NEEDS_REVISION' },
+        project: { ...projectPayload, majorityResult: 'NEEDS_REVISION' },
         actor: currentUser,
       }).catch(console.error);
     }
@@ -2473,13 +2488,28 @@ apiRouter.get('/sms/rules', (req: Request, res: Response) => {
   const rawRules = db.prepare('SELECT * FROM sms_rules ORDER BY createdAt DESC').all() as any[];
   const rules = rawRules.map((r) => {
     let targetPositionIds: string[] = [];
-    try {
-      targetPositionIds = JSON.parse(r.targetPositionIds || '[]');
-    } catch (e) {}
+    let actorPositionIds: string[] = [];
+    let actorUserIds: string[] = [];
+    let customNumbers: string[] = [];
+
+    try { targetPositionIds = JSON.parse(r.targetPositionIds || '[]'); } catch (e) {}
+    try { actorPositionIds = JSON.parse(r.actorPositionIds || '[]'); } catch (e) {}
+    try { actorUserIds = JSON.parse(r.actorUserIds || '[]'); } catch (e) {}
+    if (r.customPhones) {
+      customNumbers = r.customPhones.split(/[,;\n\s]+/).map((s: string) => s.trim()).filter((s: string) => s.length >= 10);
+    }
+
     return {
       ...r,
-      enabled: Boolean(r.enabled),
+      title: r.title || r.description || 'شرط ارسال پیامک',
+      event: r.eventType,
+      target: r.targetType,
+      template: r.messageTemplate,
+      actorPositionIds,
+      actorUserIds,
       targetPositionIds,
+      targetCustomNumbers: customNumbers,
+      enabled: Boolean(r.enabled),
     };
   });
 
@@ -2493,25 +2523,64 @@ apiRouter.post('/sms/rules', (req: Request, res: Response) => {
     return res.status(403).json({ error: 'صرفاً مدیرکل مجاز به تعریف شرط‌های پیامک است.' });
   }
 
-  const { title, eventType, targetType, targetPositionIds, customPhones, messageTemplate } = req.body;
-  if (!title || !eventType || !targetType || !messageTemplate) {
-    return res.status(400).json({ error: 'کلیه فیلدهای عنوان، رویداد، مخاطبان و متن پیامک الزامی هستند.' });
+  const {
+    title,
+    description,
+    event,
+    eventType,
+    target,
+    targetType,
+    actorPositionIds,
+    actorUserIds,
+    targetPositionIds,
+    targetCustomNumbers,
+    customPhones,
+    template,
+    messageTemplate,
+    enabled,
+  } = req.body;
+
+  const finalTitle = (title || description || '').trim() || 'شرط ارسال پیامک';
+  const finalEvent = eventType || event;
+  const finalTarget = targetType || target || 'ALL_COUNCIL';
+  const finalTemplate = (messageTemplate || template || '').trim();
+
+  if (!finalTemplate) {
+    return res.status(400).json({ error: 'متن قالب پیامک الزامی است.' });
+  }
+  if (!finalEvent) {
+    return res.status(400).json({ error: 'انتخاب نوع رویداد فعال‌ساز الزامی است.' });
+  }
+
+  // Handle custom phones array or string
+  let cleanPhones = '';
+  if (Array.isArray(targetCustomNumbers) && targetCustomNumbers.length > 0) {
+    cleanPhones = targetCustomNumbers.join(', ');
+  } else if (customPhones) {
+    cleanPhones = String(customPhones).trim();
   }
 
   const id = `rule-${randomUUID().substring(0, 8)}`;
   const now = new Date().toISOString();
 
   db.prepare(`
-    INSERT INTO sms_rules (id, title, eventType, targetType, targetPositionIds, customPhones, messageTemplate, enabled, createdAt, updatedAt)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+    INSERT INTO sms_rules (
+      id, title, eventType, targetType, actorPositionIds, actorUserIds,
+      targetPositionIds, customPhones, messageTemplate, description, enabled, createdAt, updatedAt
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
-    title.trim(),
-    eventType,
-    targetType,
+    finalTitle,
+    finalEvent,
+    finalTarget,
+    JSON.stringify(actorPositionIds || []),
+    JSON.stringify(actorUserIds || []),
     JSON.stringify(targetPositionIds || []),
-    customPhones?.trim() || '',
-    messageTemplate.trim(),
+    cleanPhones,
+    finalTemplate,
+    description?.trim() || finalTitle,
+    enabled === false ? 0 : 1,
     now,
     now
   );
@@ -2527,27 +2596,60 @@ apiRouter.put('/sms/rules/:id', (req: Request, res: Response) => {
   }
 
   const { id } = req.params;
-  const { title, eventType, targetType, targetPositionIds, customPhones, messageTemplate, enabled } = req.body;
+  const {
+    title,
+    description,
+    event,
+    eventType,
+    target,
+    targetType,
+    actorPositionIds,
+    actorUserIds,
+    targetPositionIds,
+    targetCustomNumbers,
+    customPhones,
+    template,
+    messageTemplate,
+    enabled,
+  } = req.body;
+
   const now = new Date().toISOString();
+  const finalTitle = title !== undefined ? title.trim() : (description ? description.trim() : null);
+  const finalEvent = eventType || event || null;
+  const finalTarget = targetType || target || null;
+  const finalTemplate = messageTemplate !== undefined ? messageTemplate.trim() : (template !== undefined ? template.trim() : null);
+
+  let cleanPhones: string | null = null;
+  if (targetCustomNumbers !== undefined) {
+    cleanPhones = Array.isArray(targetCustomNumbers) ? targetCustomNumbers.join(', ') : String(targetCustomNumbers);
+  } else if (customPhones !== undefined) {
+    cleanPhones = String(customPhones);
+  }
 
   db.prepare(`
     UPDATE sms_rules
     SET title = COALESCE(?, title),
         eventType = COALESCE(?, eventType),
         targetType = COALESCE(?, targetType),
+        actorPositionIds = COALESCE(?, actorPositionIds),
+        actorUserIds = COALESCE(?, actorUserIds),
         targetPositionIds = COALESCE(?, targetPositionIds),
         customPhones = COALESCE(?, customPhones),
         messageTemplate = COALESCE(?, messageTemplate),
+        description = COALESCE(?, description),
         enabled = COALESCE(?, enabled),
         updatedAt = ?
     WHERE id = ?
   `).run(
-    title ? title.trim() : null,
-    eventType || null,
-    targetType || null,
+    finalTitle,
+    finalEvent,
+    finalTarget,
+    actorPositionIds !== undefined ? JSON.stringify(actorPositionIds) : null,
+    actorUserIds !== undefined ? JSON.stringify(actorUserIds) : null,
     targetPositionIds !== undefined ? JSON.stringify(targetPositionIds) : null,
-    customPhones !== undefined ? customPhones.trim() : null,
-    messageTemplate ? messageTemplate.trim() : null,
+    cleanPhones,
+    finalTemplate,
+    description !== undefined ? description.trim() : null,
     enabled !== undefined ? (enabled ? 1 : 0) : null,
     now,
     id
@@ -2663,18 +2765,60 @@ apiRouter.post('/sms/test-direct', async (req: Request, res: Response) => {
   const cleanSender = (senderNumber || '').trim();
   const testMessage = (message || '').trim() || 'تست ارسال پیامک از سامانه شورای ارزیابی';
 
+  let serverOutboundIp = 'نامشخص';
+  try {
+    const ipRes = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(2000) }).then((r) => r.json());
+    if (ipRes?.ip) serverOutboundIp = ipRes.ip;
+  } catch (e) {}
+
   const diagnostics: Record<string, any> = {
     provider: provider || 'ghasedak',
     phone: cleanPhone,
     senderNumber: cleanSender,
     hasApiKey: Boolean(cleanKey),
     apiKeyLength: cleanKey.length,
+    serverOutboundIp,
     requestedAt: new Date().toISOString(),
   };
 
   try {
     if (provider === 'ghasedak') {
       const results: any[] = [];
+
+      // Check 0: Validate API Key & Account Info via GetAccountInformation
+      try {
+        const infoStart = Date.now();
+        const infoRes = await fetch('https://gateway.ghasedak.me/rest/api/v1/WebService/GetAccountInformation', {
+          method: 'GET',
+          headers: {
+            'ApiKey': cleanKey,
+            'apikey': cleanKey,
+            'Accept': 'application/json',
+          },
+        });
+        const infoTime = Date.now() - infoStart;
+        const infoText = await infoRes.text();
+        let infoJson = null;
+        try { infoJson = JSON.parse(infoText); } catch (e) {}
+
+        results.push({
+          endpoint: 'https://gateway.ghasedak.me/rest/api/v1/WebService/GetAccountInformation',
+          name: '🔍 استعلام مشخصات و اعتبار کلید قاصدک (GetAccountInformation)',
+          status: infoRes.status,
+          statusText: infoRes.statusText,
+          durationMs: infoTime,
+          headersSent: { 'ApiKey': cleanKey ? `${cleanKey.slice(0, 4)}...${cleanKey.slice(-4)}` : '(none)' },
+          responseBody: infoJson || infoText,
+          isSuccess: infoRes.ok,
+          accountDetails: infoJson?.items || null,
+        });
+      } catch (e: any) {
+        results.push({
+          endpoint: 'GetAccountInformation',
+          name: '🔍 استعلام مشخصات و اعتبار کلید قاصدک',
+          error: e.message,
+        });
+      }
 
       // Method 0: Official ghasedaksms Node.js SDK (doc.ghasedak.me/nodejs)
       if (!method || method === 'sdk') {
@@ -2765,17 +2909,20 @@ apiRouter.post('/sms/test-direct', async (req: Request, res: Response) => {
         }
       }
 
-      // Method B: Classic Form (api.ghasedak.me)
-      if (!method || method === 'classic_v2') {
+      // Method B: Official Support Endpoint: https://api.ghasedaksms.com/v2/sms/send/simple
+      if (!method || method === 'classic_v2' || method === 'simple') {
         try {
           const paramsB: Record<string, string> = {
             message: testMessage,
             receptor: cleanPhone,
           };
-          if (cleanSender) paramsB.linenumber = cleanSender;
+          if (cleanSender && cleanSender !== '10008585' && cleanSender !== 'default') {
+            paramsB.linenumber = cleanSender;
+            paramsB.sender = cleanSender;
+          }
 
           const startB = Date.now();
-          const resB = await fetch('https://api.ghasedak.me/v2/sms/send/simple', {
+          const resB = await fetch('https://api.ghasedaksms.com/v2/sms/send/simple', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/x-www-form-urlencoded',
@@ -2791,19 +2938,23 @@ apiRouter.post('/sms/test-direct', async (req: Request, res: Response) => {
           try { jsonB = JSON.parse(textB); } catch (e) {}
 
           results.push({
-            endpoint: 'https://api.ghasedak.me/v2/sms/send/simple',
-            name: 'Classic v2 Simple (x-www-form-urlencoded, Header: apikey)',
+            endpoint: 'https://api.ghasedaksms.com/v2/sms/send/simple',
+            name: '🎯 آدرس تاییدشده پشتیبانی قاصدک (api.ghasedaksms.com/v2/sms/send/simple)',
             status: resB.status,
             statusText: resB.statusText,
             durationMs: timeB,
-            headersSent: { 'apikey': cleanKey ? `${cleanKey.slice(0, 4)}...${cleanKey.slice(-4)}` : '(none)' },
+            headersSent: {
+              'apikey': cleanKey ? `${cleanKey.slice(0, 4)}...${cleanKey.slice(-4)}` : '(none)',
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
             payloadSent: paramsB,
             responseBody: jsonB || textB,
-            isSuccess: resB.ok && (jsonB?.result?.code === 200 || jsonB?.result?.code === 201 || jsonB?.code === 200),
+            isSuccess: resB.ok && (jsonB?.result?.code === 200 || jsonB?.result?.code === 201 || jsonB?.code === 200 || jsonB?.isSuccess === true),
           });
         } catch (err: any) {
           results.push({
-            endpoint: 'api.ghasedak.me',
+            endpoint: 'https://api.ghasedaksms.com/v2/sms/send/simple',
+            name: '🎯 آدرس تاییدشده پشتیبانی قاصدک (api.ghasedaksms.com/v2/sms/send/simple)',
             error: err.message,
           });
         }
