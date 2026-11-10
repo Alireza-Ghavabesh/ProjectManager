@@ -17,8 +17,7 @@ import {
   Copy, 
   Check, 
   AlertCircle,
-  Phone,
-  Layers
+  Phone
 } from 'lucide-react';
 
 interface LoginModalProps {

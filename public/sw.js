@@ -1,8 +1,6 @@
 // Standalone Service Worker for Council Flow PWA
-const CACHE_NAME = 'council-flow-pwa-v1';
+const CACHE_NAME = 'council-flow-pwa-v2';
 const STATIC_ASSETS = [
-  '/',
-  '/index.html',
   '/manifest.webmanifest',
   '/favicon.ico',
   '/icon.svg',
@@ -37,41 +35,45 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
-  // Do not cache backend API requests or dev server HMR
-  if (url.pathname.startsWith('/api/') || url.pathname.includes('/@vite/') || url.pathname.includes('hmr')) {
-    return;
+
+  // CRITICAL: NEVER cache API calls, Vite modules, node_modules, source files, or scripts
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.pathname.includes('/@vite/') ||
+    url.pathname.includes('/@fs/') ||
+    url.pathname.includes('/node_modules/') ||
+    url.pathname.includes('.vite') ||
+    url.pathname.endsWith('.tsx') ||
+    url.pathname.endsWith('.ts') ||
+    url.pathname.endsWith('.js') ||
+    url.search.includes('v=') ||
+    url.pathname.includes('hmr') ||
+    url.pathname === '/' ||
+    url.pathname === '/index.html'
+  ) {
+    return; // Pass through directly to network
   }
 
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        // Stale-while-revalidate in background
-        fetch(event.request)
-          .then((networkResponse) => {
-            if (networkResponse && networkResponse.status === 200) {
-              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, networkResponse));
-            }
-          })
-          .catch(() => {});
-        return cachedResponse;
-      }
-
-      return fetch(event.request)
-        .then((networkResponse) => {
-          if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
-            return networkResponse;
+  // Only handle static image assets & manifest for PWA offline capabilities
+  if (
+    url.pathname.endsWith('.png') ||
+    url.pathname.endsWith('.svg') ||
+    url.pathname.endsWith('.ico') ||
+    url.pathname.endsWith('.webmanifest')
+  ) {
+    event.respondWith(
+      caches.match(event.request).then((cachedResponse) => {
+        if (cachedResponse) {
+          return cachedResponse;
+        }
+        return fetch(event.request).then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const clone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
           }
-          const responseToCache = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
-          });
           return networkResponse;
-        })
-        .catch(() => {
-          if (event.request.mode === 'navigate') {
-            return caches.match('/');
-          }
         });
-    })
-  );
+      })
+    );
+  }
 });

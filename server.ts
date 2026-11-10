@@ -41,6 +41,7 @@ app.use(express.static(path.resolve(__dirname, 'public'), {
     if (filePath.endsWith('sw.js')) {
       res.setHeader('Service-Worker-Allowed', '/');
       res.setHeader('Content-Type', 'application/javascript');
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
     }
     if (filePath.endsWith('.webmanifest')) {
       res.setHeader('Content-Type', 'application/manifest+json');
