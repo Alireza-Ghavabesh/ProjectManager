@@ -331,14 +331,26 @@ apiRouter.post('/password-reset-requests/:id/resolve', (req: Request, res: Respo
     });
     tx();
 
-    // Trigger SMS notification to user if rule or phone exists
+    // Determine phone number of requester (entered in request or in user profile)
+    let recipientPhone = currentReq.phone ? currentReq.phone.trim() : '';
+    if (!recipientPhone && currentReq.userId) {
+      const u = db.prepare('SELECT phone FROM users WHERE id = ?').get(currentReq.userId) as any;
+      if (u?.phone) recipientPhone = u.phone.trim();
+    }
+
+    // Trigger SMS notification to user if rule exists
     triggerSmsForEvent({
       eventType: 'PASSWORD_RESET',
       targetUserId: currentReq.userId,
+      targetPhone: recipientPhone,
+      targetUserName: currentReq.fullName || currentReq.username,
       actor: currentUser,
       extraData: {
         new_password: cleanPass,
+        password: cleanPass,
         username: currentReq.username,
+        requester_name: currentReq.fullName || currentReq.username,
+        admin_note: adminNote?.trim() || '',
       },
     }).catch(console.error);
 

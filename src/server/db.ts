@@ -854,6 +854,27 @@ function seedInitialData() {
         now
       );
     }
+
+    // Ensure default PASSWORD_RESET rule exists
+    const resetRule = db.prepare("SELECT id FROM sms_rules WHERE eventType = 'PASSWORD_RESET'").get();
+    if (!resetRule) {
+      db.prepare(`
+        INSERT INTO sms_rules (id, title, eventType, targetType, targetPositionIds, customPhones, messageTemplate, enabled, createdAt, updatedAt, description)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        'rule-5',
+        'پیامک ارسال رمز عبور جدید به متقاضی تغییر رمز',
+        'PASSWORD_RESET',
+        'REQUESTER',
+        '[]',
+        '',
+        'کاربر گرامی «{requester_name}»؛ رمز عبور جدید حساب کاربری شما ({username}) توسط مدیر تنظیم گردید:\nرمز عبور: {new_password}\nسامانه شورای پروژه',
+        1,
+        now,
+        now,
+        'ارسال خودکار پیامک حاوی رمز جدید به شماره همراه شخص درخواست‌دهنده پس از تایید و ست شدن رمز توسط مدیر'
+      );
+    }
   } catch (e) {}
 }
 

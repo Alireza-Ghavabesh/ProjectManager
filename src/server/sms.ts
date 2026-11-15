@@ -6,6 +6,8 @@ interface TriggerEventParams {
   project?: any;
   actor?: any;
   targetUserId?: string;
+  targetPhone?: string;
+  targetUserName?: string;
   extraData?: Record<string, string>;
 }
 
@@ -223,7 +225,7 @@ export async function sendSmsViaProvider(
 
 // Main event dispatcher
 export async function triggerSmsForEvent(params: TriggerEventParams): Promise<{ dispatchedCount: number; logs: any[] }> {
-  const { eventType, project, actor, targetUserId, extraData } = params;
+  const { eventType, project, actor, targetUserId, targetPhone, targetUserName, extraData } = params;
 
   // 1. Check if SMS is globally enabled
   const settingRows = db.prepare("SELECT key, value FROM system_settings WHERE key LIKE 'sms_%'").all() as any[];
@@ -290,6 +292,16 @@ export async function triggerSmsForEvent(params: TriggerEventParams): Promise<{ 
           recipients.push({ phone: creator.phone.trim(), name: creator.name });
         }
       }
+    } else if (rule.targetType === 'REQUESTER' || rule.targetType === 'PASSWORD_REQUESTER') {
+      // شخص درخواست‌دهنده (کاربر مربوط به رویداد، نظیر درخواست‌کننده تغییر رمز)
+      if (targetPhone && targetPhone.trim().length >= 10) {
+        recipients.push({ phone: targetPhone.trim(), name: targetUserName || extraData?.requester_name || extraData?.username });
+      } else if (targetUserId) {
+        const targetUser = db.prepare("SELECT name, phone FROM users WHERE id = ?").get(targetUserId) as any;
+        if (targetUser?.phone && targetUser.phone.trim().length >= 10) {
+          recipients.push({ phone: targetUser.phone.trim(), name: targetUser.name });
+        }
+      }
     } else if (rule.targetType === 'SPECIFIC_POSITIONS') {
       let posIds: string[] = [];
       try {
@@ -310,11 +322,15 @@ export async function triggerSmsForEvent(params: TriggerEventParams): Promise<{ 
       });
     }
 
-    // Specific targetUser if passed (e.g. for password reset)
-    if (targetUserId) {
-      const targetUser = db.prepare("SELECT name, phone FROM users WHERE id = ?").get(targetUserId) as any;
-      if (targetUser?.phone) {
-        recipients.push({ phone: targetUser.phone.trim(), name: targetUser.name });
+    // رویداد تغییر رمز: اگر شرط روی متقاضی تنظیم شده یا targetUserId/targetPhone داده شده
+    if (eventType === 'PASSWORD_RESET' && (rule.targetType === 'REQUESTER' || rule.targetType === 'PASSWORD_REQUESTER' || !rule.targetType)) {
+      if (targetPhone && targetPhone.trim().length >= 10) {
+        recipients.push({ phone: targetPhone.trim(), name: targetUserName || extraData?.requester_name || extraData?.username });
+      } else if (targetUserId) {
+        const targetUser = db.prepare("SELECT name, phone FROM users WHERE id = ?").get(targetUserId) as any;
+        if (targetUser?.phone && targetUser.phone.trim().length >= 10) {
+          recipients.push({ phone: targetUser.phone.trim(), name: targetUser.name });
+        }
       }
     }
 
@@ -353,6 +369,19 @@ export async function triggerSmsForEvent(params: TriggerEventParams): Promise<{ 
 
         // اطلاعات گیرنده
         recipient_name: name || 'همکار گرامی',
+
+        // اطلاعات تغییر رمز و حساب کاربری
+        new_password: extraData?.new_password || extraData?.password || '',
+        password: extraData?.new_password || extraData?.password || '',
+        username: extraData?.username || '',
+        requester_name: extraData?.requester_name || targetUserName || name || 'کاربر گرامی',
+        admin_note: extraData?.admin_note || '',
+
+        // معادل‌های فارسی برای راحتی کاربر
+        رمز_جدید: extraData?.new_password || extraData?.password || '',
+        رمز: extraData?.new_password || extraData?.password || '',
+        نام_کاربری: extraData?.username || '',
+        نام_درخواست_کننده: extraData?.requester_name || targetUserName || name || 'کاربر گرامی',
 
         // زمان و تاریخ
         date: new Date().toLocaleDateString('fa-IR'),

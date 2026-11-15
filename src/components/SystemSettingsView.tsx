@@ -388,6 +388,9 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
 
   const getTargetBadge = (target: SmsTargetType) => {
     switch (target) {
+      case 'REQUESTER':
+      case 'PASSWORD_REQUESTER':
+        return 'شخص درخواست‌دهنده (کاربر متقاضی)';
       case 'ALL_COUNCIL':
         return 'تمامی اعضای شورا';
       case 'ALL_ADMINS':
@@ -1340,7 +1343,17 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
                 </label>
                 <select
                   value={ruleEvent}
-                  onChange={(e) => setRuleEvent(e.target.value as SmsEventType)}
+                  onChange={(e) => {
+                    const newEvent = e.target.value as SmsEventType;
+                    setRuleEvent(newEvent);
+                    if (newEvent === 'PASSWORD_RESET') {
+                      setRuleTarget('REQUESTER');
+                      if (!ruleTemplate || ruleTemplate.includes('{project_title}')) {
+                        setRuleTemplate('کاربر گرامی «{requester_name}»؛ رمز عبور جدید شما برای حساب کاربری {username} توسط مدیر تنظیم گردید:\nرمز عبور: {new_password}\nسامانه شورای پروژه');
+                        setRuleTitle('پیامک ارسال رمز عبور جدید به متقاضی تغییر رمز');
+                      }
+                    }
+                  }}
                   className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:border-indigo-500 shadow-2xs"
                 >
                   <option value="PROJECT_CREATED">ثبت و تعریف پروژه جدید در شورا (PROJECT_CREATED)</option>
@@ -1396,12 +1409,22 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
                   onChange={(e) => setRuleTarget(e.target.value as SmsTargetType)}
                   className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:border-indigo-500 shadow-2xs"
                 >
+                  <option value="REQUESTER">شخص درخواست‌دهنده (متقاضی تغییر رمز / کاربر مربوطه)</option>
                   <option value="ALL_COUNCIL">تمامی اعضای دارای حق رای در شورا</option>
                   <option value="ALL_ADMINS">مدیران ارشد سامانه (Admins)</option>
                   <option value="PROJECT_CREATOR">ثبت‌کننده و طراح پروژه</option>
                   <option value="SPECIFIC_POSITIONS">سمت‌های سازمانی خاص انتخابی</option>
                   <option value="CUSTOM_NUMBERS">شماره موبایل‌های مستقیم و دلخواه</option>
                 </select>
+
+                {(ruleTarget === 'REQUESTER' || ruleTarget === 'PASSWORD_REQUESTER') && (
+                  <div className="mt-2 p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-[11px] leading-relaxed flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>
+                      پیامک مستقیماً به شماره همراه ثبت‌شده توسط متقاضی در فرم درخواست تغییر رمز (یا شماره موبایل پروفایل کاربری وی) ارسال خواهد شد.
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Specific Positions Checkboxes */}
@@ -1459,32 +1482,65 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
                 </div>
 
                 <div className="flex flex-wrap gap-1.5 mb-2.5 p-2 rounded-xl bg-slate-50 border border-slate-200">
-                  {[
-                    { tag: 'project_title', label: 'نام طرح' },
-                    { tag: 'project_code', label: 'کد طرح' },
-                    { tag: 'actor_name', label: 'نام اقدام‌کننده' },
-                    { tag: 'actor_position', label: 'سمت اقدام‌کننده' },
-                    { tag: 'creator_name', label: 'نام طراح/ثبت‌کننده' },
-                    { tag: 'recipient_name', label: 'نام گیرنده پیامک' },
-                    { tag: 'project_status', label: 'وضعیت پروژه' },
-                    { tag: 'budget', label: 'مبلغ برآورد' },
-                    { tag: 'deadline', label: 'مهلت ارزیابی' },
-                    { tag: 'location', label: 'محل اجرای طرح' },
-                    { tag: 'date', label: 'تاریخ شمسی' },
-                    { tag: 'time', label: 'ساعت' },
-                  ].map((v) => (
-                    <button
-                      key={v.tag}
-                      type="button"
-                      onClick={() => insertVariableTag(v.tag)}
-                      className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 border border-slate-300 hover:border-indigo-300 text-indigo-700 text-[10px] font-bold transition shadow-2xs cursor-pointer flex items-center gap-1"
-                      title={`درج متغیر {${v.tag}}`}
-                    >
-                      <span className="text-indigo-400 font-mono">+</span>
-                      <span>{v.label}</span>
-                      <span className="text-[9px] font-mono text-slate-400 font-normal">{`{${v.tag}}`}</span>
-                    </button>
-                  ))}
+                  {ruleEvent === 'PASSWORD_RESET' ? (
+                    <>
+                      {[
+                        { tag: 'new_password', label: 'رمز عبور جدید', highlight: true },
+                        { tag: 'username', label: 'نام کاربری', highlight: true },
+                        { tag: 'requester_name', label: 'نام متقاضی', highlight: true },
+                        { tag: 'actor_name', label: 'نام مدیر صادرکننده' },
+                        { tag: 'actor_role', label: 'نقش مدیر' },
+                        { tag: 'admin_note', label: 'یادداشت مدیر' },
+                        { tag: 'date', label: 'تاریخ شمسی' },
+                        { tag: 'time', label: 'ساعت' },
+                      ].map((v) => (
+                        <button
+                          key={v.tag}
+                          type="button"
+                          onClick={() => insertVariableTag(v.tag)}
+                          className={`px-2 py-1 rounded-lg border text-[10px] font-bold transition shadow-2xs cursor-pointer flex items-center gap-1 ${
+                            v.highlight
+                              ? 'bg-emerald-50 hover:bg-emerald-100 border-emerald-300 text-emerald-800'
+                              : 'bg-white hover:bg-indigo-50 border-slate-300 hover:border-indigo-300 text-indigo-700'
+                          }`}
+                          title={`درج متغیر {${v.tag}}`}
+                        >
+                          <span className={v.highlight ? 'text-emerald-600 font-mono' : 'text-indigo-400 font-mono'}>+</span>
+                          <span>{v.label}</span>
+                          <span className="text-[9px] font-mono opacity-60 font-normal">{`{${v.tag}}`}</span>
+                        </button>
+                      ))}
+                    </>
+                  ) : (
+                    <>
+                      {[
+                        { tag: 'project_title', label: 'نام طرح' },
+                        { tag: 'project_code', label: 'کد طرح' },
+                        { tag: 'actor_name', label: 'نام اقدام‌کننده' },
+                        { tag: 'actor_position', label: 'سمت اقدام‌کننده' },
+                        { tag: 'creator_name', label: 'نام طراح/ثبت‌کننده' },
+                        { tag: 'recipient_name', label: 'نام گیرنده پیامک' },
+                        { tag: 'project_status', label: 'وضعیت پروژه' },
+                        { tag: 'budget', label: 'مبلغ برآورد' },
+                        { tag: 'deadline', label: 'مهلت ارزیابی' },
+                        { tag: 'location', label: 'محل اجرای طرح' },
+                        { tag: 'date', label: 'تاریخ شمسی' },
+                        { tag: 'time', label: 'ساعت' },
+                      ].map((v) => (
+                        <button
+                          key={v.tag}
+                          type="button"
+                          onClick={() => insertVariableTag(v.tag)}
+                          className="px-2 py-1 rounded-lg bg-white hover:bg-indigo-50 border border-slate-300 hover:border-indigo-300 text-indigo-700 text-[10px] font-bold transition shadow-2xs cursor-pointer flex items-center gap-1"
+                          title={`درج متغیر {${v.tag}}`}
+                        >
+                          <span className="text-indigo-400 font-mono">+</span>
+                          <span>{v.label}</span>
+                          <span className="text-[9px] font-mono text-slate-400 font-normal">{`{${v.tag}}`}</span>
+                        </button>
+                      ))}
+                    </>
+                  )}
                 </div>
 
                 <textarea

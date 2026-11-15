@@ -266,6 +266,8 @@ export type SmsTargetType =
   | 'ALL_ADMINS'
   | 'ADMINS'
   | 'PROJECT_CREATOR'
+  | 'REQUESTER'
+  | 'PASSWORD_REQUESTER'
   | 'SPECIFIC_POSITIONS'
   | 'CUSTOM_NUMBERS';
 
