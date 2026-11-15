@@ -76,7 +76,7 @@ export interface DynamicField {
   id: string;
   name: string;
   key: string;
-  fieldType: 'number' | 'text' | 'select';
+  fieldType: 'number' | 'text' | 'select' | 'currency';
   unit?: string;
   defaultValue?: string;
   optionsJson?: string;
@@ -85,6 +85,9 @@ export interface DynamicField {
   isActive: number | boolean;
   icon?: string;
   category?: string;
+  parentId?: string | null;
+  parentName?: string;
+  children?: DynamicField[];
   createdAt: string;
 }
 
@@ -101,6 +104,16 @@ export interface Vote {
   userPositionColor?: string;
 }
 
+export interface WorkflowStepConfig {
+  approvalMode?: 'SINGLE' | 'MAJORITY' | 'ALL' | 'NOTIFY_ONLY';
+  onRejectAction?: 'RETURN_PREV' | 'RETURN_CREATOR' | 'REJECT_PROJECT' | 'CUSTOM_STEP';
+  onRejectStepOrder?: number;
+  onApproveStepOrder?: number;
+  conditionLabel?: string;
+  customActionLabel?: string;
+  color?: string;
+}
+
 export interface WorkflowStep {
   id: string;
   workflowId: string;
@@ -113,6 +126,8 @@ export interface WorkflowStep {
   positionColor?: string;
   actionType: string;
   description?: string;
+  configJson?: string;
+  config?: WorkflowStepConfig;
 }
 
 export interface Workflow {

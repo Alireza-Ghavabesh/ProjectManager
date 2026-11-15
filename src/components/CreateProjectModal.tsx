@@ -78,12 +78,23 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
   // Initialize requirements from dynamic fields or existing project
   const [requirements, setRequirements] = useState<Record<string, any>>(() => {
-    if (editProject?.requirements) {
-      return { ...editProject.requirements };
-    }
     const initial: Record<string, any> = {};
     for (const f of dynamicFields) {
-      initial[f.key] = f.defaultValue || '1';
+      const defVal =
+        f.defaultValue !== undefined && f.defaultValue !== null && f.defaultValue !== ''
+          ? String(f.defaultValue)
+          : f.fieldType === 'currency'
+          ? '0'
+          : f.fieldType === 'text' || f.fieldType === 'select'
+          ? ''
+          : '1';
+      initial[f.key] =
+        editProject?.requirements && editProject.requirements[f.key] !== undefined
+          ? editProject.requirements[f.key]
+          : defVal;
+    }
+    if (editProject?.requirements) {
+      return { ...initial, ...editProject.requirements };
     }
     return initial;
   });
@@ -432,70 +443,172 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
             </div>
 
-            {/* Dynamic Requirements Fields Section */}
-            {dynamicFields.length > 0 && (
-              <div className="pt-3 border-t border-slate-200">
-                <div className="flex items-center justify-between mb-2.5">
-                  <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5 text-indigo-600" />
-                    <span>نیازمندی‌ها و عوامل اجرایی طرح</span>
-                  </h4>
-                  <span className="text-[11px] text-slate-400">
-                    تعریف‌شده در تنظیمات فیلدهای پویا
-                  </span>
-                </div>
+            {/* Dynamic Requirements Fields Section (Hierarchical & Multi-Type) */}
+            {dynamicFields.length > 0 && (() => {
+              const validFieldIds = new Set(dynamicFields.map((f) => f.id));
+              const buildFieldTree = (pId: string | null): DynamicField[] =>
+                dynamicFields
+                  .filter((f) => {
+                    const effParent = f.parentId && validFieldIds.has(f.parentId) ? f.parentId : null;
+                    return effParent === pId;
+                  })
+                  .sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0))
+                  .map((f) => ({ ...f, children: buildFieldTree(f.id) }));
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
-                  {dynamicFields.map((field) => (
-                    <div
-                      key={field.key}
-                      className="p-3 rounded-2xl bg-slate-50/80 border border-slate-200 flex flex-col justify-between hover:border-slate-300 transition shadow-2xs"
+              const rootFields = buildFieldTree(null);
+
+              const renderFieldInput = (field: DynamicField) => {
+                const rawVal = requirements[field.key] ?? '';
+                if (field.fieldType === 'currency') {
+                  return (
+                    <div className="space-y-1">
+                      <div className="relative flex items-center bg-white border border-slate-200/90 rounded-xl px-2.5 py-1.5 shadow-2xs focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/10">
+                        <input
+                          type="text"
+                          value={formatCurrencyInput(String(rawVal))}
+                          onChange={(e) => handleRequirementChange(field.key, formatCurrencyInput(e.target.value))}
+                          placeholder="0"
+                          className="w-full text-center font-bold text-xs sm:text-sm bg-transparent text-slate-900 focus:outline-none"
+                        />
+                        {field.unit && (
+                          <span className="text-[10px] text-slate-400 shrink-0 mr-1">{field.unit}</span>
+                        )}
+                      </div>
+                      {String(rawVal).replace(/\D/g, '') !== '' && String(rawVal) !== '0' && (
+                        <div className="text-[10px] text-amber-700 font-medium truncate text-center">
+                          {formatBudgetDisplay(String(rawVal))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+                if (field.fieldType === 'select') {
+                  let opts: string[] = [];
+                  try {
+                    const parsed = JSON.parse(field.optionsJson || '[]');
+                    if (Array.isArray(parsed)) opts = parsed;
+                  } catch {}
+                  return (
+                    <select
+                      value={String(rawVal)}
+                      onChange={(e) => handleRequirementChange(field.key, e.target.value)}
+                      className="w-full rounded-xl bg-white border border-slate-200/90 px-2.5 py-2 text-xs font-bold text-slate-800 focus:outline-none focus:border-indigo-500 shadow-2xs"
                     >
-                      <div className="flex items-center justify-between mb-2">
+                      <option value="">انتخاب کنید...</option>
+                      {opts.map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </select>
+                  );
+                }
+                if (field.fieldType === 'text') {
+                  return (
+                    <input
+                      type="text"
+                      value={String(rawVal)}
+                      onChange={(e) => handleRequirementChange(field.key, e.target.value)}
+                      placeholder={`مقدار ${field.name}...`}
+                      className="w-full rounded-xl bg-white border border-slate-200/90 px-3 py-1.5 text-xs font-semibold text-slate-900 focus:outline-none focus:border-indigo-500 shadow-2xs"
+                    />
+                  );
+                }
+                // Default numeric stepper
+                return (
+                  <div className="flex items-center justify-between bg-white border border-slate-200/90 rounded-xl p-1 shadow-2xs hover:border-indigo-300 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/10 transition">
+                    <button
+                      type="button"
+                      onClick={() => handleDecrement(field.key)}
+                      className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 active:scale-90 transition flex items-center justify-center cursor-pointer disabled:opacity-30 disabled:pointer-events-none"
+                      disabled={parseInt(String(rawVal || '0'), 10) <= 0}
+                      title="کاهش تعداد"
+                    >
+                      <Minus className="w-3.5 h-3.5 stroke-[2.5]" />
+                    </button>
+
+                    <div className="flex-1 flex items-center justify-center px-1">
+                      <input
+                        type="number"
+                        min="0"
+                        value={String(rawVal || '0')}
+                        onChange={(e) => handleRequirementChange(field.key, e.target.value)}
+                        className="w-full text-center font-bold text-sm bg-transparent text-slate-900 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleIncrement(field.key)}
+                      className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-600 active:scale-90 transition flex items-center justify-center cursor-pointer"
+                      title="افزایش تعداد"
+                    >
+                      <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                    </button>
+                  </div>
+                );
+              };
+
+              const renderDynamicFieldCard = (field: DynamicField, depth: number = 0): React.ReactNode => {
+                const hasChildren = field.children && field.children.length > 0;
+                return (
+                  <div
+                    key={field.key}
+                    className={`p-3 rounded-2xl border flex flex-col justify-between transition shadow-2xs ${
+                      depth === 0
+                        ? hasChildren
+                          ? 'bg-indigo-50/40 border-indigo-200/90 col-span-full'
+                          : 'bg-slate-50/80 border-slate-200 hover:border-slate-300'
+                        : 'bg-white border-indigo-200/70'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-2">
                         <span className="text-xs font-bold text-slate-800 truncate" title={field.name}>
                           {field.name}
+                          {Boolean(field.required) && <span className="text-rose-500 mr-0.5">*</span>}
                         </span>
-                        <span className="text-[10px] font-medium text-slate-400 bg-white px-1.5 py-0.5 rounded-md border border-slate-200/60">
-                          {field.unit || 'نفر'}
-                        </span>
+                        {field.unit && (
+                          <span className="text-[10px] font-medium text-slate-500 bg-white px-1.5 py-0.5 rounded-md border border-slate-200/60 shrink-0">
+                            {field.unit}
+                          </span>
+                        )}
                       </div>
-
-                      {/* Modern Arranged Stepper */}
-                      <div className="flex items-center justify-between bg-white border border-slate-200/90 rounded-xl p-1 shadow-2xs hover:border-indigo-300 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/10 transition">
-                        <button
-                          type="button"
-                          onClick={() => handleDecrement(field.key)}
-                          className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 active:scale-90 transition flex items-center justify-center cursor-pointer disabled:opacity-30 disabled:pointer-events-none"
-                          disabled={parseInt(requirements[field.key] || '0', 10) <= 0}
-                          title="کاهش تعداد"
-                        >
-                          <Minus className="w-3.5 h-3.5 stroke-[2.5]" />
-                        </button>
-                        
-                        <div className="flex-1 flex items-center justify-center px-1">
-                          <input
-                            type="number"
-                            min="0"
-                            value={requirements[field.key] || '0'}
-                            onChange={(e) => handleRequirementChange(field.key, e.target.value)}
-                            className="w-full text-center font-bold text-sm bg-transparent text-slate-900 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                          />
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => handleIncrement(field.key)}
-                          className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-600 active:scale-90 transition flex items-center justify-center cursor-pointer"
-                          title="افزایش تعداد"
-                        >
-                          <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-                        </button>
-                      </div>
+                      {renderFieldInput(field)}
                     </div>
-                  ))}
+
+                    {hasChildren && (
+                      <div className="mt-3 pt-3 border-t border-indigo-200/60 space-y-2">
+                        <div className="text-[11px] font-bold text-indigo-800">
+                          ویژگی‌ها و جزئیات «{field.name}»:
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pr-3 border-r-2 border-indigo-300">
+                          {field.children!.map((child) => renderDynamicFieldCard(child, depth + 1))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              };
+
+              return (
+                <div className="pt-3 border-t border-slate-200">
+                  <div className="flex items-center justify-between mb-2.5">
+                    <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>نیازمندی‌ها، عوامل و ویژگی‌های طرح</span>
+                    </h4>
+                    <span className="text-[11px] text-slate-400">
+                      تعریف‌شده در ساختار فیلدهای پویا
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                    {rootFields.map((field) => renderDynamicFieldCard(field, 0))}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Project Attachments Section */}
             <div className="pt-3 border-t border-slate-200">

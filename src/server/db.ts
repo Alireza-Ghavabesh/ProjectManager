@@ -124,7 +124,7 @@ export function initDatabase() {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       key TEXT UNIQUE NOT NULL,
-      fieldType TEXT DEFAULT 'number', -- 'number', 'text', 'select'
+      fieldType TEXT DEFAULT 'number', -- 'number', 'text', 'select', 'currency'
       unit TEXT DEFAULT 'نفر',
       defaultValue TEXT DEFAULT '1',
       optionsJson TEXT DEFAULT '[]',
@@ -133,6 +133,7 @@ export function initDatabase() {
       isActive INTEGER DEFAULT 1,
       icon TEXT DEFAULT 'Users',
       category TEXT DEFAULT 'عوامل تولید',
+      parentId TEXT REFERENCES dynamic_fields(id) ON DELETE SET NULL,
       createdAt TEXT NOT NULL
     );
 
@@ -163,8 +164,9 @@ export function initDatabase() {
       title TEXT NOT NULL,
       structureId TEXT REFERENCES project_structures(id) ON DELETE SET NULL,
       positionId TEXT NOT NULL REFERENCES positions(id) ON DELETE CASCADE,
-      actionType TEXT DEFAULT 'REVIEW', -- 'REVIEW', 'TECHNICAL_APPROVE', 'BUDGET_APPROVE', 'CONTENT_APPROVE', 'FINAL_COUNCIL_VOTE'
-      description TEXT
+      actionType TEXT DEFAULT 'REVIEW', -- 'REVIEW', 'TECHNICAL_APPROVE', 'BUDGET_APPROVE', 'CONTENT_APPROVE', 'FINAL_COUNCIL_VOTE', 'CUSTOM'
+      description TEXT,
+      configJson TEXT DEFAULT '{}'
     );
 
     CREATE TABLE IF NOT EXISTS projects (
@@ -357,6 +359,12 @@ export function initDatabase() {
   } catch (e) {}
   try {
     db.prepare('ALTER TABLE sms_rules ADD COLUMN description TEXT').run();
+  } catch (e) {}
+  try {
+    db.prepare('ALTER TABLE dynamic_fields ADD COLUMN parentId TEXT REFERENCES dynamic_fields(id) ON DELETE SET NULL').run();
+  } catch (e) {}
+  try {
+    db.prepare("ALTER TABLE workflow_steps ADD COLUMN configJson TEXT DEFAULT '{}'").run();
   } catch (e) {}
 
   try {

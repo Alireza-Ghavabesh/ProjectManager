@@ -24,7 +24,11 @@ import {
   UserPlus,
   UserMinus,
   RefreshCw,
-  FolderOpen
+  FolderOpen,
+  GripVertical,
+  ArrowDownToLine,
+  Sparkles,
+  Move
 } from 'lucide-react';
 
 interface ProjectStructuresManagerProps {
@@ -87,6 +91,19 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [dndToast, setDndToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Drag & Drop state for visual structure builder
+  type StructDragPayload =
+    | { kind: 'tree-node'; nodeId: string }
+    | { kind: 'palette-position'; positionId: string }
+    | { kind: 'palette-user'; userId: string };
+  const [dragPayload, setDragPayload] = useState<StructDragPayload | null>(null);
+  const [dropTargetKey, setDropTargetKey] = useState<string | null>(null);
+  const [palettePosSearch, setPalettePosSearch] = useState('');
+  const [paletteUserSearch, setPaletteUserSearch] = useState('');
+  const [quickPosTitle, setQuickPosTitle] = useState('');
+  const [quickPosAdding, setQuickPosAdding] = useState(false);
 
   const isAdmin = currentUser.role === 'ADMIN' || 
     (Array.isArray(currentUser.permissions) && 
@@ -167,15 +184,17 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
 
       if (editingStructure) {
         await api.updateProjectStructure(editingStructure.id, payload);
+        setStructureModalOpen(false);
+        onRefresh();
       } else {
         const created = await api.createProjectStructure(payload);
+        setStructureModalOpen(false);
+        onRefresh();
         if (created && created.id) {
           setSelectedStructureId(created.id);
+          setViewMode('tree');
         }
       }
-
-      setStructureModalOpen(false);
-      onRefresh();
     } catch (err: any) {
       setError(err.message || 'خطا در ثبت ساختار');
     } finally {
@@ -322,6 +341,178 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
     }
   };
 
+  const showToast = (type: 'success' | 'error', text: string) => {
+    setDndToast({ type, text });
+    setTimeout(() => {
+      setDndToast((prev) => (prev?.text === text ? null : prev));
+    }, 3500);
+  };
+
+  // Cycle check helper in current structureRawPositions
+  const isNodeDescendant = (potentialAncestorId: string, nodeId: string): boolean => {
+    if (potentialAncestorId === nodeId) return true;
+    let cur = structureRawPositions.find((n) => n.id === nodeId);
+    const seen = new Set<string>();
+    while (cur && cur.parentId) {
+      if (seen.has(cur.id)) break;
+      seen.add(cur.id);
+      if (cur.parentId === potentialAncestorId) return true;
+      cur = structureRawPositions.find((n) => n.id === cur?.parentId);
+    }
+    return false;
+  };
+
+  // Persist re-parent / reorder across siblings
+  const moveStructureNode = async (draggedNodeId: string, newParentId: string | null, insertBeforeNodeId?: string | null) => {
+    if (!selectedStructureId) return;
+    if (draggedNodeId === newParentId) return;
+    if (newParentId && isNodeDescendant(draggedNodeId, newParentId)) {
+      showToast('error', 'یک سمت نمی‌تواند زیرمجموعه زیرشاخه‌های خودش قرار گیرد.');
+      return;
+    }
+
+    // Build updated sibling order
+    const targetSiblings = structureRawPositions
+      .filter((n) => (n.parentId || null) === (newParentId || null) && n.id !== draggedNodeId)
+      .sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+
+    const draggedNode = structureRawPositions.find((n) => n.id === draggedNodeId);
+    if (!draggedNode) return;
+
+    let insertIdx = targetSiblings.length;
+    if (insertBeforeNodeId) {
+      const idx = targetSiblings.findIndex((s) => s.id === insertBeforeNodeId);
+      if (idx !== -1) insertIdx = idx;
+    }
+
+    const updatedSiblings = [...targetSiblings];
+    updatedSiblings.splice(insertIdx, 0, { ...draggedNode, parentId: newParentId });
+
+    const itemsPayload = updatedSiblings.map((s, idx) => ({
+      id: s.id,
+      parentId: newParentId,
+      orderIndex: idx,
+    }));
+
+    try {
+      await api.reorderStructurePositions(selectedStructureId, itemsPayload);
+      await loadStructureTree(selectedStructureId);
+      onRefresh();
+      showToast('success', `جایگاه «${draggedNode.title}» با موفقیت به‌روزرسانی شد.`);
+    } catch (err: any) {
+      showToast('error', err.message || 'خطا در تغییر جایگاه سمت');
+    }
+  };
+
+  const handleDropOnNode = async (e: React.DragEvent, targetNodeId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDropTargetKey(null);
+    if (!isAdmin || !dragPayload) return;
+
+    const payload = dragPayload;
+    setDragPayload(null);
+
+    if (payload.kind === 'tree-node') {
+      await moveStructureNode(payload.nodeId, targetNodeId);
+    } else if (payload.kind === 'palette-position') {
+      try {
+        await api.addStructurePosition(selectedStructureId, {
+          positionId: payload.positionId,
+          parentId: targetNodeId,
+        });
+        await loadStructureTree(selectedStructureId);
+        onRefresh();
+        showToast('success', 'سمت جدید به عنوان زیرمجموعه در چارت اضافه شد.');
+      } catch (err: any) {
+        showToast('error', err.message || 'خطا در افزودن سمت');
+      }
+    } else if (payload.kind === 'palette-user') {
+      try {
+        await api.assignUserToStructurePosition(selectedStructureId, targetNodeId, payload.userId);
+        await loadStructureTree(selectedStructureId);
+        onRefresh();
+        showToast('success', 'کاربر با موفقیت به سمت منتصب شد.');
+      } catch (err: any) {
+        showToast('error', err.message || 'خطا در انتصاب کاربر');
+      }
+    }
+  };
+
+  const handleDropOnRoot = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDropTargetKey(null);
+    if (!isAdmin || !dragPayload) return;
+
+    const payload = dragPayload;
+    setDragPayload(null);
+
+    if (payload.kind === 'tree-node') {
+      await moveStructureNode(payload.nodeId, null);
+    } else if (payload.kind === 'palette-position') {
+      try {
+        await api.addStructurePosition(selectedStructureId, {
+          positionId: payload.positionId,
+          parentId: null,
+        });
+        await loadStructureTree(selectedStructureId);
+        onRefresh();
+        showToast('success', 'سمت جدید در سطح ریشه ساختار اضافه شد.');
+      } catch (err: any) {
+        showToast('error', err.message || 'خطا در افزودن سمت به ریشه');
+      }
+    } else if (payload.kind === 'palette-user') {
+      showToast('error', 'برای انتصاب کاربر، آن را مستقیماً روی یکی از کارت‌های سمت رها کنید.');
+    }
+  };
+
+  const handleDropBetweenSiblings = async (e: React.DragEvent, parentId: string | null, beforeNodeId: string | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDropTargetKey(null);
+    if (!isAdmin || !dragPayload) return;
+
+    const payload = dragPayload;
+    setDragPayload(null);
+
+    if (payload.kind === 'tree-node') {
+      await moveStructureNode(payload.nodeId, parentId, beforeNodeId);
+    } else if (payload.kind === 'palette-position') {
+      try {
+        await api.addStructurePosition(selectedStructureId, {
+          positionId: payload.positionId,
+          parentId,
+        });
+        await loadStructureTree(selectedStructureId);
+        onRefresh();
+        showToast('success', 'سمت جدید در موقعیت انتخاب‌شده اضافه شد.');
+      } catch (err: any) {
+        showToast('error', err.message || 'خطا در افزودن سمت');
+      }
+    }
+  };
+
+  const handleQuickAddPosition = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickPosTitle.trim() || !selectedStructureId) return;
+    setQuickPosAdding(true);
+    try {
+      await api.addStructurePosition(selectedStructureId, {
+        title: quickPosTitle.trim(),
+        parentId: null,
+      });
+      setQuickPosTitle('');
+      await loadStructureTree(selectedStructureId);
+      onRefresh();
+      showToast('success', 'سمت جدید ایجاد و به ریشه ساختار اضافه شد.');
+    } catch (err: any) {
+      showToast('error', err.message || 'خطا در ایجاد سمت');
+    } finally {
+      setQuickPosAdding(false);
+    }
+  };
+
   const handleRemoveUserFromNode = async (node: StructurePositionNode, user: User) => {
     if (!confirm(`آیا از لغو انتصاب کاربر «${user.name}» از سمت «${node.title}» در این ساختار اطمینان دارید؟`)) return;
     try {
@@ -329,32 +520,105 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
       await loadStructureTree(selectedStructureId);
       onRefresh();
     } catch (err: any) {
-      alert(err.message || 'خطا در لغو انتصاب');
+      showToast('error', err.message || 'خطا در لغو انتصاب');
     }
   };
 
-  // Recursive Tree Node Renderer for Structure Positions
+  // Recursive Tree Node Renderer for Structure Positions (with Drag & Drop)
   const renderStructureTreeNode = (node: StructurePositionNode, depth: number = 0) => {
     const hasChildren = node.children && node.children.length > 0;
     const isRoot = depth === 0;
+    const isBeingDragged = dragPayload?.kind === 'tree-node' && dragPayload.nodeId === node.id;
+    const isInvalidDrop =
+      dragPayload?.kind === 'tree-node' && isNodeDescendant(dragPayload.nodeId, node.id);
+    const isDropHighlight = dropTargetKey === `node:${node.id}` && !isInvalidDrop;
+    const dropBetweenKey = `before:${node.parentId || 'root'}:${node.id}`;
 
     return (
       <div key={node.id} className="relative flex flex-col items-stretch">
-        
+        {/* Drop strip BEFORE this sibling for reordering */}
+        {isAdmin && dragPayload && dragPayload.kind !== 'palette-user' && (
+          <div
+            onDragOver={(e) => {
+              if (dragPayload.kind === 'tree-node' && (dragPayload.nodeId === node.id || (node.parentId && isNodeDescendant(dragPayload.nodeId, node.parentId)))) return;
+              e.preventDefault();
+              e.stopPropagation();
+              setDropTargetKey(dropBetweenKey);
+            }}
+            onDragLeave={(e) => {
+              e.stopPropagation();
+              if (dropTargetKey === dropBetweenKey) setDropTargetKey(null);
+            }}
+            onDrop={(e) => handleDropBetweenSiblings(e, node.parentId || null, node.id)}
+            style={{ marginRight: `${depth * 24}px` }}
+            className={`transition-all rounded-full my-0.5 ${
+              dropTargetKey === dropBetweenKey
+                ? 'h-3 bg-indigo-500/80 border border-indigo-600 shadow-xs'
+                : 'h-1.5 bg-transparent hover:bg-indigo-200/70'
+            }`}
+          />
+        )}
+
         {/* Node Box */}
         <div
+          draggable={isAdmin}
+          onDragStart={(e) => {
+            if (!isAdmin) return;
+            e.stopPropagation();
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', node.id);
+            setDragPayload({ kind: 'tree-node', nodeId: node.id });
+          }}
+          onDragEnd={() => {
+            setDragPayload(null);
+            setDropTargetKey(null);
+          }}
+          onDragOver={(e) => {
+            if (!isAdmin || !dragPayload || isInvalidDrop) return;
+            e.preventDefault();
+            e.stopPropagation();
+            setDropTargetKey(`node:${node.id}`);
+          }}
+          onDragLeave={(e) => {
+            e.stopPropagation();
+            if (dropTargetKey === `node:${node.id}`) setDropTargetKey(null);
+          }}
+          onDrop={(e) => handleDropOnNode(e, node.id)}
           className={`p-4 sm:p-5 rounded-2xl border transition shadow-xs relative group ${
-            isRoot
+            isBeingDragged
+              ? 'opacity-45 scale-[0.99] border-dashed border-indigo-400 bg-indigo-50/40'
+              : isDropHighlight
+              ? 'ring-2 ring-indigo-500 border-indigo-500 bg-indigo-50/60 shadow-md'
+              : isRoot
               ? 'bg-gradient-to-r from-indigo-50/80 to-blue-50/80 border-indigo-200 ring-1 ring-indigo-500/10'
               : depth === 1
               ? 'bg-white border-blue-200 hover:border-indigo-300'
               : 'bg-white border-slate-200 hover:border-slate-300'
           }`}
-          style={{ marginRight: `${depth * 28}px` }}
+          style={{ marginRight: `${depth * 24}px` }}
         >
+          {isDropHighlight && (
+            <div className="mb-2.5 px-3 py-1.5 rounded-xl bg-indigo-600 text-white text-[11px] font-bold flex items-center gap-1.5">
+              <ArrowDownToLine className="w-3.5 h-3.5" />
+              <span>
+                {dragPayload?.kind === 'palette-user'
+                  ? `رها کنید تا کاربر به سمت «${node.title}» منتصب شود`
+                  : `رها کنید تا به عنوان زیرمجموعه «${node.title}» قرار گیرد`}
+              </span>
+            </div>
+          )}
+
           {/* Header Row: Position Title, Hierarchy Level, Actions */}
           <div className="flex flex-wrap items-center justify-between gap-3 mb-2.5">
             <div className="flex items-center gap-2.5">
+              {isAdmin && (
+                <span
+                  className="p-1.5 rounded-lg bg-slate-100 text-slate-400 group-hover:text-indigo-600 cursor-grab active:cursor-grabbing transition"
+                  title="برای جابجایی یا تغییر والد بکشید و رها کنید"
+                >
+                  <GripVertical className="w-4 h-4" />
+                </span>
+              )}
               <span className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-xs border ${
                 isRoot
                   ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
@@ -801,15 +1065,14 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
         </div>
       )}
 
-      {/* ===================== VIEW MODE 2: HIERARCHICAL TREE OF CHOSEN STRUCTURE ===================== */}
+      {/* ===================== VIEW MODE 2: VISUAL DRAG & DROP STRUCTURE BUILDER ===================== */}
       {viewMode === 'tree' && (
-        <div className="space-y-6">
-          
+        <div className="space-y-4">
           {/* Structure Selector Toolbar */}
           <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <label className="text-xs font-bold text-slate-700 whitespace-nowrap">
-                انتخاب ساختار جهت نمایش چارت:
+                ساختار در حال طراحی:
               </label>
               <select
                 value={selectedStructureId}
@@ -818,70 +1081,283 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
               >
                 {structures.map((s) => (
                   <option key={s.id} value={s.id}>
-                    {s.title} ({s.category || 'تولید'})
+                    {s.title} ({s.category || 'ساختار سازمانی'})
                   </option>
                 ))}
               </select>
+              {isAdmin && (
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200">
+                  <Move className="w-3.5 h-3.5" />
+                  حالت طراحی بصری با درگ‌اند‌دراپ فعال است
+                </span>
+              )}
             </div>
 
             <div className="flex items-center gap-4 text-xs text-slate-500">
               <span>تعداد سمت‌های چارت: <strong className="text-indigo-600 font-bold">{structureRawPositions.length}</strong></span>
-              <span>تعداد پرسنل منتصب: <strong className="text-emerald-600 font-bold">{structureRawPositions.reduce((acc, p) => acc + (p.users?.length || 0), 0)}</strong></span>
+              <span>پرسنل منتصب: <strong className="text-emerald-600 font-bold">{structureRawPositions.reduce((acc, p) => acc + (p.users?.length || 0), 0)}</strong></span>
             </div>
           </div>
 
-          {/* Tree Visualization Container */}
-          <div className="p-4 sm:p-6 rounded-3xl bg-white border border-slate-200 shadow-sm space-y-6">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <Network className="w-4 h-4 text-indigo-600" />
-                  <span>سلسله‌مراتب درختی سمت‌های ساختار «{currentStructureDetail?.title || ''}»</span>
-                </h3>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  برای هر سمت می‌توانید پرسنل سیستم را منتصب کرده و دسترسی‌های اختصاصی آن‌ها را مستقیماً از روی گره ویرایش فرمایید.
-                </p>
-              </div>
-
-              {isAdmin && (
-                <button
-                  onClick={() => handleOpenAddNode()}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-bold transition cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>افزودن سمت ریشه</span>
-                </button>
-              )}
+          {dndToast && (
+            <div
+              className={`p-3.5 rounded-2xl border text-xs font-bold flex items-center justify-between gap-2 animate-in fade-in duration-150 ${
+                dndToast.type === 'success'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  : 'bg-rose-50 border-rose-200 text-rose-800'
+              }`}
+            >
+              <span>{dndToast.text}</span>
+              <button onClick={() => setDndToast(null)} className="p-0.5 hover:opacity-70 cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
             </div>
+          )}
 
-            {treeLoading ? (
-              <div className="py-12 text-center text-slate-400 text-xs">
-                در حال بارگذاری چارت سازمانی ساختار...
+          {/* 2-Column Visual Drag & Drop Workspace */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            {/* Side Palette: Positions & Users */}
+            {isAdmin && (
+              <div className="lg:col-span-4 space-y-4 lg:sticky lg:top-4">
+                {/* Palette 1: Draggable Positions */}
+                <div className="p-4 rounded-3xl bg-white border border-slate-200 shadow-xs space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                      <Briefcase className="w-4 h-4 text-indigo-600" />
+                      <span>سمت‌ها (بکشید روی بوم چارت)</span>
+                    </h3>
+                    <span className="text-[10px] text-slate-400">{positions.length} سمت</span>
+                  </div>
+
+                  {/* Quick Inline Position Creation */}
+                  <form onSubmit={handleQuickAddPosition} className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={quickPosTitle}
+                      onChange={(e) => setQuickPosTitle(e.target.value)}
+                      placeholder="نام سمت جدید + Enter..."
+                      className="flex-1 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-800 focus:outline-none focus:border-indigo-500 focus:bg-white"
+                    />
+                    <button
+                      type="submit"
+                      disabled={quickPosAdding || !quickPosTitle.trim()}
+                      className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold disabled:opacity-40 cursor-pointer"
+                      title="ایجاد سمت جدید و افزودن سریع به ریشه"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </form>
+
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={palettePosSearch}
+                      onChange={(e) => setPalettePosSearch(e.target.value)}
+                      placeholder="جستجوی سمت..."
+                      className="w-full pr-8 pl-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <div className="max-h-56 overflow-y-auto space-y-1.5 pr-0.5">
+                    {positions
+                      .filter((p) => p.title.toLowerCase().includes(palettePosSearch.toLowerCase()))
+                      .map((pos) => {
+                        const alreadyInStruct = structureRawPositions.some((sp) => sp.positionId === pos.id);
+                        return (
+                          <div
+                            key={pos.id}
+                            draggable={!alreadyInStruct}
+                            onDragStart={(e) => {
+                              if (alreadyInStruct) return;
+                              e.dataTransfer.effectAllowed = 'copy';
+                              e.dataTransfer.setData('text/plain', pos.id);
+                              setDragPayload({ kind: 'palette-position', positionId: pos.id });
+                            }}
+                            onDragEnd={() => {
+                              setDragPayload(null);
+                              setDropTargetKey(null);
+                            }}
+                            className={`px-3 py-2 rounded-xl border text-xs flex items-center justify-between gap-2 transition ${
+                              alreadyInStruct
+                                ? 'bg-slate-50 border-slate-200 text-slate-400 opacity-65 cursor-not-allowed'
+                                : 'bg-indigo-50/40 hover:bg-indigo-50 border-indigo-200/80 text-slate-800 cursor-grab active:cursor-grabbing shadow-2xs'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <GripVertical className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                              <span className="font-bold truncate">{pos.title}</span>
+                            </div>
+                            {alreadyInStruct ? (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+                                در چارت
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    await api.addStructurePosition(selectedStructureId, { positionId: pos.id, parentId: null });
+                                    await loadStructureTree(selectedStructureId);
+                                    onRefresh();
+                                    showToast('success', `سمت «${pos.title}» به ریشه چارت اضافه شد.`);
+                                  } catch (err: any) {
+                                    showToast('error', err.message || 'خطا در افزودن سمت');
+                                  }
+                                }}
+                                className="text-[10px] px-2 py-0.5 rounded-lg bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-600 hover:text-white transition font-bold cursor-pointer shrink-0"
+                              >
+                                + افزودن
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+
+                {/* Palette 2: Draggable Users */}
+                <div className="p-4 rounded-3xl bg-white border border-slate-200 shadow-xs space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                      <Users className="w-4 h-4 text-emerald-600" />
+                      <span>پرسنل (بکشید روی کارت سمت)</span>
+                    </h3>
+                    <span className="text-[10px] text-slate-400">{users.length} کاربر</span>
+                  </div>
+
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={paletteUserSearch}
+                      onChange={(e) => setPaletteUserSearch(e.target.value)}
+                      placeholder="جستجوی نام پرسنل..."
+                      className="w-full pr-8 pl-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+
+                  <div className="max-h-56 overflow-y-auto space-y-1.5 pr-0.5">
+                    {users
+                      .filter(
+                        (u) =>
+                          u.name.toLowerCase().includes(paletteUserSearch.toLowerCase()) ||
+                          u.username.toLowerCase().includes(paletteUserSearch.toLowerCase())
+                      )
+                      .map((u) => (
+                        <div
+                          key={u.id}
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.effectAllowed = 'copy';
+                            e.dataTransfer.setData('text/plain', u.id);
+                            setDragPayload({ kind: 'palette-user', userId: u.id });
+                          }}
+                          onDragEnd={() => {
+                            setDragPayload(null);
+                            setDropTargetKey(null);
+                          }}
+                          className="px-3 py-2 rounded-xl bg-emerald-50/40 hover:bg-emerald-50 border border-emerald-200/70 text-xs flex items-center justify-between gap-2 cursor-grab active:cursor-grabbing transition"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <GripVertical className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                            <div className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 font-bold text-[10px] flex items-center justify-center shrink-0 overflow-hidden">
+                              {u.avatar ? <img src={u.avatar} alt={u.name} className="w-full h-full object-cover" /> : u.name.charAt(0)}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="font-bold text-slate-800 truncate">{u.name}</div>
+                              <div className="text-[10px] text-slate-400 truncate">@{u.username}</div>
+                            </div>
+                          </div>
+                          <span className="text-[10px] text-emerald-700 font-semibold shrink-0">بکشید</span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
               </div>
-            ) : structureTreeData.length === 0 ? (
-              <div className="p-8 text-center rounded-2xl bg-slate-50 border border-dashed border-slate-300 space-y-3">
-                <Network className="w-10 h-10 text-slate-300 mx-auto" />
-                <h4 className="text-sm font-bold text-slate-800">هنوز سمتی در این ساختار تعریف نشده است</h4>
-                <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  با استفاده از دکمه زیر می‌توانید از میان سمت‌های موجود (تهیه‌کننده، کارگردان، مدیر تولید، ناظر کیفی و...) سمت اضافه کنید یا سمت جدیدی بسازید.
-                </p>
+            )}
+
+            {/* Visual Tree Hierarchy Canvas */}
+            <div className={`${isAdmin ? 'lg:col-span-8' : 'lg:col-span-12'} p-4 sm:p-6 rounded-3xl bg-white border border-slate-200 shadow-sm space-y-5`}>
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <Network className="w-4 h-4 text-indigo-600" />
+                    <span>بوم بصری چارت ساختار «{currentStructureDetail?.title || ''}»</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    سمت‌ها را از ستون سمت راست بکشید، یا کارت‌های چارت را برای تغییر والد/جایگاه روی هم یا بین هم رها کنید.
+                  </p>
+                </div>
+
                 {isAdmin && (
                   <button
                     onClick={() => handleOpenAddNode()}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs cursor-pointer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-bold transition cursor-pointer"
                   >
-                    <Plus className="w-4 h-4" />
-                    <span>تعریف اولین سمت برای این ساختار</span>
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>افزودن با فرم</span>
                   </button>
                 )}
               </div>
-            ) : (
-              <div className="space-y-4">
-                {structureTreeData.map((rootNode) => renderStructureTreeNode(rootNode, 0))}
-              </div>
-            )}
-          </div>
 
+              {/* Root Drop Zone */}
+              {isAdmin && (
+                <div
+                  onDragOver={(e) => {
+                    if (!dragPayload || dragPayload.kind === 'palette-user') return;
+                    e.preventDefault();
+                    setDropTargetKey('root-zone');
+                  }}
+                  onDragLeave={() => {
+                    if (dropTargetKey === 'root-zone') setDropTargetKey(null);
+                  }}
+                  onDrop={handleDropOnRoot}
+                  className={`p-3.5 rounded-2xl border-2 border-dashed text-center text-xs transition ${
+                    dropTargetKey === 'root-zone'
+                      ? 'border-indigo-600 bg-indigo-50 text-indigo-800 font-bold scale-[1.01]'
+                      : dragPayload && dragPayload.kind !== 'palette-user'
+                      ? 'border-indigo-300 bg-indigo-50/30 text-indigo-700 font-semibold'
+                      : 'border-slate-200 bg-slate-50/70 text-slate-500'
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <Sparkles className="w-4 h-4 text-indigo-500" />
+                    <span>
+                      منطقه ریشه چارت — سمت جدید یا گره زیرمجموعه را اینجا رها کنید تا در بالاترین سطح (ریشه) قرار گیرد
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {treeLoading ? (
+                <div className="py-12 text-center text-slate-400 text-xs">
+                  در حال بارگذاری چارت سازمانی ساختار...
+                </div>
+              ) : structureTreeData.length === 0 ? (
+                <div className="p-8 text-center rounded-2xl bg-slate-50 border border-dashed border-slate-300 space-y-3">
+                  <Network className="w-10 h-10 text-slate-300 mx-auto" />
+                  <h4 className="text-sm font-bold text-slate-800">هنوز سمتی در این ساختار تعریف نشده است</h4>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    یک سمت را از پنل سمت راست بکشید و در «منطقه ریشه چارت» رها کنید، یا با دکمه زیر اولین سمت را بسازید.
+                  </p>
+                  {isAdmin && (
+                    <button
+                      onClick={() => handleOpenAddNode()}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>تعریف اولین سمت برای این ساختار</span>
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {structureTreeData.map((rootNode) => renderStructureTreeNode(rootNode, 0))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

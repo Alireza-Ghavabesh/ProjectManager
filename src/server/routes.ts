@@ -760,6 +760,15 @@ apiRouter.delete('/positions/:id', (req: Request, res: Response) => {
 // 4. WORKFLOW DEFINITIONS & TRANSITIONS (تعریف و اجرای گردش کار سازمانی)
 // --------------------------------------------------------------------------
 
+function parseStepConfig(configJson?: string | null) {
+  if (!configJson) return {};
+  try {
+    return JSON.parse(configJson);
+  } catch {
+    return {};
+  }
+}
+
 apiRouter.get('/workflows', (_req: Request, res: Response) => {
   const workflows = db.prepare('SELECT * FROM workflows ORDER BY isDefault DESC, title ASC').all() as any[];
   const steps = db.prepare(`
@@ -771,7 +780,12 @@ apiRouter.get('/workflows', (_req: Request, res: Response) => {
   `).all() as any[];
 
   const result = workflows.map((wf) => {
-    const wfSteps = steps.filter((s) => s.workflowId === wf.id);
+    const wfSteps = steps
+      .filter((s) => s.workflowId === wf.id)
+      .map((s) => ({
+        ...s,
+        config: parseStepConfig(s.configJson),
+      }));
     return {
       ...wf,
       steps: wfSteps,
@@ -787,7 +801,7 @@ apiRouter.post('/workflows', (req: Request, res: Response) => {
     return res.status(403).json({ error: 'شما مجاز به طراحی و تعریف فرآیند گردش کار نیستید.' });
   }
 
-  const { title, description, steps } = req.body;
+  const { title, description, isDefault, steps } = req.body;
   if (!title || !title.trim() || !Array.isArray(steps) || steps.length === 0) {
     return res.status(400).json({ error: 'عنوان گردش کار و حداقل یک مرحله الزامی است.' });
   }
@@ -795,15 +809,19 @@ apiRouter.post('/workflows', (req: Request, res: Response) => {
   const id = `wf-${randomUUID().substring(0, 8)}`;
   const now = new Date().toISOString();
 
-  const insertWf = db.prepare('INSERT INTO workflows (id, title, description, isDefault, createdAt) VALUES (?, ?, ?, 0, ?)');
+  const insertWf = db.prepare('INSERT INTO workflows (id, title, description, isDefault, createdAt) VALUES (?, ?, ?, ?, ?)');
   const insertStep = db.prepare(`
-    INSERT INTO workflow_steps (id, workflowId, stepOrder, title, structureId, positionId, actionType, description)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO workflow_steps (id, workflowId, stepOrder, title, structureId, positionId, actionType, description, configJson)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const tx = db.transaction(() => {
-    insertWf.run(id, title.trim(), description || '', now);
+    if (isDefault) {
+      db.prepare('UPDATE workflows SET isDefault = 0').run();
+    }
+    insertWf.run(id, title.trim(), description || '', isDefault ? 1 : 0, now);
     steps.forEach((s: any, idx: number) => {
+      const cfg = s.config || parseStepConfig(s.configJson);
       insertStep.run(
         `st-${randomUUID().substring(0, 8)}`,
         id,
@@ -812,7 +830,8 @@ apiRouter.post('/workflows', (req: Request, res: Response) => {
         s.structureId || null,
         s.positionId,
         s.actionType || 'REVIEW',
-        s.description || ''
+        s.description || '',
+        JSON.stringify(cfg || {})
       );
     });
   });
@@ -835,17 +854,21 @@ apiRouter.put('/workflows/:id', (req: Request, res: Response) => {
   }
 
   const tx = db.transaction(() => {
+    if (isDefault) {
+      db.prepare('UPDATE workflows SET isDefault = 0 WHERE id != ?').run(id);
+    }
     db.prepare('UPDATE workflows SET title = ?, description = ?, isDefault = ? WHERE id = ?')
       .run(title.trim(), description || '', isDefault ? 1 : 0, id);
 
     db.prepare('DELETE FROM workflow_steps WHERE workflowId = ?').run(id);
 
     const insertStep = db.prepare(`
-      INSERT INTO workflow_steps (id, workflowId, stepOrder, title, structureId, positionId, actionType, description)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO workflow_steps (id, workflowId, stepOrder, title, structureId, positionId, actionType, description, configJson)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     steps.forEach((s: any, idx: number) => {
+      const cfg = s.config || parseStepConfig(s.configJson);
       insertStep.run(
         s.id && !s.id.startsWith('new-') ? s.id : `st-${randomUUID().substring(0, 8)}`,
         id,
@@ -854,7 +877,8 @@ apiRouter.put('/workflows/:id', (req: Request, res: Response) => {
         s.structureId || null,
         s.positionId,
         s.actionType || 'REVIEW',
-        s.description || ''
+        s.description || '',
+        JSON.stringify(cfg || {})
       );
     });
   });
@@ -928,27 +952,43 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
   let targetStepOrder = project.currentStepOrder;
   let targetPositionId = project.currentPositionId;
   let newStatus = project.status;
+  const currentStep = steps.find((s) => s.stepOrder === project.currentStepOrder);
+  const currentConfig = parseStepConfig(currentStep?.configJson);
 
   if (action === 'FORWARD' || action === 'APPROVED') {
-    // Next step
     if (nextStepOrder) {
       targetStepOrder = nextStepOrder;
+    } else if (currentConfig.onApproveStepOrder && currentConfig.onApproveStepOrder >= 1 && currentConfig.onApproveStepOrder <= steps.length) {
+      targetStepOrder = currentConfig.onApproveStepOrder;
     } else {
       targetStepOrder = Math.min(steps.length, project.currentStepOrder + 1);
     }
     const targetStep = steps.find((s) => s.stepOrder === targetStepOrder);
     targetPositionId = nextPositionId || (targetStep ? targetStep.positionId : project.currentPositionId);
 
-    // If reached end of workflow
     if (targetStepOrder === steps.length && project.currentStepOrder === steps.length) {
       newStatus = 'APPROVED';
     }
   } else if (action === 'NEEDS_REVISION') {
-    newStatus = 'NEEDS_REVISION';
-    // Send back to previous step or step 1
-    targetStepOrder = Math.max(1, project.currentStepOrder - 1);
-    const targetStep = steps.find((s) => s.stepOrder === targetStepOrder);
-    targetPositionId = targetStep ? targetStep.positionId : project.currentPositionId;
+    const rejectRule = currentConfig.onRejectAction || 'RETURN_PREV';
+    if (rejectRule === 'REJECT_PROJECT') {
+      newStatus = 'REJECTED';
+    } else if (rejectRule === 'RETURN_CREATOR') {
+      newStatus = 'NEEDS_REVISION';
+      targetStepOrder = 1;
+      const targetStep = steps.find((s) => s.stepOrder === 1);
+      targetPositionId = targetStep ? targetStep.positionId : project.currentPositionId;
+    } else if (rejectRule === 'CUSTOM_STEP' && currentConfig.onRejectStepOrder) {
+      newStatus = 'NEEDS_REVISION';
+      targetStepOrder = Math.min(steps.length, Math.max(1, currentConfig.onRejectStepOrder));
+      const targetStep = steps.find((s) => s.stepOrder === targetStepOrder);
+      targetPositionId = targetStep ? targetStep.positionId : project.currentPositionId;
+    } else {
+      newStatus = 'NEEDS_REVISION';
+      targetStepOrder = Math.max(1, project.currentStepOrder - 1);
+      const targetStep = steps.find((s) => s.stepOrder === targetStepOrder);
+      targetPositionId = targetStep ? targetStep.positionId : project.currentPositionId;
+    }
   } else if (action === 'REJECTED') {
     newStatus = 'REJECTED';
   }
@@ -1295,6 +1335,65 @@ apiRouter.post('/project-structures/:id/positions', (req: Request, res: Response
   res.json({ success: true, structurePositionId: spId });
 });
 
+// Helper to detect ancestor cycle in parent-child node lists
+function hasParentCycle(items: Array<{ id: string; parentId?: string | null }>, nodeId: string, candidateParentId: string | null): boolean {
+  if (!candidateParentId) return false;
+  if (candidateParentId === nodeId) return true;
+  const parentMap = new Map<string, string | null>();
+  items.forEach((it) => parentMap.set(it.id, it.parentId || null));
+  let cur: string | null = candidateParentId;
+  const visited = new Set<string>([nodeId]);
+  while (cur) {
+    if (visited.has(cur)) return true;
+    visited.add(cur);
+    cur = parentMap.get(cur) || null;
+  }
+  return false;
+}
+
+// Batch reorder / re-parent structure positions (drag & drop)
+apiRouter.put('/project-structures/:id/positions-reorder', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'org.positions.manage'))) {
+    return res.status(403).json({ error: 'شما مجاز به تغییر چینش ساختار نیستید.' });
+  }
+
+  const { id: structureId } = req.params;
+  const { items } = req.body as { items: Array<{ id: string; parentId: string | null; orderIndex: number }> };
+  if (!Array.isArray(items)) {
+    return res.status(400).json({ error: 'لیست چینش سمت‌ها معتبر نیست.' });
+  }
+
+  const existing = db.prepare('SELECT id, parentId FROM structure_positions WHERE structureId = ?').all(structureId) as Array<{ id: string; parentId: string | null }>;
+  const existingIds = new Set(existing.map((e) => e.id));
+
+  // Merge proposed updates to validate cycle safety across full tree
+  const merged = existing.map((e) => {
+    const upd = items.find((i) => i.id === e.id);
+    return { id: e.id, parentId: upd ? (upd.parentId || null) : e.parentId };
+  });
+
+  for (const item of items) {
+    if (!existingIds.has(item.id)) continue;
+    if (item.parentId && !existingIds.has(item.parentId)) {
+      return res.status(400).json({ error: 'سمت والد انتخاب شده در این ساختار وجود ندارد.' });
+    }
+    if (hasParentCycle(merged, item.id, item.parentId || null)) {
+      return res.status(400).json({ error: 'انتقال نامعتبر: یک سمت نمی‌تواند زیرمجموعه زیرشاخه‌های خودش قرار گیرد.' });
+    }
+  }
+
+  const updateStmt = db.prepare('UPDATE structure_positions SET parentId = ?, orderIndex = ? WHERE id = ? AND structureId = ?');
+  const tx = db.transaction(() => {
+    for (const item of items) {
+      updateStmt.run(item.parentId || null, item.orderIndex ?? 0, item.id, structureId);
+    }
+  });
+  tx();
+
+  res.json({ success: true });
+});
+
 // Update a position node in a structure (change parent, update position details)
 apiRouter.put('/project-structures/:id/positions/:spId', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
@@ -1310,8 +1409,11 @@ apiRouter.put('/project-structures/:id/positions/:spId', (req: Request, res: Res
     return res.status(404).json({ error: 'گره سمت در این ساختار یافت نشد.' });
   }
 
-  if (parentId === spId) {
-    return res.status(400).json({ error: 'یک سمت نمی‌تواند والد خودش باشد.' });
+  if (parentId !== undefined && parentId !== null) {
+    const allNodes = db.prepare('SELECT id, parentId FROM structure_positions WHERE structureId = ?').all(structureId) as Array<{ id: string; parentId: string | null }>;
+    if (hasParentCycle(allNodes, spId, parentId)) {
+      return res.status(400).json({ error: 'یک سمت نمی‌تواند والد خودش یا زیرمجموعه زیرشاخه‌هایش باشد.' });
+    }
   }
 
   const tx = db.transaction(() => {
@@ -1420,9 +1522,11 @@ apiRouter.delete('/project-structures/:id/positions/:spId/users/:userId', (req: 
 
 apiRouter.get('/dynamic-fields', (_req: Request, res: Response) => {
   const fields = db.prepare(`
-    SELECT * FROM dynamic_fields
-    WHERE isActive = 1
-    ORDER BY orderIndex ASC, name ASC
+    SELECT df.*, parentDf.name as parentName
+    FROM dynamic_fields df
+    LEFT JOIN dynamic_fields parentDf ON df.parentId = parentDf.id
+    WHERE df.isActive = 1
+    ORDER BY df.orderIndex ASC, df.name ASC
   `).all();
   res.json({ fields });
 });
@@ -1436,38 +1540,52 @@ apiRouter.post('/dynamic-fields', (req: Request, res: Response) => {
     });
   }
 
-  const { name, key, fieldType, unit, defaultValue, required, category, icon } = req.body;
+  const { name, key, fieldType, unit, defaultValue, optionsJson, required, category, icon, parentId, orderIndex } = req.body;
   if (!name || !name.trim()) {
     return res.status(400).json({ error: 'نام فیلد الزامی است.' });
   }
 
-  const safeKey = (key && key.trim()) 
+  if (parentId) {
+    const parentExists = db.prepare('SELECT id FROM dynamic_fields WHERE id = ? AND isActive = 1').get(parentId);
+    if (!parentExists) {
+      return res.status(400).json({ error: 'فیلد والد انتخاب‌شده یافت نشد.' });
+    }
+  }
+
+  const safeKey = (key && key.trim())
     ? key.trim().toLowerCase().replace(/\s+/g, '_')
     : `field_${Date.now()}`;
 
   const id = `fld-${randomUUID().substring(0, 8)}`;
   const maxOrder = db.prepare('SELECT MAX(orderIndex) as maxO FROM dynamic_fields').get() as any;
-  const nextOrder = (maxOrder?.maxO || 0) + 1;
+  const nextOrder = orderIndex !== undefined ? orderIndex : ((maxOrder?.maxO || 0) + 1);
 
   try {
     db.prepare(`
-      INSERT INTO dynamic_fields (id, name, key, fieldType, unit, defaultValue, optionsJson, required, orderIndex, isActive, icon, category, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?, 1, ?, ?, ?)
+      INSERT INTO dynamic_fields (id, name, key, fieldType, unit, defaultValue, optionsJson, required, orderIndex, isActive, icon, category, parentId, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
     `).run(
       id,
       name.trim(),
       safeKey,
       fieldType || 'number',
-      unit || 'نفر',
-      defaultValue || '1',
+      unit !== undefined ? unit : (fieldType === 'currency' ? 'تومان' : fieldType === 'text' || fieldType === 'select' ? '' : 'نفر'),
+      defaultValue !== undefined ? String(defaultValue) : (fieldType === 'text' || fieldType === 'select' ? '' : '1'),
+      optionsJson || '[]',
       required ? 1 : 0,
       nextOrder,
       icon || 'Users',
       category || 'عوامل تولید',
+      parentId || null,
       new Date().toISOString()
     );
 
-    const created = db.prepare('SELECT * FROM dynamic_fields WHERE id = ?').get(id);
+    const created = db.prepare(`
+      SELECT df.*, parentDf.name as parentName
+      FROM dynamic_fields df
+      LEFT JOIN dynamic_fields parentDf ON df.parentId = parentDf.id
+      WHERE df.id = ?
+    `).get(id);
     res.json({ success: true, field: created });
   } catch (err: any) {
     if (err.message && err.message.includes('UNIQUE')) {
@@ -1477,13 +1595,113 @@ apiRouter.post('/dynamic-fields', (req: Request, res: Response) => {
   }
 });
 
+// MUST be registered before /dynamic-fields/:id
+apiRouter.put('/dynamic-fields/reorder', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || !hasPermission(currentUser, 'projects.fields.manage')) {
+    return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به تغییر ترتیب و ساختار فیلدهای پروژه نیستید.' });
+  }
+
+  const { items } = req.body as { items: Array<{ id: string; parentId: string | null; orderIndex: number }> };
+  if (!Array.isArray(items)) {
+    return res.status(400).json({ error: 'داده‌های چینش فیلدها نامعتبر است.' });
+  }
+
+  const allFields = db.prepare('SELECT id, parentId FROM dynamic_fields WHERE isActive = 1').all() as Array<{ id: string; parentId: string | null }>;
+  const existingIds = new Set(allFields.map((f) => f.id));
+
+  const merged = allFields.map((f) => {
+    const upd = items.find((i) => i.id === f.id);
+    return { id: f.id, parentId: upd ? (upd.parentId || null) : f.parentId };
+  });
+
+  for (const item of items) {
+    if (!existingIds.has(item.id)) continue;
+    if (item.parentId && !existingIds.has(item.parentId)) {
+      return res.status(400).json({ error: 'فیلد والد انتخاب‌شده وجود ندارد.' });
+    }
+    if (hasParentCycle(merged, item.id, item.parentId || null)) {
+      return res.status(400).json({ error: 'انتقال نامعتبر: یک فیلد نمی‌تواند زیرمجموعه خودش یا زیرشاخه‌هایش باشد.' });
+    }
+  }
+
+  const stmt = db.prepare('UPDATE dynamic_fields SET parentId = ?, orderIndex = ? WHERE id = ?');
+  const tx = db.transaction(() => {
+    for (const item of items) {
+      stmt.run(item.parentId || null, item.orderIndex ?? 0, item.id);
+    }
+  });
+  tx();
+
+  res.json({ success: true });
+});
+
+apiRouter.put('/dynamic-fields/:id', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || !hasPermission(currentUser, 'projects.fields.manage')) {
+    return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به ویرایش فیلدهای پروژه نیستید.' });
+  }
+
+  const { id } = req.params;
+  const existing = db.prepare('SELECT * FROM dynamic_fields WHERE id = ?').get(id) as any;
+  if (!existing) {
+    return res.status(404).json({ error: 'فیلد مورد نظر یافت نشد.' });
+  }
+
+  const { name, fieldType, unit, defaultValue, optionsJson, required, category, icon, parentId, orderIndex } = req.body;
+  if (name !== undefined && !String(name).trim()) {
+    return res.status(400).json({ error: 'نام فیلد نمی‌تواند خالی باشد.' });
+  }
+
+  if (parentId !== undefined && parentId !== null) {
+    const allFields = db.prepare('SELECT id, parentId FROM dynamic_fields WHERE isActive = 1').all() as Array<{ id: string; parentId: string | null }>;
+    if (hasParentCycle(allFields, id, parentId)) {
+      return res.status(400).json({ error: 'فیلد نمی‌تواند والد خودش یا زیرمجموعه زیرشاخه‌هایش باشد.' });
+    }
+  }
+
+  db.prepare(`
+    UPDATE dynamic_fields
+    SET name = ?, fieldType = ?, unit = ?, defaultValue = ?, optionsJson = ?, required = ?, category = ?, icon = ?, parentId = ?, orderIndex = ?
+    WHERE id = ?
+  `).run(
+    name !== undefined ? String(name).trim() : existing.name,
+    fieldType !== undefined ? fieldType : existing.fieldType,
+    unit !== undefined ? unit : existing.unit,
+    defaultValue !== undefined ? String(defaultValue) : existing.defaultValue,
+    optionsJson !== undefined ? optionsJson : existing.optionsJson,
+    required !== undefined ? (required ? 1 : 0) : existing.required,
+    category !== undefined ? category : existing.category,
+    icon !== undefined ? icon : existing.icon,
+    parentId !== undefined ? (parentId || null) : existing.parentId,
+    orderIndex !== undefined ? orderIndex : existing.orderIndex,
+    id
+  );
+
+  const updated = db.prepare(`
+    SELECT df.*, parentDf.name as parentName
+    FROM dynamic_fields df
+    LEFT JOIN dynamic_fields parentDf ON df.parentId = parentDf.id
+    WHERE df.id = ?
+  `).get(id);
+
+  res.json({ success: true, field: updated });
+});
+
 apiRouter.delete('/dynamic-fields/:id', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
   if (!currentUser || !hasPermission(currentUser, 'projects.fields.manage')) {
     return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به حذف فیلدهای پروژه نیستید.' });
   }
   const { id } = req.params;
-  db.prepare('DELETE FROM dynamic_fields WHERE id = ?').run(id);
+  const current = db.prepare('SELECT parentId FROM dynamic_fields WHERE id = ?').get(id) as any;
+  const tx = db.transaction(() => {
+    if (current) {
+      db.prepare('UPDATE dynamic_fields SET parentId = ? WHERE parentId = ?').run(current.parentId || null, id);
+    }
+    db.prepare('DELETE FROM dynamic_fields WHERE id = ?').run(id);
+  });
+  tx();
   res.json({ success: true });
 });
 
@@ -1519,12 +1737,17 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
   `).all() as any[];
 
   // Pre-fetch workflow steps and logs
-  const allSteps = db.prepare(`
+  const allStepsRaw = db.prepare(`
     SELECT s.*, p.title as positionTitle, p.color as positionColor
     FROM workflow_steps s
     JOIN positions p ON s.positionId = p.id
     ORDER BY s.stepOrder ASC
   `).all() as any[];
+
+  const allSteps = allStepsRaw.map((s) => ({
+    ...s,
+    config: parseStepConfig(s.configJson),
+  }));
 
   const allLogs = db.prepare(`
     SELECT l.*, u.name as fromUserName, pos.title as toPositionTitle, uPos.title as fromUserPosition

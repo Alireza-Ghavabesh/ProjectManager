@@ -118,16 +118,35 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
     }
   };
 
-  // Map dynamic field values
-  const requirementEntries = Object.entries(project.requirements || {}).map(([key, val]) => {
-    const fld = dynamicFields.find((f) => f.key === key);
-    return {
+  // Map dynamic field values into hierarchical groups + legacy keys
+  const reqObj = project.requirements || {};
+  const validFieldIds = new Set(dynamicFields.map((f) => f.id));
+  const buildFieldTree = (pId: string | null): DynamicField[] =>
+    dynamicFields
+      .filter((f) => {
+        const effParent = f.parentId && validFieldIds.has(f.parentId) ? f.parentId : null;
+        return effParent === pId;
+      })
+      .sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0))
+      .map((f) => ({ ...f, children: buildFieldTree(f.id) }));
+
+  const fieldTree = buildFieldTree(null);
+  const hasAnyKeyInBranch = (fld: DynamicField): boolean => {
+    if (reqObj[fld.key] !== undefined && reqObj[fld.key] !== '') return true;
+    return (fld.children || []).some((ch) => hasAnyKeyInBranch(ch));
+  };
+  const visibleRootFields = fieldTree.filter((fld) => hasAnyKeyInBranch(fld));
+
+  const knownKeys = new Set(dynamicFields.map((f) => f.key));
+  const legacyEntries = Object.entries(reqObj)
+    .filter(([key]) => !knownKeys.has(key))
+    .map(([key, val]) => ({
       key,
-      name: fld ? fld.name : key,
-      unit: fld ? fld.unit || 'نفر' : '',
+      name: key,
+      unit: '',
       value: val,
-    };
-  });
+    }));
+  const totalRequirementCount = Object.keys(reqObj).length;
 
   const steps = project.workflowSteps || [];
   const currentStep = steps.find((s) => s.stepOrder === project.currentStepOrder);
@@ -328,16 +347,76 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
         <div className="text-xs font-bold text-slate-800 mb-2.5 flex items-center justify-between">
           <span className="flex items-center gap-1.5">
             <Users className="w-3.5 h-3.5 text-indigo-600" />
-            فیلدهای مصوب نیازهای پروژه (تعریف شده به صورت پویا):
+            فیلدهای مصوب نیازهای پروژه (ساختار پویا):
           </span>
           <span className="text-[10px] text-slate-500">
-            {requirementEntries.length} فیلد ثبت شده
+            {totalRequirementCount} فیلد ثبت شده
           </span>
         </div>
 
-        {requirementEntries.length > 0 ? (
+        {totalRequirementCount > 0 ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
-            {requirementEntries.map((req) => (
+            {visibleRootFields.map((fld) => {
+              const val = reqObj[fld.key];
+              const childNodes = (fld.children || []).filter(
+                (ch) => reqObj[ch.key] !== undefined && reqObj[ch.key] !== ''
+              );
+              const hasChildren = childNodes.length > 0;
+              const formattedVal =
+                fld.fieldType === 'currency' && val !== undefined && val !== ''
+                  ? formatBudgetDisplay(String(val))
+                  : val ?? '—';
+
+              return (
+                <div
+                  key={fld.key}
+                  className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                    hasChildren
+                      ? 'bg-indigo-50/40 border-indigo-200/90 col-span-2 sm:col-span-3 md:col-span-2'
+                      : 'bg-slate-50 border-slate-200/80'
+                  }`}
+                >
+                  <div>
+                    <span className="text-[11px] text-slate-500 font-medium truncate block mb-1">
+                      {fld.name}
+                    </span>
+                    <div className="flex items-baseline justify-between gap-1">
+                      <span className="text-sm sm:text-base font-extrabold text-indigo-600 truncate">
+                        {formattedVal}
+                      </span>
+                      {fld.fieldType !== 'currency' && fld.unit && (
+                        <span className="text-[10px] text-slate-500 font-normal shrink-0">
+                          {fld.unit}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {hasChildren && (
+                    <div className="mt-2 pt-2 border-t border-indigo-200/60 flex flex-wrap gap-1.5">
+                      {childNodes.map((ch) => {
+                        const chVal = reqObj[ch.key];
+                        const chDisplay =
+                          ch.fieldType === 'currency'
+                            ? formatBudgetDisplay(String(chVal))
+                            : `${chVal}${ch.unit ? ` ${ch.unit}` : ''}`;
+                        return (
+                          <span
+                            key={ch.key}
+                            className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-lg bg-white border border-indigo-200/70 text-slate-700"
+                          >
+                            <span className="text-slate-500">{ch.name}:</span>
+                            <strong className="text-indigo-700">{chDisplay}</strong>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {legacyEntries.map((req) => (
               <div
                 key={req.key}
                 className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex flex-col justify-between"
@@ -346,12 +425,8 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   {req.name}
                 </span>
                 <div className="flex items-baseline justify-between">
-                  <span className="text-base font-extrabold text-indigo-600">
-                    {req.value}
-                  </span>
-                  <span className="text-[10px] text-slate-500 font-normal">
-                    {req.unit}
-                  </span>
+                  <span className="text-base font-extrabold text-indigo-600">{req.value}</span>
+                  <span className="text-[10px] text-slate-500 font-normal">{req.unit}</span>
                 </div>
               </div>
             ))}

@@ -297,7 +297,7 @@ class ApiService {
     return data.workflows || [];
   }
 
-  async createWorkflow(payload: { title: string; description?: string; steps: any[] }): Promise<{ workflowId: string }> {
+  async createWorkflow(payload: { title: string; description?: string; isDefault?: boolean; steps: any[] }): Promise<{ workflowId: string }> {
     const res = await fetch('/api/workflows', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
@@ -416,6 +416,18 @@ class ApiService {
     }
   }
 
+  async reorderStructurePositions(structureId: string, items: Array<{ id: string; parentId: string | null; orderIndex: number }>): Promise<void> {
+    const res = await fetch(`/api/project-structures/${structureId}/positions-reorder`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify({ items }),
+    });
+    if (!res.ok) {
+      const result = await res.json();
+      throw new Error(result.error || 'خطا در ذخیره چینش جدید ساختار');
+    }
+  }
+
   async deleteStructurePosition(structureId: string, spId: string): Promise<void> {
     const res = await fetch(`/api/project-structures/${structureId}/positions/${spId}`, {
       method: 'DELETE',
@@ -487,6 +499,29 @@ class ApiService {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'خطا در تعریف فیلد جدید');
     return data.field;
+  }
+
+  async updateDynamicField(id: string, field: Partial<DynamicField>): Promise<DynamicField> {
+    const res = await fetch(`/api/dynamic-fields/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify(field),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'خطا در ویرایش فیلد');
+    return data.field;
+  }
+
+  async reorderDynamicFields(items: Array<{ id: string; parentId: string | null; orderIndex: number }>): Promise<void> {
+    const res = await fetch('/api/dynamic-fields/reorder', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify({ items }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'خطا در ذخیره سلسله‌مراتب فیلدها');
+    }
   }
 
   async deleteDynamicField(id: string): Promise<void> {
