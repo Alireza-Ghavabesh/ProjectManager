@@ -53,6 +53,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   const canCreateProject = hasPerm(currentUser, 'projects.create');
   const canViewConfidential = hasPerm(currentUser, 'voting.confidential.view_all');
   const canCastVote = hasPerm(currentUser, 'voting.cast');
+  const canForwardWorkflow = hasPerm(currentUser, 'workflow.forward');
   const canManageAttachments = canEditProject || (canCreateProject && currentUser.id === project.createdById);
 
   // Helper for majority badge
@@ -156,7 +157,9 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
 
   const steps = project.workflowSteps || [];
   const currentStep = steps.find((s) => s.stepOrder === project.currentStepOrder);
-  const isMyTurnInWorkflow = currentUser.positionId && currentUser.positionId === project.currentPositionId;
+  const isMyTurnInWorkflow =
+    project.isMyWorkflowTurn ??
+    Boolean(currentUser.positionId && project.currentPositionId && currentUser.positionId === project.currentPositionId);
   const isExpired = project.isDeadlineExpired ?? isDeadlineExpired(project.deadline);
 
   return (
@@ -307,7 +310,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   </span>
                 )}
               </div>
-            ) : canCastVote && !canViewConfidential ? (
+            ) : canCastVote ? (
               <button
                 onClick={() => onOpenVoteModal(project)}
                 className="text-amber-800 font-bold hover:text-amber-900 bg-amber-100/80 hover:bg-amber-100 px-2.5 py-1 rounded-lg border border-amber-300 flex items-center gap-1 cursor-pointer transition shadow-2xs"
@@ -457,10 +460,87 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
         />
       </div>
 
-      {/* Permission-Specific Voting Section */}
-      {canViewConfidential ? (
-        /* ======================== CONFIDENTIAL VIEW (VOTING SUPERVISOR) ======================== */
-        <div className="pt-4 border-t border-slate-100">
+      {/* Workflow Progress & Transition Bar */}
+      {steps.length > 0 && (
+        <div
+          className={`mb-4 p-3.5 rounded-2xl border flex flex-wrap items-center justify-between gap-3 ${
+            isMyTurnInWorkflow
+              ? 'bg-blue-50/70 border-blue-200'
+              : 'bg-slate-50/70 border-slate-200/80'
+          }`}
+        >
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <span className="p-1.5 rounded-xl bg-blue-100 text-blue-700 shrink-0">
+              <GitBranch className="w-4 h-4" />
+            </span>
+            <div className="text-xs">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-bold text-slate-900">
+                  مرحله {project.currentStepOrder || 1} از {steps.length}:{' '}
+                  {currentStep?.title || 'در حال بررسی'}
+                </span>
+                {project.currentPositionTitle && (
+                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-lg bg-white border border-slate-200 text-slate-700 flex items-center gap-1">
+                    <Briefcase className="w-3 h-3 text-indigo-600" />
+                    سمت فعلی: {project.currentPositionTitle}
+                  </span>
+                )}
+                {isMyTurnInWorkflow && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-600 text-white shadow-2xs">
+                    نوبت کارتابل شما
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {canForwardWorkflow && onOpenWorkflowModal && (
+            <button
+              onClick={() => onOpenWorkflowModal(project)}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs transition cursor-pointer"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>تایید و ارجاع گردش کار</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Personal Voting Action Section (available to ANY user with voting.cast, including senior admins) */}
+      {canCastVote && (
+        <div className="pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+          {/* Member's Confidential Vote Status */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 font-medium">وضعیت رای شما در کارتابل:</span>
+            {project.hasVoted && project.userVote ? (
+              <div className="flex items-center gap-2">
+                {getVoteStatusBadge(project.userVote.status)}
+                <span className="text-[10px] text-emerald-700 font-semibold">
+                  (رای شما با موفقیت ثبت شد)
+                </span>
+              </div>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold bg-amber-50 text-amber-900 border border-amber-300 animate-pulse">
+                <Clock className="w-3.5 h-3.5 text-amber-600" />
+                در انتظار ثبت نظر و رای شما
+              </span>
+            )}
+          </div>
+
+          {/* Action button */}
+          <button
+            onClick={() => onOpenVoteModal(project)}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
+          >
+            <VoteIcon className="w-4 h-4" />
+            <span>{project.hasVoted ? 'ویرایش یا بازبینی رای شما' : 'ثبت رای کارتابل'}</span>
+          </button>
+        </div>
+      )}
+
+      {/* Confidential Inspection Section (for users with voting.confidential.view_all) */}
+      {canViewConfidential && (
+        <div className="pt-4 mt-4 border-t border-slate-100">
           
           {/* Tally Summary Bar */}
           <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
@@ -562,39 +642,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           )}
 
         </div>
-      ) : canCastVote ? (
-        /* ======================== COUNCIL MEMBER VOTE ACTION VIEW ======================== */
-        <div className="pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
-          
-          {/* Member's Confidential Vote Status */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 font-medium">وضعیت در کارتابل شما:</span>
-            {project.hasVoted && project.userVote ? (
-              <div className="flex items-center gap-2">
-                {getVoteStatusBadge(project.userVote.status)}
-                <span className="text-[10px] text-emerald-700 font-semibold">
-                  (رای شما با موفقیت ثبت شد)
-                </span>
-              </div>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold bg-amber-50 text-amber-900 border border-amber-300 animate-pulse">
-                <Clock className="w-3.5 h-3.5 text-amber-600" />
-                در انتظار ثبت نظر و رای شما
-              </span>
-            )}
-          </div>
-
-          {/* Action button */}
-          <button
-            onClick={() => onOpenVoteModal(project)}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
-          >
-            <VoteIcon className="w-4 h-4" />
-            <span>{project.hasVoted ? 'ویرایش یا بازبینی رای شما' : 'ثبت رای کارتابل'}</span>
-          </button>
-
-        </div>
-      ) : null}
+      )}
 
     </div>
   );

@@ -1767,6 +1767,14 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
 
   const canViewConfidential = hasPermission(currentUser, 'voting.confidential.view_all');
 
+  // Pre-fetch structure position assignments for currentUser so workflow turn detection works inside structures too
+  const userStructureAssignments = db.prepare(`
+    SELECT sp.structureId, sp.positionId
+    FROM structure_position_users spu
+    JOIN structure_positions sp ON spu.structurePositionId = sp.id
+    WHERE spu.userId = ?
+  `).all(currentUser.id) as Array<{ structureId: string; positionId: string }>;
+
   const result = projects.map((prj) => {
     let requirements = {};
     try {
@@ -1780,10 +1788,31 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
     const prjLogs = allLogs.filter((l) => l.projectId === prj.id);
     const prjAttachments = allAttachments.filter((a) => a.projectId === prj.id);
 
+    const currentStepObj = prjSteps.find((s) => s.stepOrder === prj.currentStepOrder);
+    const isDirectPosMatch = Boolean(
+      currentUser.positionId && prj.currentPositionId && currentUser.positionId === prj.currentPositionId
+    );
+    const isStructPosMatch = Boolean(
+      prj.currentPositionId &&
+      userStructureAssignments.some(
+        (a) =>
+          a.positionId === prj.currentPositionId &&
+          (!currentStepObj?.structureId || a.structureId === currentStepObj.structureId)
+      )
+    );
+    const isMyWorkflowTurn = isDirectPosMatch || isStructPosMatch;
+
     // Dynamic expected voters: count of positions/steps in this project's specific workflow
     const workflowStepCount = prjSteps.length;
     const projectExpectedVoters = workflowStepCount > 0 ? workflowStepCount : (totalCouncilCount || 4);
     const expired = isDeadlineExpired(prj.deadline);
+
+    // Always include currentUser's own vote so anyone with voting.cast (including senior admins) can vote & edit
+    const myVote = db.prepare(`
+      SELECT v.id, v.status, v.reason, v.votedAt
+      FROM votes v
+      WHERE v.projectId = ? AND v.userId = ?
+    `).get(prj.id, currentUser.id);
 
     if (canViewConfidential) {
       // User with confidential voting inspection permission (Admin / Board Chair)
@@ -1802,28 +1831,26 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
         ...prj,
         deliveryDate: prj.deliveryDate || '',
         isDeadlineExpired: expired,
+        isMyWorkflowTurn,
         requirements,
         attachments: prjAttachments,
         attachmentCount: prjAttachments.length,
         majorityResult: majorityInfo.majority,
         voteCounts: majorityInfo.counts,
         totalCouncilMembers: projectExpectedVoters,
+        hasVoted: !!myVote,
+        userVote: myVote || null,
         allVotes,
         workflowSteps: prjSteps,
         workflowLogs: prjLogs,
       };
     } else {
       // Standard Council Member (CONFIDENTIALITY ENFORCED)
-      const myVote = db.prepare(`
-        SELECT v.id, v.status, v.reason, v.votedAt
-        FROM votes v
-        WHERE v.projectId = ? AND v.userId = ?
-      `).get(prj.id, currentUser.id);
-
       return {
         ...prj,
         deliveryDate: prj.deliveryDate || '',
         isDeadlineExpired: expired,
+        isMyWorkflowTurn,
         requirements,
         attachments: prjAttachments,
         attachmentCount: prjAttachments.length,

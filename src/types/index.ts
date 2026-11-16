@@ -187,6 +187,7 @@ export interface Project {
   currentPositionId?: string;
   currentPositionTitle?: string;
   currentPositionColor?: string;
+  isMyWorkflowTurn?: boolean;
   createdAt: string;
   updatedAt: string;
   

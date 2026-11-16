@@ -5,6 +5,7 @@ import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { ProjectCard } from './components/ProjectCard';
 import { VotingModal } from './components/VotingModal';
+import { WorkflowTransitionModal } from './components/WorkflowTransitionModal';
 import { CreateProjectModal } from './components/CreateProjectModal';
 import { DynamicFieldsManager } from './components/DynamicFieldsManager';
 import { ProjectStructuresManager } from './components/ProjectStructuresManager';
@@ -66,6 +67,7 @@ export default function App() {
 
   // Modals
   const [votingProject, setVotingProject] = useState<Project | null>(null);
+  const [workflowProject, setWorkflowProject] = useState<Project | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
 
@@ -523,7 +525,7 @@ export default function App() {
                     همه پروژه‌ها ({projects.length})
                   </button>
 
-                  {canCastVote && !canViewConfidentialVotes && (
+                  {canCastVote && (
                     <button
                       onClick={() => setStatusFilter('PENDING_MY_VOTE')}
                       className={`px-3 py-1.5 rounded-xl font-semibold transition whitespace-nowrap cursor-pointer ${
@@ -617,6 +619,7 @@ export default function App() {
                       currentUser={currentUser}
                       dynamicFields={dynamicFields}
                       onOpenVoteModal={(p) => setVotingProject(p)}
+                      onOpenWorkflowModal={(p) => setWorkflowProject(p)}
                       onEditProject={(p) => {
                         setEditingProject(p);
                         setShowCreateModal(true);
@@ -722,6 +725,16 @@ export default function App() {
           project={votingProject}
           onClose={() => setVotingProject(null)}
           onVoteSuccess={refreshData}
+        />
+      )}
+
+      {/* Workflow Transition Modal */}
+      {workflowProject && (
+        <WorkflowTransitionModal
+          project={workflowProject}
+          currentUser={currentUser}
+          onClose={() => setWorkflowProject(null)}
+          onSuccess={refreshData}
         />
       )}
 
