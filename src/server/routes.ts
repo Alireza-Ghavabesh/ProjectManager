@@ -57,13 +57,10 @@ function getCurrentUser(req: Request) {
   return { ...user, permissions };
 }
 
+const EXPLICIT_ONLY_PERMISSIONS = new Set(['projects.manual_approve']);
+
 // Unified helper to get all effective permissions for a user
 export function getUserPermissionsList(user: { id: string; role: string; positionId?: string | null; hasCustomPermissions?: number | boolean }): string[] {
-  if (user.role === 'ADMIN') {
-    const allP = db.prepare('SELECT code FROM permissions').all() as { code: string }[];
-    return allP.map((p) => p.code);
-  }
-
   // Check if user has explicit custom permissions configured
   let isCustom = Boolean(user.hasCustomPermissions);
   if (user.hasCustomPermissions === undefined) {
@@ -71,6 +68,41 @@ export function getUserPermissionsList(user: { id: string; role: string; positio
       const row = db.prepare('SELECT hasCustomPermissions FROM users WHERE id = ?').get(user.id) as any;
       isCustom = Boolean(row?.hasCustomPermissions);
     } catch (e) {}
+  }
+
+  const getExplicitUserAndPosPerms = (): Set<string> => {
+    const s = new Set<string>();
+    try {
+      const userP = db.prepare('SELECT permissionCode FROM user_permissions WHERE userId = ?').all(user.id) as { permissionCode: string }[];
+      userP.forEach((p) => s.add(p.permissionCode));
+    } catch (e) {}
+    if (!isCustom) {
+      if (user.positionId) {
+        try {
+          const posP = db.prepare('SELECT permissionCode FROM position_permissions WHERE positionId = ?').all(user.positionId) as { permissionCode: string }[];
+          posP.forEach((p) => s.add(p.permissionCode));
+        } catch (e) {}
+      }
+      try {
+        const structPosP = db.prepare(`
+          SELECT pp.permissionCode
+          FROM structure_position_users spu
+          JOIN structure_positions sp ON spu.structurePositionId = sp.id
+          JOIN position_permissions pp ON sp.positionId = pp.positionId
+          WHERE spu.userId = ?
+        `).all(user.id) as { permissionCode: string }[];
+        structPosP.forEach((p) => s.add(p.permissionCode));
+      } catch (e) {}
+    }
+    return s;
+  };
+
+  if (user.role === 'ADMIN') {
+    const allP = db.prepare('SELECT code FROM permissions').all() as { code: string }[];
+    const explicitSet = getExplicitUserAndPosPerms();
+    return allP
+      .map((p) => p.code)
+      .filter((code) => !EXPLICIT_ONLY_PERMISSIONS.has(code) || explicitSet.has(code));
   }
 
   if (isCustom) {
@@ -83,41 +115,23 @@ export function getUserPermissionsList(user: { id: string; role: string; positio
     } catch (e) {}
   }
 
-  const permSet = new Set<string>();
-
-  // 1. Direct primary position permissions
-  if (user.positionId) {
-    const posP = db.prepare(`
-      SELECT permissionCode FROM position_permissions
-      WHERE positionId = ?
-    `).all(user.positionId) as { permissionCode: string }[];
-    posP.forEach((p) => permSet.add(p.permissionCode));
-  }
-
-  // 2. Permissions from positions held in any project structure
-  try {
-    const structPosP = db.prepare(`
-      SELECT pp.permissionCode
-      FROM structure_position_users spu
-      JOIN structure_positions sp ON spu.structurePositionId = sp.id
-      JOIN position_permissions pp ON sp.positionId = pp.positionId
-      WHERE spu.userId = ?
-    `).all(user.id) as { permissionCode: string }[];
-    structPosP.forEach((p) => permSet.add(p.permissionCode));
-  } catch (e) {}
-
-  return Array.from(permSet);
+  return Array.from(getExplicitUserAndPosPerms());
 }
 
 // Check permission helper (supports single code or array of acceptable codes)
 function hasPermission(user: any, permissionCode: string | string[]): boolean {
   if (!user) return false;
-  if (user.role === 'ADMIN') return true;
-  if (!Array.isArray(user.permissions)) return false;
+  const perms = Array.isArray(user.permissions) ? user.permissions : [];
+  const checkSingle = (c: string) => {
+    if (EXPLICIT_ONLY_PERMISSIONS.has(c)) {
+      return perms.includes(c);
+    }
+    return user.role === 'ADMIN' || perms.includes(c);
+  };
   if (Array.isArray(permissionCode)) {
-    return permissionCode.some((c) => user.permissions.includes(c));
+    return permissionCode.some((c) => checkSingle(c));
   }
-  return user.permissions.includes(permissionCode);
+  return checkSingle(permissionCode);
 }
 
 // Majority calculator helper
@@ -160,6 +174,53 @@ function calculateMajorityForProject(projectId: string) {
       total: votes.length,
     },
   };
+}
+
+// Audit & Status History Helper (records every project/workflow operation)
+function recordProjectHistory(params: {
+  projectId: string;
+  stepOrder?: number | null;
+  fromUserId: string;
+  toPositionId?: string | null;
+  action: string;
+  comment?: string;
+  createdAt?: string;
+}) {
+  try {
+    db.prepare(`
+      INSERT INTO workflow_logs (id, projectId, stepOrder, fromUserId, toPositionId, action, comment, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      `log-${randomUUID().substring(0, 8)}`,
+      params.projectId,
+      params.stepOrder || 1,
+      params.fromUserId,
+      params.toPositionId || null,
+      params.action,
+      params.comment || '',
+      params.createdAt || new Date().toISOString()
+    );
+  } catch (e) {
+    console.error('Failed to record project history:', e);
+  }
+}
+
+// Mask confidential vote choice inside history logs when viewer lacks voting.confidential.view_all
+function sanitizeWorkflowLogsForViewer(logs: any[], viewer: any) {
+  const canInspectConfidential = hasPermission(viewer, 'voting.confidential.view_all');
+  return logs.map((l) => {
+    if (
+      !canInspectConfidential &&
+      viewer?.id !== l.fromUserId &&
+      (l.action === 'VOTE_CAST' || l.action === 'VOTE_UPDATED')
+    ) {
+      return {
+        ...l,
+        comment: 'ثبت / بروزرسانی رای تخصصی در کارتابل (محتوای رای محرمانه است)',
+      };
+    }
+    return l;
+  });
 }
 
 // --------------------------------------------------------------------------
@@ -773,23 +834,169 @@ function parseStepConfig(configJson?: string | null) {
   }
 }
 
+function parseStepPositionIds(step: any): string[] {
+  if (!step) return [];
+  if (Array.isArray(step.positionIds) && step.positionIds.length > 0) {
+    return Array.from(new Set(step.positionIds.filter((id: any) => typeof id === 'string' && id.trim())));
+  }
+  if (step.positionIdsJson) {
+    try {
+      const parsed = JSON.parse(step.positionIdsJson);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return Array.from(new Set(parsed.filter((id: any) => typeof id === 'string' && id.trim())));
+      }
+    } catch {}
+  }
+  return step.positionId ? [step.positionId] : [];
+}
+
+function getPositionsLookupMap() {
+  const rows = db.prepare('SELECT id, title, color FROM positions').all() as Array<{ id: string; title: string; color?: string }>;
+  const map = new Map<string, { id: string; title: string; color?: string }>();
+  for (const r of rows) {
+    map.set(r.id, r);
+  }
+  return map;
+}
+
+function enrichStepObject(step: any, posMap: Map<string, { id: string; title: string; color?: string }>) {
+  const positionIds = parseStepPositionIds(step);
+  const positions = positionIds
+    .map((pid) => posMap.get(pid))
+    .filter((p): p is { id: string; title: string; color?: string } => Boolean(p));
+
+  if (positions.length === 0 && step.positionId && step.positionTitle) {
+    positions.push({ id: step.positionId, title: step.positionTitle, color: step.positionColor });
+  }
+
+  return {
+    ...step,
+    positionId: positionIds[0] || step.positionId,
+    positionIds,
+    positions,
+    positionTitle: positions.length > 0 ? positions.map((p) => p.title).join('، ') : step.positionTitle,
+    config: parseStepConfig(step.configJson),
+  };
+}
+
+function resolveAssigneesForStepPositions(
+  positionIds: string[],
+  structureId: string | null | undefined,
+  allUsers: any[],
+  structAssignments: Array<{ userId: string; positionId: string; structureId: string; structureTitle?: string }>,
+  posMap?: Map<string, { id: string; title: string; color?: string }>
+) {
+  if (!positionIds || positionIds.length === 0) return [];
+  const targetPosSet = new Set(positionIds);
+  const map = new Map<string, {
+    id: string;
+    name: string;
+    username: string;
+    avatar?: string;
+    phone?: string;
+    role: string;
+    positionTitle?: string;
+    sources: string[];
+  }>();
+
+  const getPosLabel = (pid: string) => posMap?.get(pid)?.title || 'سمت سازمانی';
+
+  // Direct primary position holders across ALL parallel positions in the step
+  for (const u of allUsers) {
+    if (u.positionId && targetPosSet.has(u.positionId)) {
+      const src = positionIds.length > 1 ? `سمت: ${getPosLabel(u.positionId)}` : 'سمت سازمانی اصلی';
+      map.set(u.id, {
+        id: u.id,
+        name: u.name,
+        username: u.username,
+        avatar: u.avatar,
+        phone: u.phone,
+        role: u.role,
+        positionTitle: u.positionTitle,
+        sources: [src],
+      });
+    }
+  }
+
+  // Structure-specific position holders across ALL parallel positions in the step
+  for (const sa of structAssignments) {
+    if (targetPosSet.has(sa.positionId) && (!structureId || sa.structureId === structureId)) {
+      const u = allUsers.find((usr) => usr.id === sa.userId);
+      if (!u) continue;
+      const posPrefix = positionIds.length > 1 ? ` (${getPosLabel(sa.positionId)})` : '';
+      const srcLabel = (sa.structureTitle ? `ساختار: ${sa.structureTitle}` : 'ساختار سازمانی') + posPrefix;
+      const existing = map.get(u.id);
+      if (existing) {
+        if (!existing.sources.includes(srcLabel)) existing.sources.push(srcLabel);
+      } else {
+        map.set(u.id, {
+          id: u.id,
+          name: u.name,
+          username: u.username,
+          avatar: u.avatar,
+          phone: u.phone,
+          role: u.role,
+          positionTitle: u.positionTitle,
+          sources: [srcLabel],
+        });
+      }
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+function getRequiredApprovalsForMode(mode: string | undefined, totalAssignees: number): number {
+  const n = Math.max(1, totalAssignees);
+  if (mode === 'ALL') return n;
+  if (mode === 'MAJORITY') return Math.floor(n / 2) + 1;
+  return 1;
+}
+
+function buildStepApprovalProgress(
+  projectId: string,
+  stepOrder: number,
+  approvalMode: string | undefined,
+  assignees: any[],
+  viewerUserId?: string
+) {
+  const mode = (approvalMode || 'SINGLE') as 'SINGLE' | 'MAJORITY' | 'ALL' | 'NOTIFY_ONLY';
+  const rows = db.prepare(`
+    SELECT wsa.userId, wsa.createdAt, u.name as userName, p.title as positionTitle
+    FROM workflow_step_approvals wsa
+    JOIN users u ON wsa.userId = u.id
+    LEFT JOIN positions p ON u.positionId = p.id
+    WHERE wsa.projectId = ? AND wsa.stepOrder = ?
+    ORDER BY wsa.createdAt ASC
+  `).all(projectId, stepOrder) as Array<{ userId: string; userName: string; positionTitle?: string; createdAt: string }>;
+
+  const requiredCount = getRequiredApprovalsForMode(mode, assignees.length);
+  return {
+    mode,
+    approvedUserIds: rows.map((r) => r.userId),
+    approvedUsers: rows,
+    totalAssignees: assignees.length,
+    requiredCount,
+    hasCurrentUserApproved: Boolean(viewerUserId && rows.some((r) => r.userId === viewerUserId)),
+  };
+}
+
 apiRouter.get('/workflows', (_req: Request, res: Response) => {
   const workflows = db.prepare('SELECT * FROM workflows ORDER BY isDefault DESC, title ASC').all() as any[];
   const steps = db.prepare(`
     SELECT s.*, p.title as positionTitle, p.color as positionColor, ps.title as structureTitle
     FROM workflow_steps s
-    JOIN positions p ON s.positionId = p.id
+    LEFT JOIN positions p ON s.positionId = p.id
     LEFT JOIN project_structures ps ON s.structureId = ps.id
     ORDER BY s.workflowId ASC, s.stepOrder ASC
   `).all() as any[];
 
+  const posMap = getPositionsLookupMap();
+
   const result = workflows.map((wf) => {
     const wfSteps = steps
       .filter((s) => s.workflowId === wf.id)
-      .map((s) => ({
-        ...s,
-        config: parseStepConfig(s.configJson),
-      }));
+      .map((s) => enrichStepObject(s, posMap));
     return {
       ...wf,
       steps: wfSteps,
@@ -834,24 +1041,23 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
   const allStepsRaw = db.prepare(`
     SELECT s.*, p.title as positionTitle, p.color as positionColor, ps.title as structureTitle
     FROM workflow_steps s
-    JOIN positions p ON s.positionId = p.id
+    LEFT JOIN positions p ON s.positionId = p.id
     LEFT JOIN project_structures ps ON s.structureId = ps.id
     ORDER BY s.stepOrder ASC
   `).all() as any[];
 
-  const allSteps = allStepsRaw.map((s) => ({
-    ...s,
-    config: parseStepConfig(s.configJson),
-  }));
+  const posMap = getPositionsLookupMap();
+  const allSteps = allStepsRaw.map((s) => enrichStepObject(s, posMap));
 
-  const allLogs = db.prepare(`
-    SELECT l.*, u.name as fromUserName, pos.title as toPositionTitle, uPos.title as fromUserPosition
+  const allLogsRaw = db.prepare(`
+    SELECT l.*, u.name as fromUserName, u.username as fromUsername, pos.title as toPositionTitle, uPos.title as fromUserPosition
     FROM workflow_logs l
     JOIN users u ON l.fromUserId = u.id
     LEFT JOIN positions uPos ON u.positionId = uPos.id
     LEFT JOIN positions pos ON l.toPositionId = pos.id
     ORDER BY l.createdAt ASC
   `).all() as any[];
+  const allLogs = sanitizeWorkflowLogsForViewer(allLogsRaw, currentUser);
 
   const allUsers = db.prepare(`
     SELECT u.id, u.username, u.name, u.role, u.positionId, u.avatar, u.phone,
@@ -867,74 +1073,37 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
     LEFT JOIN project_structures ps ON sp.structureId = ps.id
   `).all() as Array<{ userId: string; positionId: string; structureId: string; structureTitle?: string }>;
 
-  const resolveAssigneesForPosition = (positionId?: string | null, structureId?: string | null) => {
-    if (!positionId) return [];
-    const map = new Map<string, {
-      id: string;
-      name: string;
-      username: string;
-      avatar?: string;
-      phone?: string;
-      role: string;
-      positionTitle?: string;
-      sources: string[];
-    }>();
-
-    // Direct primary position holders
-    for (const u of allUsers) {
-      if (u.positionId === positionId) {
-        map.set(u.id, {
-          id: u.id,
-          name: u.name,
-          username: u.username,
-          avatar: u.avatar,
-          phone: u.phone,
-          role: u.role,
-          positionTitle: u.positionTitle,
-          sources: ['سمت سازمانی اصلی'],
-        });
-      }
-    }
-
-    // Structure-specific position holders
-    for (const sa of structAssignments) {
-      if (sa.positionId === positionId && (!structureId || sa.structureId === structureId)) {
-        const u = allUsers.find((usr) => usr.id === sa.userId);
-        if (!u) continue;
-        const srcLabel = sa.structureTitle ? `ساختار: ${sa.structureTitle}` : 'ساختار سازمانی';
-        const existing = map.get(u.id);
-        if (existing) {
-          if (!existing.sources.includes(srcLabel)) existing.sources.push(srcLabel);
-        } else {
-          map.set(u.id, {
-            id: u.id,
-            name: u.name,
-            username: u.username,
-            avatar: u.avatar,
-            phone: u.phone,
-            role: u.role,
-            positionTitle: u.positionTitle,
-            sources: [srcLabel],
-          });
-        }
-      }
-    }
-
-    return Array.from(map.values());
-  };
-
   let items = projects.map((prj) => {
     const effectiveWfId = prj.workflowId || 'wf-standard';
     const prjStepsRaw = allSteps.filter((s) => s.workflowId === effectiveWfId);
     const steps = prjStepsRaw.map((st) => ({
       ...st,
-      assignees: resolveAssigneesForPosition(st.positionId, st.structureId),
+      assignees: resolveAssigneesForStepPositions(st.positionIds, st.structureId, allUsers, structAssignments, posMap),
     }));
     const currentStep = steps.find((s) => s.stepOrder === (prj.currentStepOrder || 1)) || null;
+    const currentPositionIds: string[] = currentStep
+      ? (currentStep.positionIds || [])
+      : prj.currentPositionId
+      ? [String(prj.currentPositionId)]
+      : [];
+    const currentPositions = currentPositionIds
+      .map((pid: string) => posMap.get(pid))
+      .filter((p: { id: string; title: string; color?: string } | undefined): p is { id: string; title: string; color?: string } => Boolean(p));
+
     const isCompletedOrRejected = prj.status === 'APPROVED' || prj.status === 'REJECTED';
     const currentAssignees = isCompletedOrRejected
       ? []
-      : resolveAssigneesForPosition(prj.currentPositionId, currentStep?.structureId || null);
+      : resolveAssigneesForStepPositions(currentPositionIds, currentStep?.structureId || null, allUsers, structAssignments, posMap);
+
+    const currentStepApprovalProgress = isCompletedOrRejected
+      ? null
+      : buildStepApprovalProgress(
+          prj.id,
+          prj.currentStepOrder || 1,
+          currentStep?.config?.approvalMode,
+          currentAssignees,
+          currentUser.id
+        );
 
     const logs = allLogs.filter((l) => l.projectId === prj.id);
     const expired = isDeadlineExpired(prj.deadline);
@@ -959,10 +1128,16 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
       currentStepActionType: currentStep?.actionType || '',
       currentStructureId: currentStep?.structureId || null,
       currentStructureTitle: currentStep?.structureTitle || null,
-      currentPositionId: prj.currentPositionId || null,
-      currentPositionTitle: prj.currentPositionTitle || currentStep?.positionTitle || null,
+      currentPositionId: prj.currentPositionId || currentPositionIds[0] || null,
+      currentPositionIds,
+      currentPositions,
+      currentPositionTitle:
+        currentPositions.length > 0
+          ? currentPositions.map((p) => p.title).join('، ')
+          : prj.currentPositionTitle || currentStep?.positionTitle || null,
       currentPositionColor: prj.currentPositionColor || currentStep?.positionColor || 'indigo',
       currentAssignees,
+      currentStepApprovalProgress,
       creatorId: prj.createdById || null,
       creatorName: prj.creatorName || 'نامشخص',
       creatorUsername: prj.creatorUsername || '',
@@ -986,6 +1161,7 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
   const qDateFrom = typeof req.query.dateFrom === 'string' ? req.query.dateFrom.trim() : '';
   const qDateTo = typeof req.query.dateTo === 'string' ? req.query.dateTo.trim() : '';
   const qDeadlineState = typeof req.query.deadlineState === 'string' ? req.query.deadlineState.trim() : '';
+  const qAction = typeof req.query.action === 'string' ? req.query.action.trim() : '';
 
   if (effectiveSearch) {
     items = items.filter(
@@ -994,6 +1170,7 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
         it.projectCode.toLowerCase().includes(effectiveSearch) ||
         it.projectTitle.toLowerCase().includes(effectiveSearch) ||
         it.workflowTitle.toLowerCase().includes(effectiveSearch) ||
+        (it.currentPositionTitle || '').toLowerCase().includes(effectiveSearch) ||
         it.currentAssignees.some(
           (a) =>
             a.name.toLowerCase().includes(effectiveSearch) ||
@@ -1018,7 +1195,9 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
     items = items.filter((it) => it.workflowId === qWorkflowId);
   }
   if (qPositionId) {
-    items = items.filter((it) => it.currentPositionId === qPositionId);
+    items = items.filter(
+      (it) => it.currentPositionId === qPositionId || (it.currentPositionIds && it.currentPositionIds.includes(qPositionId))
+    );
   }
   if (qStatus) {
     items = items.filter((it) => it.status === qStatus);
@@ -1033,6 +1212,9 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
     items = items.filter((it) => it.isDeadlineExpired);
   } else if (qDeadlineState === 'ACTIVE') {
     items = items.filter((it) => !it.isDeadlineExpired);
+  }
+  if (qAction) {
+    items = items.filter((it) => it.logs.some((l: any) => l.action === qAction));
   }
 
   res.json({ items });
@@ -1049,13 +1231,20 @@ apiRouter.post('/workflows', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'عنوان گردش کار و حداقل یک مرحله الزامی است.' });
   }
 
+  for (let i = 0; i < steps.length; i++) {
+    const posIds = parseStepPositionIds(steps[i]);
+    if (posIds.length === 0) {
+      return res.status(400).json({ error: `برای گام ${i + 1} حداقل یک سمت سازمانی انتخاب کنید.` });
+    }
+  }
+
   const id = `wf-${randomUUID().substring(0, 8)}`;
   const now = new Date().toISOString();
 
   const insertWf = db.prepare('INSERT INTO workflows (id, title, description, isDefault, createdAt) VALUES (?, ?, ?, ?, ?)');
   const insertStep = db.prepare(`
-    INSERT INTO workflow_steps (id, workflowId, stepOrder, title, structureId, positionId, actionType, description, configJson)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO workflow_steps (id, workflowId, stepOrder, title, structureId, positionId, positionIdsJson, actionType, description, configJson)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const tx = db.transaction(() => {
@@ -1065,14 +1254,16 @@ apiRouter.post('/workflows', (req: Request, res: Response) => {
     insertWf.run(id, title.trim(), description || '', isDefault ? 1 : 0, now);
     steps.forEach((s: any, idx: number) => {
       const cfg = s.config || parseStepConfig(s.configJson);
+      const posIds = parseStepPositionIds(s);
       insertStep.run(
         `st-${randomUUID().substring(0, 8)}`,
         id,
         idx + 1,
         s.title || `گام ${idx + 1}`,
         s.structureId || null,
-        s.positionId,
-        s.actionType || 'REVIEW',
+        posIds[0],
+        JSON.stringify(posIds),
+        s.actionType || 'APPROVAL',
         s.description || '',
         JSON.stringify(cfg || {})
       );
@@ -1096,6 +1287,13 @@ apiRouter.put('/workflows/:id', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'عنوان گردش کار و حداقل یک مرحله الزامی است.' });
   }
 
+  for (let i = 0; i < steps.length; i++) {
+    const posIds = parseStepPositionIds(steps[i]);
+    if (posIds.length === 0) {
+      return res.status(400).json({ error: `برای گام ${i + 1} حداقل یک سمت سازمانی انتخاب کنید.` });
+    }
+  }
+
   const tx = db.transaction(() => {
     if (isDefault) {
       db.prepare('UPDATE workflows SET isDefault = 0 WHERE id != ?').run(id);
@@ -1106,20 +1304,22 @@ apiRouter.put('/workflows/:id', (req: Request, res: Response) => {
     db.prepare('DELETE FROM workflow_steps WHERE workflowId = ?').run(id);
 
     const insertStep = db.prepare(`
-      INSERT INTO workflow_steps (id, workflowId, stepOrder, title, structureId, positionId, actionType, description, configJson)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO workflow_steps (id, workflowId, stepOrder, title, structureId, positionId, positionIdsJson, actionType, description, configJson)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     steps.forEach((s: any, idx: number) => {
       const cfg = s.config || parseStepConfig(s.configJson);
+      const posIds = parseStepPositionIds(s);
       insertStep.run(
         s.id && !s.id.startsWith('new-') ? s.id : `st-${randomUUID().substring(0, 8)}`,
         id,
         idx + 1,
         s.title || `گام ${idx + 1}`,
         s.structureId || null,
-        s.positionId,
-        s.actionType || 'REVIEW',
+        posIds[0],
+        JSON.stringify(posIds),
+        s.actionType || 'APPROVAL',
         s.description || '',
         JSON.stringify(cfg || {})
       );
@@ -1192,25 +1392,120 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
     ORDER BY stepOrder ASC
   `).all(project.workflowId || 'wf-standard') as any[];
 
-  let targetStepOrder = project.currentStepOrder;
+  let targetStepOrder = project.currentStepOrder || 1;
   let targetPositionId = project.currentPositionId;
   let newStatus = project.status;
-  const currentStep = steps.find((s) => s.stepOrder === project.currentStepOrder);
+  const currentStep = steps.find((s) => s.stepOrder === (project.currentStepOrder || 1));
   const currentConfig = parseStepConfig(currentStep?.configJson);
+  const currentPosIds = parseStepPositionIds(currentStep);
+
+  // Resolve current step assignees for approval quorum checks (MAJORITY / ALL)
+  const allUsers = db.prepare(`
+    SELECT u.id, u.username, u.name, u.role, u.positionId, p.title as positionTitle
+    FROM users u
+    LEFT JOIN positions p ON u.positionId = p.id
+  `).all() as any[];
+  const structAssignments = db.prepare(`
+    SELECT spu.userId, sp.positionId, sp.structureId, ps.title as structureTitle
+    FROM structure_position_users spu
+    JOIN structure_positions sp ON spu.structurePositionId = sp.id
+    LEFT JOIN project_structures ps ON sp.structureId = ps.id
+  `).all() as Array<{ userId: string; positionId: string; structureId: string; structureTitle?: string }>;
+  const stepAssignees = resolveAssigneesForStepPositions(
+    currentPosIds,
+    currentStep?.structureId || null,
+    allUsers,
+    structAssignments
+  );
 
   if (action === 'FORWARD' || action === 'APPROVED') {
+    const approvalMode = currentConfig.approvalMode || 'SINGLE';
+
+    if (approvalMode === 'MAJORITY' || approvalMode === 'ALL') {
+      db.prepare(`
+        INSERT INTO workflow_step_approvals (id, projectId, stepOrder, userId, positionId, comment, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(projectId, stepOrder, userId) DO UPDATE SET
+          comment = excluded.comment,
+          createdAt = excluded.createdAt
+      `).run(
+        `wsa-${randomUUID().substring(0, 8)}`,
+        projectId,
+        project.currentStepOrder || 1,
+        currentUser.id,
+        currentUser.positionId || currentPosIds[0] || null,
+        comment || '',
+        now
+      );
+
+      const currentApprovals = db.prepare(`
+        SELECT userId FROM workflow_step_approvals
+        WHERE projectId = ? AND stepOrder = ?
+      `).all(projectId, project.currentStepOrder || 1) as Array<{ userId: string }>;
+
+      const assigneeSet = new Set(stepAssignees.map((a) => a.id));
+      const matchedApprovalCount =
+        stepAssignees.length > 0
+          ? currentApprovals.filter((a) => assigneeSet.has(a.userId)).length
+          : currentApprovals.length;
+      const effectiveApprovedCount = Math.max(matchedApprovalCount, currentApprovals.length);
+      const requiredCount = getRequiredApprovalsForMode(approvalMode, stepAssignees.length);
+
+      if (effectiveApprovedCount < requiredCount) {
+        const stepNote = `تایید در مرحله «${currentStep?.title || `گام ${project.currentStepOrder}`}» ثبت شد (${effectiveApprovedCount} از ${requiredCount} تایید لازم)${comment ? ` — ${comment}` : ''}`;
+        db.prepare(`
+          INSERT INTO workflow_logs (id, projectId, stepOrder, fromUserId, toPositionId, action, comment, createdAt)
+          VALUES (?, ?, ?, ?, ?, 'STEP_APPROVED', ?, ?)
+        `).run(
+          logId,
+          projectId,
+          project.currentStepOrder || 1,
+          currentUser.id,
+          currentPosIds[0] || project.currentPositionId || null,
+          stepNote,
+          now
+        );
+
+        db.prepare('UPDATE projects SET updatedAt = ? WHERE id = ?').run(now, projectId);
+
+        return res.json({
+          success: true,
+          advanced: false,
+          approvedCount: effectiveApprovedCount,
+          requiredCount,
+          totalAssignees: stepAssignees.length,
+          currentStepOrder: project.currentStepOrder || 1,
+          currentPositionId: project.currentPositionId,
+          status: project.status,
+        });
+      }
+    }
+
+    // Threshold met (or SINGLE / NOTIFY_ONLY): clear step approvals and advance
+    db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ? AND stepOrder = ?')
+      .run(projectId, project.currentStepOrder || 1);
+
+    const isCurrentlyLastStep = steps.length === 0 || (project.currentStepOrder || 1) >= steps.length;
     if (nextStepOrder) {
       targetStepOrder = nextStepOrder;
-    } else if (currentConfig.onApproveStepOrder && currentConfig.onApproveStepOrder >= 1 && currentConfig.onApproveStepOrder <= steps.length) {
+    } else if (
+      currentConfig.onApproveStepOrder &&
+      currentConfig.onApproveStepOrder >= 1 &&
+      currentConfig.onApproveStepOrder <= steps.length
+    ) {
       targetStepOrder = currentConfig.onApproveStepOrder;
     } else {
-      targetStepOrder = Math.min(steps.length, project.currentStepOrder + 1);
+      targetStepOrder = Math.min(Math.max(1, steps.length), (project.currentStepOrder || 1) + 1);
     }
-    const targetStep = steps.find((s) => s.stepOrder === targetStepOrder);
-    targetPositionId = nextPositionId || (targetStep ? targetStep.positionId : project.currentPositionId);
 
-    if (targetStepOrder === steps.length && project.currentStepOrder === steps.length) {
+    const targetStep = steps.find((s) => s.stepOrder === targetStepOrder);
+    const targetPosIds = parseStepPositionIds(targetStep);
+    targetPositionId = nextPositionId || targetPosIds[0] || project.currentPositionId;
+
+    if (isCurrentlyLastStep && targetStepOrder >= Math.max(1, steps.length)) {
       newStatus = 'APPROVED';
+    } else {
+      newStatus = 'IN_REVIEW';
     }
   } else if (action === 'NEEDS_REVISION') {
     const rejectRule = currentConfig.onRejectAction || 'RETURN_PREV';
@@ -1220,21 +1515,29 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
       newStatus = 'NEEDS_REVISION';
       targetStepOrder = 1;
       const targetStep = steps.find((s) => s.stepOrder === 1);
-      targetPositionId = targetStep ? targetStep.positionId : project.currentPositionId;
+      targetPositionId = parseStepPositionIds(targetStep)[0] || project.currentPositionId;
     } else if (rejectRule === 'CUSTOM_STEP' && currentConfig.onRejectStepOrder) {
       newStatus = 'NEEDS_REVISION';
       targetStepOrder = Math.min(steps.length, Math.max(1, currentConfig.onRejectStepOrder));
       const targetStep = steps.find((s) => s.stepOrder === targetStepOrder);
-      targetPositionId = targetStep ? targetStep.positionId : project.currentPositionId;
+      targetPositionId = parseStepPositionIds(targetStep)[0] || project.currentPositionId;
     } else {
       newStatus = 'NEEDS_REVISION';
-      targetStepOrder = Math.max(1, project.currentStepOrder - 1);
+      targetStepOrder = Math.max(1, (project.currentStepOrder || 1) - 1);
       const targetStep = steps.find((s) => s.stepOrder === targetStepOrder);
-      targetPositionId = targetStep ? targetStep.positionId : project.currentPositionId;
+      targetPositionId = parseStepPositionIds(targetStep)[0] || project.currentPositionId;
     }
+    db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ? AND stepOrder >= ?')
+      .run(projectId, targetStepOrder);
   } else if (action === 'REJECTED') {
+    db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ?').run(projectId);
     newStatus = 'REJECTED';
   }
+
+  const loggedAction =
+    (action === 'FORWARD' || action === 'APPROVED') && newStatus === 'APPROVED'
+      ? 'FINAL_APPROVED'
+      : action;
 
   db.prepare(`
     INSERT INTO workflow_logs (id, projectId, stepOrder, fromUserId, toPositionId, action, comment, createdAt)
@@ -1242,10 +1545,10 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
   `).run(
     logId,
     projectId,
-    project.currentStepOrder,
+    project.currentStepOrder || 1,
     currentUser.id,
     targetPositionId,
-    action,
+    loggedAction,
     comment || '',
     now
   );
@@ -1257,7 +1560,7 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
   `).run(targetStepOrder, targetPositionId, newStatus, now, projectId);
 
   // Send group notification to chat
-  const actionText = action === 'FORWARD' ? 'تایید و ارجاع به مرحله بعد' : action === 'NEEDS_REVISION' ? 'درخواست اصلاح و ارجاع به گام قبل' : action === 'REJECTED' ? 'رد طرح در گردش کار' : 'تایید نهایی';
+  const actionText = loggedAction === 'FINAL_APPROVED' ? 'تصویب نهایی و اتمام گردش کار' : action === 'FORWARD' ? 'تایید و ارجاع به مرحله بعد' : action === 'NEEDS_REVISION' ? 'درخواست اصلاح و ارجاع به گام قبل' : action === 'REJECTED' ? 'رد طرح در گردش کار' : 'تایید نهایی';
   db.prepare(`
     INSERT INTO messages (id, senderId, receiverId, isGroup, content, projectId, createdAt)
     VALUES (?, ?, NULL, 1, ?, ?, ?)
@@ -1271,6 +1574,7 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
 
   res.json({
     success: true,
+    advanced: true,
     currentStepOrder: targetStepOrder,
     currentPositionId: targetPositionId,
     status: newStatus,
@@ -1278,18 +1582,22 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
 });
 
 apiRouter.get('/projects/:id/workflow-logs', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) {
+    return res.status(401).json({ error: 'کاربر احراز هویت نشده است.' });
+  }
   const { id } = req.params;
-  const logs = db.prepare(`
-    SELECT l.*, u.name as fromUserName, pos.title as toPositionTitle, uPos.title as fromUserPosition
+  const rawLogs = db.prepare(`
+    SELECT l.*, u.name as fromUserName, u.username as fromUsername, pos.title as toPositionTitle, uPos.title as fromUserPosition
     FROM workflow_logs l
     JOIN users u ON l.fromUserId = u.id
     LEFT JOIN positions uPos ON u.positionId = uPos.id
     LEFT JOIN positions pos ON l.toPositionId = pos.id
     WHERE l.projectId = ?
     ORDER BY l.createdAt ASC
-  `).all(id);
+  `).all(id) as any[];
 
-  res.json({ logs });
+  res.json({ logs: sanitizeWorkflowLogsForViewer(rawLogs, currentUser) });
 });
 
 // --------------------------------------------------------------------------
@@ -1984,35 +2292,44 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
 
   // Pre-fetch workflow steps and logs
   const allStepsRaw = db.prepare(`
-    SELECT s.*, p.title as positionTitle, p.color as positionColor
+    SELECT s.*, p.title as positionTitle, p.color as positionColor, ps.title as structureTitle
     FROM workflow_steps s
-    JOIN positions p ON s.positionId = p.id
+    LEFT JOIN positions p ON s.positionId = p.id
+    LEFT JOIN project_structures ps ON s.structureId = ps.id
     ORDER BY s.stepOrder ASC
   `).all() as any[];
 
-  const allSteps = allStepsRaw.map((s) => ({
-    ...s,
-    config: parseStepConfig(s.configJson),
-  }));
+  const posMap = getPositionsLookupMap();
+  const allSteps = allStepsRaw.map((s) => enrichStepObject(s, posMap));
 
-  const allLogs = db.prepare(`
-    SELECT l.*, u.name as fromUserName, pos.title as toPositionTitle, uPos.title as fromUserPosition
+  const allLogsRaw = db.prepare(`
+    SELECT l.*, u.name as fromUserName, u.username as fromUsername, pos.title as toPositionTitle, uPos.title as fromUserPosition
     FROM workflow_logs l
     JOIN users u ON l.fromUserId = u.id
     LEFT JOIN positions uPos ON u.positionId = uPos.id
     LEFT JOIN positions pos ON l.toPositionId = pos.id
     ORDER BY l.createdAt ASC
   `).all() as any[];
+  const allLogs = sanitizeWorkflowLogsForViewer(allLogsRaw, currentUser);
 
   const canViewConfidential = hasPermission(currentUser, 'voting.confidential.view_all');
 
-  // Pre-fetch structure position assignments for currentUser so workflow turn detection works inside structures too
-  const userStructureAssignments = db.prepare(`
-    SELECT sp.structureId, sp.positionId
+  // Pre-fetch users & structure assignments so multi-position steps and member counts resolve consistently
+  const allUsers = db.prepare(`
+    SELECT u.id, u.username, u.name, u.role, u.positionId, u.avatar, u.phone,
+           p.title as positionTitle, p.color as positionColor
+    FROM users u
+    LEFT JOIN positions p ON u.positionId = p.id
+  `).all() as any[];
+
+  const allStructAssignments = db.prepare(`
+    SELECT spu.userId, sp.positionId, sp.structureId, ps.title as structureTitle
     FROM structure_position_users spu
     JOIN structure_positions sp ON spu.structurePositionId = sp.id
-    WHERE spu.userId = ?
-  `).all(currentUser.id) as Array<{ structureId: string; positionId: string }>;
+    LEFT JOIN project_structures ps ON sp.structureId = ps.id
+  `).all() as Array<{ userId: string; positionId: string; structureId: string; structureTitle?: string }>;
+
+  const userStructureAssignments = allStructAssignments.filter((sa) => sa.userId === currentUser.id);
 
   const result = projects.map((prj) => {
     let requirements = {};
@@ -2027,15 +2344,53 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
     const prjLogs = allLogs.filter((l) => l.projectId === prj.id);
     const prjAttachments = allAttachments.filter((a) => a.projectId === prj.id);
 
-    const currentStepObj = prjSteps.find((s) => s.stepOrder === prj.currentStepOrder);
+    const isCompletedOrRejected = prj.status === 'APPROVED' || prj.status === 'REJECTED';
+    const currentStepObj = prjSteps.find((s) => s.stepOrder === (prj.currentStepOrder || 1));
+    const currentPositionIds: string[] = currentStepObj
+      ? currentStepObj.positionIds
+      : prj.currentPositionId
+      ? [prj.currentPositionId]
+      : [];
+    const currentPositions = currentPositionIds
+      .map((pid) => posMap.get(pid))
+      .filter((p): p is { id: string; title: string; color?: string } => Boolean(p));
+
+    const currentPositionTitle =
+      currentPositions.length > 0
+        ? currentPositions.map((p) => p.title).join('، ')
+        : prj.currentPositionTitle || currentStepObj?.positionTitle || '';
+
+    const currentAssignees = isCompletedOrRejected
+      ? []
+      : resolveAssigneesForStepPositions(
+          currentPositionIds,
+          currentStepObj?.structureId || null,
+          allUsers,
+          allStructAssignments,
+          posMap
+        );
+
+    const currentStepApprovalProgress = isCompletedOrRejected
+      ? null
+      : buildStepApprovalProgress(
+          prj.id,
+          prj.currentStepOrder || 1,
+          currentStepObj?.config?.approvalMode,
+          currentAssignees,
+          currentUser.id
+        );
+
     const isDirectPosMatch = Boolean(
-      currentUser.positionId && prj.currentPositionId && currentUser.positionId === prj.currentPositionId
+      !isCompletedOrRejected &&
+      currentUser.positionId &&
+      currentPositionIds.includes(currentUser.positionId)
     );
     const isStructPosMatch = Boolean(
-      prj.currentPositionId &&
+      !isCompletedOrRejected &&
+      currentPositionIds.length > 0 &&
       userStructureAssignments.some(
         (a) =>
-          a.positionId === prj.currentPositionId &&
+          currentPositionIds.includes(a.positionId) &&
           (!currentStepObj?.structureId || a.structureId === currentStepObj.structureId)
       )
     );
@@ -2068,6 +2423,11 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
 
       return {
         ...prj,
+        currentPositionIds,
+        currentPositions,
+        currentPositionTitle,
+        currentAssignees,
+        currentStepApprovalProgress,
         deliveryDate: prj.deliveryDate || '',
         isDeadlineExpired: expired,
         isMyWorkflowTurn,
@@ -2087,6 +2447,11 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
       // Standard Council Member (CONFIDENTIALITY ENFORCED)
       return {
         ...prj,
+        currentPositionIds,
+        currentPositions,
+        currentPositionTitle,
+        currentAssignees,
+        currentStepApprovalProgress,
         deliveryDate: prj.deliveryDate || '',
         isDeadlineExpired: expired,
         isMyWorkflowTurn,
@@ -2113,7 +2478,7 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
     return res.status(403).json({ error: 'شما مجاز به ایجاد پروژه جدید نیستید.' });
   }
 
-  const { title, code, description, productionType, location, deadline, deliveryDate, budgetEstimated, requirements, workflowId } = req.body;
+  const { title, code, description, productionType, location, deadline, deliveryDate, budgetEstimated, requirements, workflowId, status: requestedStatus } = req.body;
   if (!title || !title.trim()) {
     return res.status(400).json({ error: 'نام پروژه الزامی است.' });
   }
@@ -2130,9 +2495,17 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
     targetWorkflowId = defaultWf?.id || 'wf-standard';
   }
 
+  const wfStepsCount = (db.prepare('SELECT count(*) as count FROM workflow_steps WHERE workflowId = ?').get(targetWorkflowId) as any)?.count || 0;
+  if (requestedStatus === 'APPROVED' && wfStepsCount > 0 && !hasPermission(currentUser, 'projects.manual_approve')) {
+    return res.status(403).json({ error: 'امکان تایید نهایی دستی بدون طی گردش کار وجود ندارد (نیازمند دسترسی تایید نهایی دستی).' });
+  }
+
+  const initialStatus = requestedStatus === 'APPROVED' ? 'APPROVED' : 'IN_REVIEW';
+
   // Find first step position of this workflow
-  const firstStep = db.prepare('SELECT positionId FROM workflow_steps WHERE workflowId = ? ORDER BY stepOrder ASC LIMIT 1').get(targetWorkflowId) as any;
-  const initialPositionId = firstStep?.positionId || null;
+  const firstStep = db.prepare('SELECT positionId, positionIdsJson FROM workflow_steps WHERE workflowId = ? ORDER BY stepOrder ASC LIMIT 1').get(targetWorkflowId) as any;
+  const firstStepPosIds = parseStepPositionIds(firstStep);
+  const initialPositionId = firstStepPosIds[0] || firstStep?.positionId || null;
 
   try {
     db.prepare(`
@@ -2140,7 +2513,7 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
         id, title, code, description, productionType, location, deadline, deliveryDate, budgetEstimated,
         status, majorityResult, requirementsJson, createdById, workflowId, currentStepOrder, currentPositionId, workflowTrackingCode, createdAt, updatedAt
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'IN_REVIEW', 'PENDING', ?, ?, ?, 1, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, 1, ?, ?, ?, ?)
     `).run(
       id,
       title.trim(),
@@ -2151,6 +2524,7 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
       deadline || '',
       deliveryDate || '',
       budgetEstimated || '',
+      initialStatus,
       JSON.stringify(requirements || {}),
       currentUser.id,
       targetWorkflowId,
@@ -2159,6 +2533,17 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
       now,
       now
     );
+
+    // Record initial PROJECT_CREATED audit log in workflow history
+    recordProjectHistory({
+      projectId: id,
+      stepOrder: 1,
+      fromUserId: currentUser.id,
+      toPositionId: initialPositionId,
+      action: 'PROJECT_CREATED',
+      comment: `ثبت اولیه پروژه «${title.trim()}» و ورود به گردش کار (کد گردش: ${workflowTrackingCode})`,
+      createdAt: now,
+    });
 
     // Broadcast notification to Council Chat
     db.prepare(`
@@ -2205,7 +2590,20 @@ apiRouter.put('/projects/:id', (req: Request, res: Response) => {
   }
 
   const { id } = req.params;
+  const prevProject = db.prepare('SELECT id, title, status, deadline, workflowId, currentStepOrder, currentPositionId FROM projects WHERE id = ?').get(id) as any;
   const { title, code, description, productionType, location, deadline, deliveryDate, budgetEstimated, requirements, status, workflowId } = req.body;
+
+  // Guard: Manual final approval of workflow projects requires explicit projects.manual_approve permission (even for ADMIN)
+  if (status === 'APPROVED' && prevProject?.status !== 'APPROVED') {
+    const effectiveWfId = workflowId || prevProject?.workflowId || 'wf-standard';
+    const hasWorkflowSteps = ((db.prepare('SELECT count(*) as count FROM workflow_steps WHERE workflowId = ?').get(effectiveWfId) as any)?.count || 0) > 0;
+    if (hasWorkflowSteps && !hasPermission(currentUser, 'projects.manual_approve')) {
+      return res.status(403).json({
+        error: 'امکان تایید نهایی دستی وجود ندارد؛ پروژه باید از طریق مراحل گردش کار تایید شود (نیازمند دسترسی تایید نهایی دستی).',
+      });
+    }
+  }
+
   const now = new Date().toISOString();
 
   db.prepare(`
@@ -2230,7 +2628,89 @@ apiRouter.put('/projects/:id', (req: Request, res: Response) => {
     id
   );
 
+  // Record audit history for edit / status change / deadline extension
+  if (prevProject) {
+    const statusLabels: Record<string, string> = {
+      IN_REVIEW: 'در حال بررسی',
+      APPROVED: 'تایید نهایی',
+      NEEDS_REVISION: 'نیازمند اصلاح',
+      REJECTED: 'رد شده',
+    };
+    const isStatusChanged = Boolean(status && status !== prevProject.status);
+    const changes: string[] = [];
+    if (isStatusChanged) {
+      changes.push(`تغییر وضعیت از «${statusLabels[prevProject.status] || prevProject.status}» به «${statusLabels[status] || status}»`);
+    }
+    if ((deadline || '') !== (prevProject.deadline || '')) {
+      changes.push(`بروزرسانی مهلت ارزیابی به «${deadline || 'بدون مهلت'}»`);
+    }
+    if (workflowId && workflowId !== prevProject.workflowId) {
+      changes.push('تغییر فرآیند گردش کار');
+    }
+    if (title && title !== prevProject.title) {
+      changes.push(`تغییر عنوان به «${title}»`);
+    }
+    recordProjectHistory({
+      projectId: id,
+      stepOrder: prevProject.currentStepOrder || 1,
+      fromUserId: currentUser.id,
+      toPositionId: prevProject.currentPositionId || null,
+      action: isStatusChanged ? 'STATUS_CHANGED' : 'PROJECT_EDITED',
+      comment: changes.length > 0 ? changes.join(' • ') : `ویرایش مشخصات پروژه «${title || prevProject.title}»`,
+      createdAt: now,
+    });
+  }
+
   res.json({ success: true });
+});
+
+// Explicit manual final approval outside workflow (strictly requires projects.manual_approve even for ADMIN)
+apiRouter.post('/projects/:id/manual-approve', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || !hasPermission(currentUser, 'projects.manual_approve')) {
+    return res.status(403).json({
+      error: 'عدم دسترسی: فقط کاربران دارای مجوز «تایید نهایی دستی (خارج از گردش کار)» مجاز به تایید دستی پروژه هستند.',
+    });
+  }
+
+  const { id } = req.params;
+  const { comment } = req.body || {};
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as any;
+  if (!project) {
+    return res.status(404).json({ error: 'پروژه یافت نشد.' });
+  }
+
+  const now = new Date().toISOString();
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ?').run(id);
+    db.prepare("UPDATE projects SET status = 'APPROVED', updatedAt = ? WHERE id = ?").run(now, id);
+
+    recordProjectHistory({
+      projectId: id,
+      stepOrder: project.currentStepOrder || 1,
+      fromUserId: currentUser.id,
+      toPositionId: project.currentPositionId || null,
+      action: 'MANUAL_APPROVED',
+      comment: comment?.trim()
+        ? `تایید نهایی دستی خارج از گردش کار — ${comment.trim()}`
+        : 'تایید نهایی دستی پروژه توسط دارنده مجوز ویژه (خارج از روال عادی گردش کار)',
+      createdAt: now,
+    });
+
+    db.prepare(`
+      INSERT INTO messages (id, senderId, receiverId, isGroup, content, projectId, createdAt)
+      VALUES (?, ?, NULL, 1, ?, ?, ?)
+    `).run(
+      `msg-${randomUUID().substring(0, 8)}`,
+      currentUser.id,
+      `پروژه «${project.title}» توسط ${currentUser.name} با مجوز تایید نهایی دستی به تصویب رسید.`,
+      id,
+      now
+    );
+  });
+  tx();
+
+  res.json({ success: true, status: 'APPROVED' });
 });
 
 apiRouter.delete('/projects/:id', (req: Request, res: Response) => {
@@ -2239,6 +2719,7 @@ apiRouter.delete('/projects/:id', (req: Request, res: Response) => {
     return res.status(403).json({ error: 'شما مجاز به حذف پروژه نیستید.' });
   }
   const { id } = req.params;
+  db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ?').run(id);
   db.prepare('DELETE FROM project_attachments WHERE projectId = ?').run(id);
   db.prepare('DELETE FROM votes WHERE projectId = ?').run(id);
   db.prepare('DELETE FROM messages WHERE projectId = ?').run(id);
@@ -2438,6 +2919,17 @@ apiRouter.post('/projects/:id/attachments/stream', async (req: Request, res: Res
       now
     );
 
+    const prjStepInfo = db.prepare('SELECT currentStepOrder, currentPositionId FROM projects WHERE id = ?').get(projectId) as any;
+    recordProjectHistory({
+      projectId,
+      stepOrder: prjStepInfo?.currentStepOrder || 1,
+      fromUserId: currentUser.id,
+      toPositionId: prjStepInfo?.currentPositionId || null,
+      action: 'ATTACHMENT_UPLOADED',
+      comment: `پیوست فایل «${fileName.trim()}» (${sizeFormatted})`,
+      createdAt: now,
+    });
+
     const created = db.prepare(`
       SELECT a.id, a.projectId, a.fileName, a.fileSize, a.fileType, a.uploadedBy, a.createdAt,
              u.name as uploaderName
@@ -2524,6 +3016,17 @@ apiRouter.post('/projects/:id/attachments', (req: Request, res: Response) => {
       now
     );
 
+    const prjStepInfo = db.prepare('SELECT currentStepOrder, currentPositionId FROM projects WHERE id = ?').get(projectId) as any;
+    recordProjectHistory({
+      projectId,
+      stepOrder: prjStepInfo?.currentStepOrder || 1,
+      fromUserId: currentUser.id,
+      toPositionId: prjStepInfo?.currentPositionId || null,
+      action: 'ATTACHMENT_UPLOADED',
+      comment: `پیوست فایل «${fileName.trim()}»`,
+      createdAt: now,
+    });
+
     const created = db.prepare(`
       SELECT a.id, a.projectId, a.fileName, a.fileSize, a.fileType, a.uploadedBy, a.createdAt,
              u.name as uploaderName
@@ -2568,6 +3071,7 @@ apiRouter.delete('/projects/:id/attachments/:attachmentId', (req: Request, res: 
 
     // Broadcast file deletion notification
     if (project) {
+      const delNow = new Date().toISOString();
       db.prepare(`
         INSERT INTO messages (id, senderId, receiverId, isGroup, content, projectId, createdAt)
         VALUES (?, ?, NULL, 1, ?, ?, ?)
@@ -2576,8 +3080,19 @@ apiRouter.delete('/projects/:id/attachments/:attachmentId', (req: Request, res: 
         currentUser.id,
         `فایل «${existing.fileName}» توسط ${currentUser.name} از پروژه «${project.title}» حذف گردید.`,
         projectId,
-        new Date().toISOString()
+        delNow
       );
+
+      const prjStepInfo = db.prepare('SELECT currentStepOrder, currentPositionId FROM projects WHERE id = ?').get(projectId) as any;
+      recordProjectHistory({
+        projectId,
+        stepOrder: prjStepInfo?.currentStepOrder || 1,
+        fromUserId: currentUser.id,
+        toPositionId: prjStepInfo?.currentPositionId || null,
+        action: 'ATTACHMENT_DELETED',
+        comment: `حذف فایل پیوست «${existing.fileName}»`,
+        createdAt: delNow,
+      });
     }
 
     res.json({ success: true, deletedId: attachmentId });
@@ -2650,6 +3165,20 @@ apiRouter.post('/projects/:id/vote', (req: Request, res: Response) => {
     SET majorityResult = ?, updatedAt = ?
     WHERE id = ?
   `).run(majorityInfo.majority, now, projectId);
+
+  // Record vote action in workflow/audit history (comment redacted for non-confidential viewers)
+  const voteStatusLabel =
+    status === 'APPROVED' ? 'موافق / تایید' : status === 'REJECTED' ? 'مخالف / رد' : 'نیاز به اصلاح';
+  const prjStepInfo = db.prepare('SELECT currentStepOrder, currentPositionId FROM projects WHERE id = ?').get(projectId) as any;
+  recordProjectHistory({
+    projectId,
+    stepOrder: prjStepInfo?.currentStepOrder || 1,
+    fromUserId: currentUser.id,
+    toPositionId: prjStepInfo?.currentPositionId || null,
+    action: existingVote ? 'VOTE_UPDATED' : 'VOTE_CAST',
+    comment: `${existingVote ? 'ویرایش' : 'ثبت'} رای: ${voteStatusLabel}${reason && reason.trim() ? ` — «${reason.trim()}»` : ''}`,
+    createdAt: now,
+  });
 
   // Trigger SMS rules for vote and majority outcome
   const prj = db.prepare('SELECT id, title, code, createdById, budgetEstimated, deadline, location FROM projects WHERE id = ?').get(projectId) as any;

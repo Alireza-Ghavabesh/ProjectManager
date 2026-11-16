@@ -7,6 +7,7 @@ import {
 } from '../types';
 import { api } from '../services/api';
 import { hasPerm } from '../utils/permissions';
+import { getActionBadgeMeta, WORKFLOW_ACTION_OPTIONS } from '../utils/workflowActions';
 import {
   Search,
   Copy,
@@ -61,6 +62,7 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
   const [positionFilter, setPositionFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<'' | 'IN_REVIEW' | 'APPROVED' | 'NEEDS_REVISION' | 'REJECTED'>('');
   const [deadlineFilter, setDeadlineFilter] = useState<'' | 'ACTIVE' | 'EXPIRED'>('');
+  const [actionFilter, setActionFilter] = useState('');
   const [datePreset, setDatePreset] = useState<'ALL' | 'TODAY' | 'WEEK' | 'MONTH' | 'CUSTOM'>('ALL');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -71,7 +73,7 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
   const canForwardWorkflow = hasPerm(currentUser, 'workflow.forward');
-  const canViewHistory = hasPerm(currentUser, ['workflow.history.view', 'workflow.view', 'workflow.edit']);
+  const canViewHistory = hasPerm(currentUser, ['workflow.history.view', 'workflow.view', 'workflow.edit', 'workflow.forward']);
 
   const loadTracking = async () => {
     setLoading(true);
@@ -130,6 +132,7 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
     setPositionFilter('');
     setStatusFilter('');
     setDeadlineFilter('');
+    setActionFilter('');
     setDatePreset('ALL');
     setDateFrom('');
     setDateTo('');
@@ -143,6 +146,7 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
       positionFilter ||
       statusFilter ||
       deadlineFilter ||
+      actionFilter ||
       dateFrom ||
       dateTo ||
       sortBy !== 'CREATED_DESC'
@@ -182,10 +186,17 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
       }
 
       if (workflowFilter && it.workflowId !== workflowFilter) return false;
-      if (positionFilter && it.currentPositionId !== positionFilter) return false;
+      if (
+        positionFilter &&
+        it.currentPositionId !== positionFilter &&
+        !(it.currentPositionIds && it.currentPositionIds.includes(positionFilter))
+      ) {
+        return false;
+      }
       if (statusFilter && it.status !== statusFilter) return false;
       if (deadlineFilter === 'EXPIRED' && !it.isDeadlineExpired) return false;
       if (deadlineFilter === 'ACTIVE' && it.isDeadlineExpired) return false;
+      if (actionFilter && !it.logs.some((l) => l.action === actionFilter)) return false;
 
       const createdDate = (it.createdAt || '').slice(0, 10);
       if (dateFrom && createdDate < dateFrom) return false;
@@ -214,6 +225,7 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
     positionFilter,
     statusFilter,
     deadlineFilter,
+    actionFilter,
     dateFrom,
     dateTo,
     sortBy,
@@ -465,8 +477,8 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
           </div>
         </div>
 
-        {/* Row 2: Workflow, Position, Status, Deadline, Sort */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* Row 2: Workflow, Position, Deadline, Action Filter, Sort */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           <div>
             <label className="block text-[11px] font-bold text-slate-600 mb-1">
               فرآیند گردش کار
@@ -515,6 +527,24 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
               <option value="">همه مهلت‌ها</option>
               <option value="ACTIVE">دارای مهلت فعال</option>
               <option value="EXPIRED">مهلت منقضی‌شده</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-bold text-slate-600 mb-1">
+              نوع عملیات در تاریخچه
+            </label>
+            <select
+              value={actionFilter}
+              onChange={(e) => setActionFilter(e.target.value)}
+              className="w-full rounded-2xl bg-slate-50 focus:bg-white border border-slate-200 px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500"
+            >
+              <option value="">همه عملیات</option>
+              {WORKFLOW_ACTION_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -691,13 +721,40 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-slate-500 font-medium">سمت متصدی فعلی:</span>
-                      <span className="inline-flex items-center gap-1 font-bold text-slate-800 bg-white px-2 py-0.5 rounded-lg border border-slate-200">
-                        <Briefcase className="w-3 h-3 text-indigo-600" />
-                        {item.currentPositionTitle || 'تعیین‌نشده'}
-                      </span>
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-slate-500 font-medium shrink-0">سمت(های) متصدی فعلی:</span>
+                      <div className="flex flex-wrap justify-end gap-1">
+                        {item.currentPositions && item.currentPositions.length > 0 ? (
+                          item.currentPositions.map((p) => (
+                            <span
+                              key={p.id}
+                              className="inline-flex items-center gap-1 font-bold text-slate-800 bg-white px-2 py-0.5 rounded-lg border border-slate-200"
+                            >
+                              <Briefcase className="w-3 h-3 text-indigo-600" />
+                              {p.title}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="inline-flex items-center gap-1 font-bold text-slate-800 bg-white px-2 py-0.5 rounded-lg border border-slate-200">
+                            <Briefcase className="w-3 h-3 text-indigo-600" />
+                            {item.currentPositionTitle || 'تعیین‌نشده'}
+                          </span>
+                        )}
+                      </div>
                     </div>
+
+                    {item.currentStepApprovalProgress &&
+                      (item.currentStepApprovalProgress.mode === 'MAJORITY' ||
+                        item.currentStepApprovalProgress.mode === 'ALL') &&
+                      !isFinished && (
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-slate-500 font-medium">نصاب تایید مرحله:</span>
+                          <span className="font-bold text-violet-800 bg-violet-50 px-2 py-0.5 rounded-lg border border-violet-200 tabular-nums">
+                            {item.currentStepApprovalProgress.approvedUserIds.length} از{' '}
+                            {item.currentStepApprovalProgress.requiredCount} تایید لازم
+                          </span>
+                        </div>
+                      )}
 
                     {item.currentStructureTitle && (
                       <div className="flex items-center justify-between gap-2">
@@ -777,6 +834,37 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                   </div>
                 </div>
 
+                {/* Compact Latest Operation / Status Preview */}
+                {canViewHistory && item.logs.length > 0 && (() => {
+                  const lastLog = item.logs[item.logs.length - 1];
+                  const lastMeta = getActionBadgeMeta(lastLog.action);
+                  return (
+                    <div className="px-3.5 py-2.5 rounded-2xl bg-slate-50/90 border border-slate-200/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="flex items-center gap-2 flex-wrap min-w-0">
+                        <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1 shrink-0">
+                          <History className="w-3.5 h-3.5 text-indigo-600" />
+                          آخرین وضعیت / عملیات ثبت‌شده:
+                        </span>
+                        <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${lastMeta.badgeClass}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${lastMeta.dotClass}`} />
+                          {lastMeta.label}
+                        </span>
+                        <span className="font-bold text-slate-800">
+                          {lastLog.fromUserName || 'کاربر'}
+                        </span>
+                        {lastLog.comment && (
+                          <span className="text-[11px] text-slate-500 truncate max-w-md">
+                            — {lastLog.comment}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-slate-400 shrink-0">
+                        {formatJalaliDateTime(lastLog.createdAt)}
+                      </span>
+                    </div>
+                  );
+                })()}
+
                 {/* Bottom Action & Expand Strip */}
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
                   <button
@@ -787,13 +875,13 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                     {isExpanded ? (
                       <>
                         <ChevronUp className="w-4 h-4" />
-                        <span>بستن نقشه مراحل و تاریخچه ارجاعات</span>
+                        <span>بستن تاریخچه کامل وضعیت، عملیات و نقشه گام‌ها</span>
                       </>
                     ) : (
                       <>
                         <ChevronDown className="w-4 h-4" />
                         <span>
-                          مشاهده نقشه گام‌ها، نفرات هر مرحله و تاریخچه ارجاعات ({item.logs.length} ارجاع)
+                          مشاهده تاریخچه کامل وضعیت، عملیات و نقشه گام‌ها ({item.logs.length} رویداد)
                         </span>
                       </>
                     )}
@@ -854,9 +942,23 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                                   ) : null}
                                 </div>
 
-                                <div className="text-[11px] font-semibold text-indigo-700 flex items-center gap-1">
-                                  <Briefcase className="w-3 h-3 shrink-0" />
-                                  <span className="truncate">{st.positionTitle}</span>
+                                <div className="flex flex-wrap gap-1">
+                                  {st.positions && st.positions.length > 0 ? (
+                                    st.positions.map((p) => (
+                                      <span
+                                        key={p.id}
+                                        className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-700 bg-white px-1.5 py-0.5 rounded-md border border-indigo-200/80"
+                                      >
+                                        <Briefcase className="w-2.5 h-2.5 shrink-0" />
+                                        {p.title}
+                                      </span>
+                                    ))
+                                  ) : (
+                                    <div className="text-[11px] font-semibold text-indigo-700 flex items-center gap-1">
+                                      <Briefcase className="w-3 h-3 shrink-0" />
+                                      <span className="truncate">{st.positionTitle}</span>
+                                    </div>
+                                  )}
                                 </div>
 
                                 <div className="pt-1 border-t border-slate-200/70 flex flex-wrap gap-1">
@@ -883,60 +985,84 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                       </div>
                     )}
 
-                    {/* Workflow Logs */}
+                    {/* Full Project Status & Operations Audit Timeline */}
                     {canViewHistory && (
-                      <div className="space-y-2">
-                        <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                          <History className="w-3.5 h-3.5 text-blue-600" />
-                          <span>تاریخچه ارجاعات ثبت‌شده:</span>
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                            <History className="w-3.5 h-3.5 text-blue-600" />
+                            <span>تاریخچه کامل وضعیت و عملیات انجام‌شده روی پروژه:</span>
+                          </div>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                            {item.logs.length} رویداد ثبت‌شده
+                          </span>
                         </div>
                         {item.logs.length > 0 ? (
-                          <div className="space-y-2">
-                            {item.logs.map((log) => (
-                              <div
-                                key={log.id}
-                                className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2"
-                              >
-                                <div className="space-y-1">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="font-bold text-slate-900">
-                                      {log.fromUserName || 'کاربر'}
+                          <div className="relative pr-5 space-y-3 before:content-[''] before:absolute before:top-2 before:bottom-2 before:right-2 before:w-0.5 before:bg-slate-200">
+                            {item.logs.map((log, idx) => {
+                              const actionMeta = getActionBadgeMeta(log.action);
+                              return (
+                                <div key={log.id} className="relative">
+                                  <span
+                                    className={`w-3 h-3 rounded-full ring-4 ring-white border border-white absolute -right-4 top-3.5 ${actionMeta.dotClass}`}
+                                  />
+                                  <div className="p-3.5 rounded-2xl bg-slate-50/90 border border-slate-200/90 text-xs flex flex-col sm:flex-row sm:items-start justify-between gap-2.5">
+                                    <div className="space-y-1.5 min-w-0 flex-1">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="text-[10px] font-mono font-bold text-slate-400">
+                                          #{idx + 1}
+                                        </span>
+                                        <span
+                                          className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${actionMeta.badgeClass}`}
+                                        >
+                                          {actionMeta.label}
+                                        </span>
+                                        {log.stepOrder > 0 && (
+                                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-white border border-slate-200 text-slate-600">
+                                            گام {log.stepOrder}
+                                          </span>
+                                        )}
+                                        <span className="font-bold text-slate-900">
+                                          {log.fromUserName || 'کاربر'}
+                                        </span>
+                                        {log.fromUsername && (
+                                          <span
+                                            className="text-[10px] font-mono text-slate-400"
+                                            dir="ltr"
+                                          >
+                                            @{log.fromUsername}
+                                          </span>
+                                        )}
+                                        {log.fromUserPosition && (
+                                          <span className="text-[10px] px-2 py-0.5 rounded-lg bg-white border border-slate-200 text-slate-600">
+                                            {log.fromUserPosition}
+                                          </span>
+                                        )}
+                                        {log.toPositionTitle &&
+                                          ['FORWARD', 'NEEDS_REVISION', 'REJECTED', 'FINAL_APPROVED'].includes(log.action) && (
+                                            <span className="text-[11px] text-slate-600">
+                                              ← به سمت: <strong>{log.toPositionTitle}</strong>
+                                            </span>
+                                          )}
+                                      </div>
+                                      {log.comment && (
+                                        <p className="text-[11px] text-slate-700 leading-relaxed bg-white/80 px-3 py-1.5 rounded-xl border border-slate-200/70">
+                                          {log.comment}
+                                        </p>
+                                      )}
+                                    </div>
+                                    <span className="text-[10px] text-slate-500 font-medium shrink-0 flex items-center gap-1">
+                                      <Clock className="w-3 h-3 text-slate-400" />
+                                      {formatJalaliDateTime(log.createdAt)}
                                     </span>
-                                    {log.fromUserPosition && (
-                                      <span className="text-[10px] px-2 py-0.5 rounded-lg bg-white border border-slate-200 text-slate-600">
-                                        {log.fromUserPosition}
-                                      </span>
-                                    )}
-                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700">
-                                      {log.action === 'FORWARD'
-                                        ? 'تایید و ارجاع'
-                                        : log.action === 'NEEDS_REVISION'
-                                        ? 'عودت جهت اصلاح'
-                                        : log.action === 'REJECTED'
-                                        ? 'رد مرحله'
-                                        : log.action}
-                                    </span>
-                                    {log.toPositionTitle && (
-                                      <span className="text-[11px] text-slate-600">
-                                        به: <strong>{log.toPositionTitle}</strong>
-                                      </span>
-                                    )}
                                   </div>
-                                  {log.comment && (
-                                    <p className="text-[11px] text-slate-600 leading-relaxed">
-                                      {log.comment}
-                                    </p>
-                                  )}
                                 </div>
-                                <span className="text-[10px] text-slate-400 shrink-0">
-                                  {formatJalaliDateTime(log.createdAt)}
-                                </span>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         ) : (
                           <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-[11px] text-slate-500">
-                            هنوز ارجاعی در تاریخچه ثبت نشده است (پروژه در گام آغازین است).
+                            هنوز رویدادی در تاریخچه این پروژه ثبت نشده است.
                           </div>
                         )}
                       </div>

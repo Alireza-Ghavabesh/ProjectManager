@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Project, User } from '../types';
 import { api } from '../services/api';
+import { getActionBadgeMeta } from '../utils/workflowActions';
 import { 
   GitBranch, 
   CheckCircle2, 
@@ -32,10 +33,17 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
   const [error, setError] = useState('');
 
   const steps = project.workflowSteps || [];
-  const currentStepIndex = (project.currentStepOrder || 1) - 1;
+  const currentStepIndex = Math.max(0, (project.currentStepOrder || 1) - 1);
   const currentStep = steps[currentStepIndex];
   const nextStep = steps[currentStepIndex + 1];
   const logs = project.workflowLogs || [];
+  const stepProgress = project.currentStepApprovalProgress;
+  const currentApprovalMode = currentStep?.config?.approvalMode || stepProgress?.mode || 'SINGLE';
+  const showQuorumBar =
+    Boolean(stepProgress) &&
+    (currentApprovalMode === 'MAJORITY' || currentApprovalMode === 'ALL') &&
+    project.status !== 'APPROVED' &&
+    project.status !== 'REJECTED';
 
   const handleTransition = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -95,18 +103,25 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
         )}
 
         {/* Workflow Progression Roadmap */}
-        <div className="p-5 border-b border-slate-100 bg-slate-50/40">
-          <div className="text-xs font-bold text-slate-600 mb-3 flex items-center justify-between">
+        <div className="p-5 border-b border-slate-100 bg-slate-50/40 space-y-3">
+          <div className="text-xs font-bold text-slate-600 flex items-center justify-between">
             <span>مراحل طی‌شده در چارت سازمانی:</span>
-            <span className="text-blue-700 font-bold bg-blue-50 px-2.5 py-0.5 rounded-lg border border-blue-200">
+            <span className="text-blue-700 font-bold bg-blue-50 px-2.5 py-0.5 rounded-lg border border-blue-200 tabular-nums">
               گام {project.currentStepOrder || 1} از {steps.length}
             </span>
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {steps.map((st, idx) => {
-              const isPast = (project.currentStepOrder || 1) > st.stepOrder;
-              const isCurrent = (project.currentStepOrder || 1) === st.stepOrder;
+              const isPast = project.status === 'APPROVED' || (project.currentStepOrder || 1) > st.stepOrder;
+              const isCurrent =
+                project.status !== 'APPROVED' &&
+                project.status !== 'REJECTED' &&
+                (project.currentStepOrder || 1) === st.stepOrder;
+              const stepPosText =
+                st.positions && st.positions.length > 0
+                  ? st.positions.map((p) => p.title).join('، ')
+                  : st.positionTitle;
 
               return (
                 <div
@@ -123,9 +138,9 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
                     {isPast ? (
                       <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                     ) : isCurrent ? (
-                      <Clock className="w-4 h-4 text-blue-600 animate-pulse" />
+                      <Clock className="w-4 h-4 text-blue-600" />
                     ) : (
-                      <span className="w-4 h-4 rounded-full border border-slate-300 text-[10px] flex items-center justify-center font-bold text-slate-400">
+                      <span className="w-4 h-4 rounded-full border border-slate-300 text-[10px] flex items-center justify-center font-bold text-slate-400 tabular-nums">
                         {idx + 1}
                       </span>
                     )}
@@ -133,13 +148,50 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
                   <div className="text-xs font-bold truncate text-slate-900">
                     {st.title}
                   </div>
-                  <div className="text-[10px] text-slate-500 truncate mt-0.5">
-                    {st.positionTitle}
+                  <div className="text-[10px] text-slate-500 line-clamp-2 mt-0.5" title={stepPosText}>
+                    {stepPosText}
                   </div>
                 </div>
               );
             })}
           </div>
+
+          {/* Step Multi-User Quorum Progress Banner */}
+          {showQuorumBar && stepProgress && (
+            <div className="p-3 rounded-2xl bg-white border border-indigo-200 text-xs space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-bold text-slate-800">
+                  وضعیت حد نصاب تایید در این گام (
+                  {currentApprovalMode === 'MAJORITY' ? 'اکثریت اعضا' : 'تایید همه اعضا'}
+                  ):
+                </span>
+                <span className="font-black text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-lg border border-indigo-200 tabular-nums">
+                  {stepProgress.approvedUserIds.length} از {stepProgress.requiredCount} تایید لازم (کل افراد گام: {stepProgress.totalAssignees} نفر)
+                </span>
+              </div>
+
+              {stepProgress.approvedUsers.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                  <span className="text-slate-500">تاییدکنندگان تاکنون:</span>
+                  {stepProgress.approvedUsers.map((au) => (
+                    <span
+                      key={au.userId}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold"
+                    >
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                      {au.userName}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {stepProgress.hasCurrentUserApproved && (
+                <div className="text-[11px] font-bold text-emerald-700">
+                  شما پیش‌تر تایید خود را برای این مرحله ثبت کرده‌اید و پرونده در انتظار تکمیل حد نصاب سایر افراد است.
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Action Form */}
@@ -160,7 +212,9 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
                 }`}
               >
                 <CheckCircle2 className="w-5 h-5 mb-1 text-emerald-600" />
-                <span className="text-xs font-bold">تایید و ارجاع به بعد</span>
+                <span className="text-xs font-bold">
+                  {showQuorumBar ? 'ثبت تایید من در این مرحله' : 'تایید و ارجاع به بعد'}
+                </span>
                 <span className="text-[10px] text-slate-500 mt-0.5 truncate max-w-full">
                   {nextStep ? `به: ${nextStep.title}` : 'تصویب نهایی'}
                 </span>
@@ -222,39 +276,57 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
             />
           </div>
 
-          {/* Past Transition History Logs */}
+          {/* Past Operation & Transition History Logs */}
           {logs.length > 0 && (
             <div className="pt-3 border-t border-slate-100">
               <h4 className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-1.5">
                 <History className="w-3.5 h-3.5 text-blue-600" />
-                <span>سوابق ارجاعات و امضاهای قبلی این طرح:</span>
+                <span>تاریخچه وضعیت و عملیات ثبت‌شده روی این پروژه:</span>
               </h4>
-              <div className="space-y-2 max-h-36 overflow-y-auto">
-                {logs.map((l) => (
-                  <div
-                    key={l.id}
-                    className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs"
-                  >
-                    <div className="flex items-center justify-between text-[11px] mb-1">
-                      <span className="font-bold text-slate-900 flex items-center gap-1">
-                        <span>{l.fromUserName}</span>
-                        {l.fromUserPosition && (
-                          <span className="text-[9px] px-1.5 py-0.5 bg-blue-50 border border-blue-200 text-blue-700 rounded font-semibold">
-                            {l.fromUserPosition}
+              <div className="space-y-2 max-h-44 overflow-y-auto">
+                {logs.map((l) => {
+                  const actionMeta = getActionBadgeMeta(l.action);
+                  return (
+                    <div
+                      key={l.id}
+                      className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs"
+                    >
+                      <div className="flex items-center justify-between gap-2 text-[11px] mb-1">
+                        <span className="font-bold text-slate-900 flex items-center gap-1.5 flex-wrap">
+                          <span
+                            className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${actionMeta.badgeClass}`}
+                          >
+                            {actionMeta.label}
                           </span>
-                        )}
-                      </span>
-                      <span className="text-slate-400 text-[10px]">
-                        {new Date(l.createdAt).toLocaleDateString('fa-IR')}
-                      </span>
+                          <span>{l.fromUserName || 'کاربر'}</span>
+                          {l.fromUserPosition && (
+                            <span className="text-[9px] px-1.5 py-0.5 bg-white border border-slate-200 text-slate-600 rounded font-semibold">
+                              {l.fromUserPosition}
+                            </span>
+                          )}
+                          {l.toPositionTitle &&
+                            ['FORWARD', 'NEEDS_REVISION', 'REJECTED', 'FINAL_APPROVED'].includes(l.action) && (
+                              <span className="text-[10px] font-normal text-slate-600">
+                                ← {l.toPositionTitle}
+                              </span>
+                            )}
+                        </span>
+                        <span className="text-slate-400 text-[10px] shrink-0">
+                          {new Date(l.createdAt).toLocaleDateString('fa-IR')} •{' '}
+                          {new Date(l.createdAt).toLocaleTimeString('fa-IR', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </span>
+                      </div>
+                      {l.comment && (
+                        <p className="text-slate-600 text-[11px] leading-relaxed">
+                          {l.comment}
+                        </p>
+                      )}
                     </div>
-                    {l.comment && (
-                      <p className="text-slate-600 text-[11px] leading-relaxed">
-                        {l.comment}
-                      </p>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

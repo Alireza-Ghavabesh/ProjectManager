@@ -1,7 +1,6 @@
 import React from 'react';
 import { User } from '../types';
 import { hasAnyPerm } from '../utils/permissions';
-import { PWAInstallButton } from '../pwa/PWAComponents';
 import { 
   Building2, 
   Layers, 
@@ -335,13 +334,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           })}
         </div>
 
-        {/* Bottom Actions: PWA Install + Logout */}
+        {/* Bottom Actions: Logout */}
         <div className="p-3 border-t border-slate-100 bg-slate-50/60 space-y-2 shrink-0">
-          {!collapsed && (
-            <div className="flex justify-center">
-              <PWAInstallButton />
-            </div>
-          )}
 
           <button
             onClick={onLogout}

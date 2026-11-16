@@ -114,6 +114,20 @@ export interface WorkflowStepConfig {
   color?: string;
 }
 
+export interface WorkflowStepApprovalProgress {
+  mode: 'SINGLE' | 'MAJORITY' | 'ALL' | 'NOTIFY_ONLY';
+  approvedUserIds: string[];
+  approvedUsers: Array<{
+    userId: string;
+    userName: string;
+    positionTitle?: string;
+    createdAt: string;
+  }>;
+  totalAssignees: number;
+  requiredCount: number;
+  hasCurrentUserApproved: boolean;
+}
+
 export interface WorkflowStep {
   id: string;
   workflowId: string;
@@ -122,6 +136,8 @@ export interface WorkflowStep {
   structureId?: string | null;
   structureTitle?: string;
   positionId: string;
+  positionIds?: string[];
+  positions?: Array<{ id: string; title: string; color?: string }>;
   positionTitle?: string;
   positionColor?: string;
   actionType: string;
@@ -145,6 +161,7 @@ export interface WorkflowLog {
   stepOrder: number;
   fromUserId: string;
   fromUserName?: string;
+  fromUsername?: string;
   fromUserPosition?: string;
   toPositionId?: string;
   toPositionTitle?: string;
@@ -189,9 +206,12 @@ export interface WorkflowTrackingItem {
   currentStructureId?: string | null;
   currentStructureTitle?: string | null;
   currentPositionId?: string | null;
+  currentPositionIds?: string[];
+  currentPositions?: Array<{ id: string; title: string; color?: string }>;
   currentPositionTitle?: string | null;
   currentPositionColor?: string;
   currentAssignees: WorkflowTrackingAssignee[];
+  currentStepApprovalProgress?: WorkflowStepApprovalProgress | null;
   creatorId?: string | null;
   creatorName?: string;
   creatorUsername?: string;
@@ -234,8 +254,12 @@ export interface Project {
   workflowTitle?: string;
   currentStepOrder?: number;
   currentPositionId?: string;
+  currentPositionIds?: string[];
+  currentPositions?: Array<{ id: string; title: string; color?: string }>;
   currentPositionTitle?: string;
   currentPositionColor?: string;
+  currentAssignees?: WorkflowTrackingAssignee[];
+  currentStepApprovalProgress?: WorkflowStepApprovalProgress | null;
   workflowTrackingCode?: string;
   isMyWorkflowTurn?: boolean;
   createdAt: string;

@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { DynamicField, Project, ProjectAttachment, Workflow, UploadProgressInfo } from '../types';
+import { DynamicField, Project, ProjectAttachment, Workflow, UploadProgressInfo, User } from '../types';
 import { api, fileToBase64, formatFileSize } from '../services/api';
 import { ProjectAttachments } from './ProjectAttachments';
 import { PersianDatePicker } from './PersianDatePicker';
 import { formatCurrencyInput, formatBudgetDisplay } from '../utils/formatters';
+import { hasPerm } from '../utils/permissions';
 import { 
   X, 
   Calendar, 
@@ -25,6 +26,7 @@ import {
 
 interface CreateProjectModalProps {
   dynamicFields: DynamicField[];
+  currentUser?: User | null;
   onClose: () => void;
   onSuccess: () => void;
   editProject?: Project | null;
@@ -33,6 +35,7 @@ interface CreateProjectModalProps {
 
 export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   dynamicFields,
+  currentUser,
   onClose,
   onSuccess,
   editProject,
@@ -49,6 +52,10 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     formatCurrencyInput(editProject?.budgetEstimated || '')
   );
   const [description, setDescription] = useState(editProject?.description || '');
+  const [manualStatus, setManualStatus] = useState<'IN_REVIEW' | 'APPROVED' | 'NEEDS_REVISION' | 'REJECTED'>(
+    editProject?.status || 'IN_REVIEW'
+  );
+  const canManualApprove = hasPerm(currentUser, 'projects.manual_approve');
   
   // Workflow selector state
   const [availableWorkflows, setAvailableWorkflows] = useState<Workflow[]>(workflows);
@@ -193,7 +200,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     setActiveUploadProgress(null);
 
     try {
-      const payload = {
+      const payload: Partial<Project> = {
         title: title.trim(),
         code: code.trim(),
         productionType: productionType.trim() || 'طرح عمومی شورا',
@@ -205,6 +212,10 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         requirements,
         workflowId: selectedWorkflowId || undefined,
       };
+
+      if (editProject && canManualApprove) {
+        payload.status = manualStatus;
+      }
 
       let targetProjectId = editProject?.id;
       if (editProject) {
@@ -399,15 +410,15 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
               {/* Workflow Selection Section */}
               {availableWorkflows.length > 0 && (
-                <div className="md:col-span-2 lg:col-span-3 p-3.5 rounded-2xl bg-indigo-50/50 border border-indigo-100 shadow-2xs">
-                  <label className="block text-xs font-bold text-slate-800 mb-1.5 flex items-center justify-between flex-wrap gap-2">
+                <div className="md:col-span-2 lg:col-span-3 p-3.5 rounded-2xl bg-indigo-50/50 border border-indigo-100 shadow-2xs space-y-2.5">
+                  <label className="block text-xs font-bold text-slate-800 flex items-center justify-between flex-wrap gap-2">
                     <span className="flex items-center gap-1.5 text-indigo-900">
                       <GitBranch className="w-4 h-4 text-indigo-600" />
                       <span>گردش کار سازمانی و ساختار مربوطه برای این پروژه *</span>
                     </span>
                     {selectedWf && (
-                      <span className="text-[11px] font-bold text-indigo-700 bg-white border border-indigo-200 px-2.5 py-0.5 rounded-lg shadow-2xs">
-                        تعداد سمت‌های گردش: {selectedWf.steps.length} نفر (مشارکت کارتابل: {selectedWf.steps.length} رای)
+                      <span className="text-[11px] font-bold text-indigo-700 bg-white border border-indigo-200 px-2.5 py-0.5 rounded-lg shadow-2xs tabular-nums">
+                        تعداد مراحل گردش: {selectedWf.steps.length} مرحله
                       </span>
                     )}
                   </label>
@@ -419,23 +430,54 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                   >
                     {availableWorkflows.map((wf) => (
                       <option key={wf.id} value={wf.id}>
-                        {wf.title} {wf.isDefault ? '⭐ (پیش‌فرض سیستم)' : ''} — ({wf.steps.length} سمت و مرحله سازمانی)
+                        {wf.title} {wf.isDefault ? '⭐ (پیش‌فرض سیستم)' : ''} — ({wf.steps.length} مرحله سازمانی)
                       </option>
                     ))}
                   </select>
 
                   {selectedWf && (
-                    <div className="mt-2.5 pt-2 border-t border-indigo-100 text-[11px] text-slate-600 flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5">
+                    <div className="pt-2 border-t border-indigo-100 text-[11px] text-slate-600 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <Users className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                        <span className="text-slate-500">مسیر گردش بین سمت‌ها:</span>
+                        <span className="text-slate-500">مسیر گردش بین مراحل:</span>
                         <span className="font-semibold text-slate-800" dir="rtl">
-                          {selectedWf.steps.map((s) => s.title).join(' ← ')}
+                          {selectedWf.steps
+                            .map((s) => {
+                              const posLabel =
+                                s.positions && s.positions.length > 0
+                                  ? s.positions.map((p) => p.title).join(' + ')
+                                  : s.positionTitle;
+                              return posLabel ? `${s.title} (${posLabel})` : s.title;
+                            })
+                            .join(' ← ')}
                         </span>
                       </div>
-                      <span className="text-slate-500">
-                        آمار کارتابل این طرح به صورت <strong className="text-indigo-700">«X تا از {selectedWf.steps.length} نفر»</strong> محاسبه می‌شود.
-                      </span>
+                    </div>
+                  )}
+
+                  {editProject && (
+                    <div className="pt-2 border-t border-indigo-100">
+                      {canManualApprove ? (
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <label className="text-[11px] font-bold text-slate-700">
+                            وضعیت دستی پروژه (با مجوز ویژه تایید دستی):
+                          </label>
+                          <select
+                            value={manualStatus}
+                            onChange={(e) => setManualStatus(e.target.value as any)}
+                            className="rounded-xl bg-white border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-900 focus:outline-none focus:border-indigo-500 cursor-pointer"
+                          >
+                            <option value="IN_REVIEW">در حال بررسی در گردش کار</option>
+                            <option value="NEEDS_REVISION">نیازمند اصلاح</option>
+                            <option value="REJECTED">رد شده</option>
+                            <option value="APPROVED">تایید نهایی دستی (خارج از گردش کار)</option>
+                          </select>
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-slate-500">
+                          تایید نهایی این پروژه فقط از طریق تکمیل مراحل گردش کار انجام می‌شود.
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

@@ -164,9 +164,21 @@ export function initDatabase() {
       title TEXT NOT NULL,
       structureId TEXT REFERENCES project_structures(id) ON DELETE SET NULL,
       positionId TEXT NOT NULL REFERENCES positions(id) ON DELETE CASCADE,
+      positionIdsJson TEXT DEFAULT '[]',
       actionType TEXT DEFAULT 'REVIEW', -- 'REVIEW', 'TECHNICAL_APPROVE', 'BUDGET_APPROVE', 'CONTENT_APPROVE', 'FINAL_COUNCIL_VOTE', 'CUSTOM'
       description TEXT,
       configJson TEXT DEFAULT '{}'
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_step_approvals (
+      id TEXT PRIMARY KEY,
+      projectId TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      stepOrder INTEGER NOT NULL,
+      userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      positionId TEXT REFERENCES positions(id) ON DELETE SET NULL,
+      comment TEXT,
+      createdAt TEXT NOT NULL,
+      UNIQUE(projectId, stepOrder, userId)
     );
 
     CREATE TABLE IF NOT EXISTS projects (
@@ -368,6 +380,17 @@ export function initDatabase() {
     db.prepare("ALTER TABLE workflow_steps ADD COLUMN configJson TEXT DEFAULT '{}'").run();
   } catch (e) {}
   try {
+    db.prepare("ALTER TABLE workflow_steps ADD COLUMN positionIdsJson TEXT DEFAULT '[]'").run();
+  } catch (e) {}
+  try {
+    db.prepare(`
+      UPDATE workflow_steps
+      SET positionIdsJson = json_array(positionId)
+      WHERE (positionIdsJson IS NULL OR positionIdsJson = '' OR positionIdsJson = '[]')
+        AND positionId IS NOT NULL
+    `).run();
+  } catch (e) {}
+  try {
     db.prepare('ALTER TABLE projects ADD COLUMN workflowTrackingCode TEXT').run();
   } catch (e) {}
   try {
@@ -399,6 +422,7 @@ function seedInitialData() {
     ['p-15', 'projects.edit', 'ویرایش پروژه و فایل‌ها', 'پروژه‌ها', 'projects', 'ویرایش مشخصات، بودجه و مدیریت فایل‌های پیوست پروژه', 0],
     ['p-16', 'projects.delete', 'حذف پروژه', 'پروژه‌ها', 'projects', 'حذف کامل پروژه و سوابق آن از سامانه', 1],
     ['p-17', 'projects.finalize', 'تصویب نهایی و صدور ابلاغیه', 'پروژه‌ها', 'projects', 'خاتمه گردش کار و صدور مصوبه رسمی شورا', 1],
+    ['p-56', 'projects.manual_approve', 'تایید نهایی دستی (خارج از گردش کار)', 'پروژه‌ها', 'projects', 'امکان تایید نهایی دستی پروژه بدون طی مراحل گردش کار (به طور پیش‌فرض حتی برای مدیران غیرفعال است)', 1],
 
     // Entity 2: فیلدهای پویا و ویژگی‌های پروژه
     ['p-30', 'fields', 'فیلدهای پویای پروژه', 'فیلدهای پویا', null, 'مدیریت فیلدها و ویژگی‌های سلسله‌مراتبی فرم پروژه', 0],
@@ -541,8 +565,9 @@ function seedInitialData() {
   const insertPosPerm = db.prepare('INSERT OR IGNORE INTO position_permissions (positionId, permissionCode) VALUES (?, ?)');
 
   if (posPermCount === 0 || isFirstCrudMigration) {
-    // Admin positions (pos-1 and pos-root) get ALL permissions
+    // Admin positions (pos-1 and pos-root) get standard permissions (never explicit-only overrides like projects.manual_approve)
     for (const p of allPerms) {
+      if (p.code === 'projects.manual_approve') continue;
       if (existingPosSet.has('pos-1')) {
         try { insertPosPerm.run('pos-1', p.code); } catch (e) {}
       }
@@ -654,10 +679,11 @@ function seedInitialData() {
       db.prepare("UPDATE users SET password = 'hesoyam123', role = 'ADMIN', hasCustomPermissions = 1 WHERE username = 'ghavabesh'").run();
     }
 
-    // Grant all permissions explicitly to usr-ghavabesh in user_permissions
+    // Grant standard permissions explicitly to usr-ghavabesh in user_permissions (never auto-grant manual_approve)
     const allPerms = db.prepare('SELECT code FROM permissions').all() as { code: string }[];
     const insertUserPerm = db.prepare('INSERT OR IGNORE INTO user_permissions (userId, permissionCode) VALUES (?, ?)');
     for (const p of allPerms) {
+      if (p.code === 'projects.manual_approve') continue;
       insertUserPerm.run('usr-ghavabesh', p.code);
     }
   } catch (e) {}
@@ -776,6 +802,34 @@ function seedInitialData() {
     for (const mp of missingCodeProjects) {
       const code = generateUniqueWorkflowTrackingCode();
       db.prepare('UPDATE projects SET workflowTrackingCode = ? WHERE id = ?').run(code, mp.id);
+    }
+  } catch (e) {}
+
+  // Backfill initial PROJECT_CREATED log in workflow_logs for existing projects that do not have one
+  try {
+    const existingPrjs = db.prepare(`
+      SELECT p.id, p.createdById, p.workflowId, p.currentPositionId, p.workflowTrackingCode, p.createdAt
+      FROM projects p
+      WHERE p.createdById IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM workflow_logs wl WHERE wl.projectId = p.id AND wl.action = 'PROJECT_CREATED'
+        )
+    `).all() as any[];
+    for (const ep of existingPrjs) {
+      const wfId = ep.workflowId || 'wf-standard';
+      const firstStep = db.prepare('SELECT positionId FROM workflow_steps WHERE workflowId = ? ORDER BY stepOrder ASC LIMIT 1').get(wfId) as any;
+      const destPos = firstStep?.positionId || ep.currentPositionId || null;
+      db.prepare(`
+        INSERT INTO workflow_logs (id, projectId, stepOrder, fromUserId, toPositionId, action, comment, createdAt)
+        VALUES (?, ?, 1, ?, ?, 'PROJECT_CREATED', ?, ?)
+      `).run(
+        `log-init-${ep.id}`,
+        ep.id,
+        ep.createdById,
+        destPos,
+        `ثبت اولیه پروژه و ورود به گردش کار (کد گردش: ${ep.workflowTrackingCode || '—'})`,
+        ep.createdAt || now
+      );
     }
   } catch (e) {}
 

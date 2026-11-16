@@ -62,7 +62,7 @@ export default function App() {
 
   // Navigation & Filters
   const [activeTab, setActiveTab] = useState<'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings' | 'smstest'>('projects');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING_MY_VOTE' | 'APPROVED' | 'NEEDS_REVISION' | 'REJECTED'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'MY_TURN' | 'PENDING_MY_VOTE' | 'APPROVED' | 'NEEDS_REVISION' | 'REJECTED'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
 
   // Modals
@@ -70,6 +70,7 @@ export default function App() {
   const [workflowProject, setWorkflowProject] = useState<Project | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [expandedProjectIds, setExpandedProjectIds] = useState<Record<string, boolean>>({});
 
   const [loading, setLoading] = useState(false);
 
@@ -302,6 +303,7 @@ export default function App() {
     if (!matchesSearch) return false;
 
     if (statusFilter === 'ALL') return true;
+    if (statusFilter === 'MY_TURN') return Boolean(p.isMyWorkflowTurn);
     if (statusFilter === 'PENDING_MY_VOTE') return !p.hasVoted;
     return p.majorityResult === statusFilter;
   });
@@ -313,6 +315,7 @@ export default function App() {
   const canManagePasswordResets = hasPerm(currentUser, 'system.users.edit');
 
   const pendingVotesCount = canViewProjects && canCastVote ? projects.filter((p) => !p.hasVoted).length : 0;
+  const myTurnCount = canViewProjects ? projects.filter((p) => Boolean(p.isMyWorkflowTurn)).length : 0;
   const pendingResetRequests = resetRequests.filter((r) => r.status === 'PENDING');
 
   return (
@@ -526,6 +529,17 @@ export default function App() {
                     همه پروژه‌ها ({projects.length})
                   </button>
 
+                  <button
+                    onClick={() => setStatusFilter('MY_TURN')}
+                    className={`px-3 py-1.5 rounded-xl font-semibold transition whitespace-nowrap cursor-pointer tabular-nums ${
+                      statusFilter === 'MY_TURN'
+                        ? 'bg-blue-600 text-white shadow-xs font-bold'
+                        : 'text-blue-700 bg-blue-50/70 hover:bg-blue-100 border border-blue-200/80'
+                    }`}
+                  >
+                    نوبت کارتابل من ({myTurnCount})
+                  </button>
+
                   {canCastVote && (
                     <button
                       onClick={() => setStatusFilter('PENDING_MY_VOTE')}
@@ -612,23 +626,65 @@ export default function App() {
                   </p>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {filteredProjects.map((prj) => (
-                    <ProjectCard
-                      key={prj.id}
-                      project={prj}
-                      currentUser={currentUser}
-                      dynamicFields={dynamicFields}
-                      onOpenVoteModal={(p) => setVotingProject(p)}
-                      onOpenWorkflowModal={(p) => setWorkflowProject(p)}
-                      onEditProject={(p) => {
-                        setEditingProject(p);
-                        setShowCreateModal(true);
+                <div className="space-y-2.5">
+                  {/* Table-like Overview Column Header + Expand/Collapse All */}
+                  <div className="flex items-center justify-between gap-2 px-1">
+                    <span className="text-[11px] font-semibold text-slate-500 tabular-nums">
+                      نمایش {filteredProjects.length} پروژه (برای مشاهده جزئیات، فایل‌ها و آرا روی هر ردیف کلیک کنید)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const allExpanded = filteredProjects.every((p) => expandedProjectIds[p.id]);
+                        if (allExpanded) {
+                          setExpandedProjectIds({});
+                        } else {
+                          const next: Record<string, boolean> = {};
+                          filteredProjects.forEach((p) => {
+                            next[p.id] = true;
+                          });
+                          setExpandedProjectIds(next);
+                        }
                       }}
-                      onDeleteProject={handleDeleteProject}
-                      onRefreshData={refreshData}
-                    />
-                  ))}
+                      className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 transition cursor-pointer whitespace-nowrap"
+                    >
+                      {filteredProjects.every((p) => expandedProjectIds[p.id]) ? 'بستن همه ردیف‌ها' : 'باز کردن همه ردیف‌ها'}
+                    </button>
+                  </div>
+
+                  <div className="hidden lg:grid lg:grid-cols-12 gap-3 px-4 py-2 rounded-xl bg-slate-100/80 border border-slate-200/80 text-[11px] font-bold text-slate-600">
+                    <div className="lg:col-span-5">عنوان و کد پروژه</div>
+                    <div className="lg:col-span-2">مرحله گردش کار</div>
+                    <div className="lg:col-span-2">وضعیت اکثریت و آرا</div>
+                    <div className="lg:col-span-1">مهلت و برآورد</div>
+                    <div className="lg:col-span-2 text-left">اقدام سریع</div>
+                  </div>
+
+                  <div className="space-y-2">
+                    {filteredProjects.map((prj) => (
+                      <ProjectCard
+                        key={prj.id}
+                        project={prj}
+                        currentUser={currentUser}
+                        dynamicFields={dynamicFields}
+                        isExpanded={Boolean(expandedProjectIds[prj.id])}
+                        onToggleExpand={() =>
+                          setExpandedProjectIds((prev) => ({
+                            ...prev,
+                            [prj.id]: !prev[prj.id],
+                          }))
+                        }
+                        onOpenVoteModal={(p) => setVotingProject(p)}
+                        onOpenWorkflowModal={(p) => setWorkflowProject(p)}
+                        onEditProject={(p) => {
+                          setEditingProject(p);
+                          setShowCreateModal(true);
+                        }}
+                        onDeleteProject={handleDeleteProject}
+                        onRefreshData={refreshData}
+                      />
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -747,6 +803,7 @@ export default function App() {
       {showCreateModal && (
         <CreateProjectModal
           dynamicFields={dynamicFields}
+          currentUser={currentUser}
           onClose={() => {
             setShowCreateModal(false);
             setEditingProject(null);

@@ -580,6 +580,19 @@ class ApiService {
     }
   }
 
+  async manualApproveProject(id: string, comment?: string): Promise<{ success: boolean; status: string }> {
+    const res = await fetch(`/api/projects/${id}/manual-approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify({ comment }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'خطا در تایید نهایی دستی پروژه');
+    }
+    return data;
+  }
+
   async deleteProject(id: string): Promise<void> {
     const res = await fetch(`/api/projects/${id}`, {
       method: 'DELETE',

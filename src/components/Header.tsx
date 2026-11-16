@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { User } from '../types';
-import { PWAInstallButton } from '../pwa/PWAComponents';
 import { ChangePasswordModal } from './ChangePasswordModal';
 import { 
   Building2, 
@@ -93,10 +92,8 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </div>
 
-          {/* Right side: Admin Password Resets Button + Quick Profile + Change Password */}
+          {/* Right side: Quick Profile + Change Password */}
           <div className="flex items-center gap-2 sm:gap-2.5">
-            <PWAInstallButton />
-
 
 
             {/* Change Password Button for current user */}

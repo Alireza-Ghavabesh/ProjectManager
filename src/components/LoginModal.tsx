@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { User, PasswordResetRequest, PublicSettings } from '../types';
-import { PWAInstallButton } from '../pwa/PWAComponents';
 import { 
   Lock, 
   UserCheck, 
@@ -445,9 +444,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onSuccess }) => {
           </div>
         )}
 
-        <div className="mt-7 pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-[11px] text-slate-400">
+        <div className="mt-7 pt-4 border-t border-slate-100 flex items-center justify-center text-[11px] text-slate-400">
           <span>سامانه کارتابل مصوبات و ارزیابی شورا</span>
-          <PWAInstallButton className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 font-bold transition cursor-pointer text-[11px] border border-slate-200/80 shadow-2xs" />
         </div>
 
       </div>
