@@ -471,20 +471,35 @@ apiRouter.post('/users', (req: Request, res: Response) => {
   const avatar = generateOfflineAvatarSvg(name, id);
 
   try {
-    db.prepare(`
-      INSERT INTO users (id, username, password, name, role, positionId, avatar, phone, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id,
-      username.trim().toLowerCase(),
-      password,
-      name.trim(),
-      role === 'ADMIN' ? 'ADMIN' : 'COUNCIL',
-      positionId || null,
-      avatar,
-      phone || '',
-      new Date().toISOString()
-    );
+    const cleanUsername = username.trim().toLowerCase();
+    const cleanName = name.trim();
+    const effectiveRole = role === 'ADMIN' ? 'ADMIN' : 'COUNCIL';
+    const createdAt = new Date().toISOString();
+
+    const tx = db.transaction(() => {
+      db.prepare(`
+        INSERT INTO users (id, username, password, name, role, positionId, avatar, phone, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        cleanUsername,
+        password,
+        cleanName,
+        effectiveRole,
+        positionId || null,
+        avatar,
+        phone || '',
+        createdAt
+      );
+
+      // Default cartable visibility for every newly created user (scoped only to their own cartable turn)
+      if (effectiveRole !== 'ADMIN') {
+        const insertPerm = db.prepare('INSERT OR IGNORE INTO user_permissions (userId, permissionCode) VALUES (?, ?)');
+        insertPerm.run(id, 'projects');
+        insertPerm.run(id, 'projects.cartable.view');
+      }
+    });
+    tx();
 
     const newUser = db.prepare(`
       SELECT u.id, u.username, u.name, u.role, u.positionId, u.avatar, u.phone, u.createdAt,
@@ -492,9 +507,10 @@ apiRouter.post('/users', (req: Request, res: Response) => {
       FROM users u
       LEFT JOIN positions p ON u.positionId = p.id
       WHERE u.id = ?
-    `).get(id);
+    `).get(id) as any;
 
-    res.json({ success: true, user: newUser });
+    const permissions = newUser ? getUserPermissionsList(newUser) : [];
+    res.json({ success: true, user: newUser ? { ...newUser, permissions } : null });
   } catch (err: any) {
     if (err.message && err.message.includes('UNIQUE')) {
       return res.status(400).json({ error: 'این نام کاربری قبلاً در سامانه ثبت شده است.' });
