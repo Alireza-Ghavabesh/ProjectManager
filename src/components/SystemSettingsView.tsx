@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, SystemSetting, SmsRule, SmsLog, SmsEventType, SmsTargetType, Position } from '../types';
 import { api, fileToBase64 } from '../services/api';
+import { hasPerm, hasAnyPerm } from '../utils/permissions';
 import { 
   Settings, 
   ShieldCheck, 
@@ -37,7 +38,18 @@ interface SystemSettingsViewProps {
 }
 
 export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentUser }) => {
-  const [activeTab, setActiveTab] = useState<'DEADLINE' | 'SMS' | 'BRANDING'>('DEADLINE');
+  const canViewSettings = hasAnyPerm(currentUser, ['settings.view', 'settings.edit']);
+  const canEditSettings = hasPerm(currentUser, 'settings.edit');
+  const canViewSms = hasAnyPerm(currentUser, ['sms.rules.view', 'sms.rules.create', 'sms.rules.edit', 'sms.rules.delete']);
+  const canCreateSms = hasPerm(currentUser, 'sms.rules.create');
+  const canEditSms = hasPerm(currentUser, 'sms.rules.edit');
+  const canDeleteSms = hasPerm(currentUser, 'sms.rules.delete');
+  const canSaveSmsGateway = canEditSettings || canEditSms;
+  const canSendTestSms = canCreateSms || canEditSms;
+
+  const [activeTab, setActiveTab] = useState<'DEADLINE' | 'SMS' | 'BRANDING'>(() =>
+    !canViewSettings && canViewSms ? 'SMS' : 'DEADLINE'
+  );
   
   // Settings state
   const [settings, setSettings] = useState<Record<string, string>>({
@@ -89,7 +101,13 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
   const [ruleDescription, setRuleDescription] = useState('');
   const [ruleEnabled, setRuleEnabled] = useState(true);
 
-  const isAdmin = currentUser.role === 'ADMIN';
+  useEffect(() => {
+    if ((activeTab === 'DEADLINE' || activeTab === 'BRANDING') && !canViewSettings && canViewSms) {
+      setActiveTab('SMS');
+    } else if (activeTab === 'SMS' && !canViewSms && canViewSettings) {
+      setActiveTab('DEADLINE');
+    }
+  }, [activeTab, canViewSettings, canViewSms]);
 
   const loadData = async () => {
     setLoading(true);
@@ -126,7 +144,8 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
   }, []);
 
   const handleToggle = (key: string) => {
-    if (!isAdmin) return;
+    const canModify = key === 'sms_enabled' ? canSaveSmsGateway : canEditSettings;
+    if (!canModify) return;
     setSettings((prev) => ({
       ...prev,
       [key]: prev[key] === 'true' ? 'false' : 'true',
@@ -135,7 +154,9 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
   };
 
   const handleTextChange = (key: string, value: string) => {
-    if (!isAdmin) return;
+    const isSmsKey = key.startsWith('sms_');
+    const canModify = isSmsKey ? canSaveSmsGateway : canEditSettings;
+    if (!canModify) return;
     setSettings((prev) => ({
       ...prev,
       [key]: value,
@@ -145,7 +166,8 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
 
   const handleSave = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!isAdmin) return;
+    const canModify = activeTab === 'SMS' ? canSaveSmsGateway : canEditSettings;
+    if (!canModify) return;
     setSaving(true);
     setError('');
     setSavedSuccess(false);
@@ -406,7 +428,7 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
     }
   };
 
-  if (!isAdmin) {
+  if (!canViewSettings && !canViewSms) {
     return (
       <div className="p-8 text-center bg-white rounded-3xl border border-slate-200/90 shadow-xs max-w-xl mx-auto my-12">
         <div className="w-14 h-14 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto mb-4 border border-rose-200">
@@ -414,7 +436,7 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
         </div>
         <h3 className="text-lg font-bold text-slate-900 mb-2">دسترسی محدود شده است</h3>
         <p className="text-xs text-slate-500 leading-relaxed">
-          تنظیمات کلان سامانه و ضوابط پیامک و ظاهر فقط در دسترس کاربر ارشد سیستم (مدیرکل / ادمین) قرار دارد.
+          شما مجوز مشاهده تنظیمات سامانه یا شرط‌های پیامک را ندارید.
         </p>
       </div>
     );
@@ -435,7 +457,7 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
                 مرکز تنظیمات پیشرفته سامانه
               </h2>
               <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
-                مدیر ارشد سیستم
+                {canEditSettings || canSaveSmsGateway ? 'سطح دسترسی ویرایش' : 'حالت فقط نمایش'}
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-1 leading-relaxed">
@@ -456,50 +478,56 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
       </div>
 
       {/* Tabs Bar */}
-      <div className="flex items-center gap-2 border-b border-slate-200/90 pb-2">
-        <button
-          type="button"
-          onClick={() => setActiveTab('DEADLINE')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold transition cursor-pointer ${
-            activeTab === 'DEADLINE'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20'
-              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-          }`}
-        >
-          <Clock className="w-4 h-4" />
-          <span>مهلت و ضوابط ارزیابی و حجم فایل</span>
-        </button>
+      <div className="flex items-center gap-2 border-b border-slate-200/90 pb-2 flex-wrap">
+        {canViewSettings && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('DEADLINE')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold transition cursor-pointer ${
+              activeTab === 'DEADLINE'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+          >
+            <Clock className="w-4 h-4" />
+            <span>مهلت و ضوابط ارزیابی و حجم فایل</span>
+          </button>
+        )}
 
-        <button
-          type="button"
-          onClick={() => setActiveTab('SMS')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold transition cursor-pointer ${
-            activeTab === 'SMS'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20'
-              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-          }`}
-        >
-          <Smartphone className="w-4 h-4" />
-          <span>تنظیمات و شرط‌های پیامک (SMS API)</span>
-          {smsRules.length > 0 && (
-            <span className={`px-1.5 py-0.2 rounded-md text-[10px] ${activeTab === 'SMS' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'}`}>
-              {smsRules.length}
-            </span>
-          )}
-        </button>
+        {canViewSms && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('SMS')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold transition cursor-pointer ${
+              activeTab === 'SMS'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+          >
+            <Smartphone className="w-4 h-4" />
+            <span>تنظیمات و شرط‌های پیامک (SMS API)</span>
+            {smsRules.length > 0 && (
+              <span className={`px-1.5 py-0.2 rounded-md text-[10px] ${activeTab === 'SMS' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'}`}>
+                {smsRules.length}
+              </span>
+            )}
+          </button>
+        )}
 
-        <button
-          type="button"
-          onClick={() => setActiveTab('BRANDING')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold transition cursor-pointer ${
-            activeTab === 'BRANDING'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20'
-              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-          }`}
-        >
-          <ImageIcon className="w-4 h-4" />
-          <span>عنوان و آیکون صفحه ورود (Branding)</span>
-        </button>
+        {canViewSettings && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('BRANDING')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold transition cursor-pointer ${
+              activeTab === 'BRANDING'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+          >
+            <ImageIcon className="w-4 h-4" />
+            <span>عنوان و آیکون صفحه ورود (Branding)</span>
+          </button>
+        )}
       </div>
 
       {/* Alerts */}
@@ -715,16 +743,18 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-3 pt-2">
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-6 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 active:scale-98 text-white font-bold text-xs sm:text-sm shadow-md shadow-indigo-500/20 transition cursor-pointer flex items-center gap-2 disabled:opacity-50"
-            >
-              <Save className="w-4 h-4" />
-              <span>{saving ? 'در حال ذخیره...' : 'ذخیره ضوابط و تنظیمات'}</span>
-            </button>
-          </div>
+          {canEditSettings && (
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="submit"
+                disabled={saving}
+                className="px-6 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 active:scale-98 text-white font-bold text-xs sm:text-sm shadow-md shadow-indigo-500/20 transition cursor-pointer flex items-center gap-2 disabled:opacity-50"
+              >
+                <Save className="w-4 h-4" />
+                <span>{saving ? 'در حال ذخیره...' : 'ذخیره ضوابط و تنظیمات'}</span>
+              </button>
+            </div>
+          )}
         </form>
       )}
 
@@ -856,89 +886,93 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <button
-                type="submit"
-                disabled={saving}
-                className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md shadow-indigo-500/20 transition cursor-pointer flex items-center gap-2"
-              >
-                <Save className="w-3.5 h-3.5" />
-                <span>{saving ? 'در حال ذخیره...' : 'ذخیره تنظیمات درگاه پیامک'}</span>
-              </button>
-            </div>
+            {canSaveSmsGateway && (
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md shadow-indigo-500/20 transition cursor-pointer flex items-center gap-2"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{saving ? 'در حال ذخیره...' : 'ذخیره تنظیمات درگاه پیامک'}</span>
+                </button>
+              </div>
+            )}
           </form>
 
           {/* Test SMS Box */}
-          <div className="p-6 rounded-3xl bg-slate-50 border border-slate-200/90 shadow-xs space-y-4">
-            <div className="flex items-center gap-2 pb-2 border-b border-slate-200">
-              <Send className="w-4 h-4 text-indigo-600" />
-              <h4 className="text-xs sm:text-sm font-bold text-slate-900">
-                ابزار تست زنده ارسال پیامک
-              </h4>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
-              <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  شماره موبایل تست:
-                </label>
-                <input
-                  type="text"
-                  value={testPhone}
-                  onChange={(e) => setTestPhone(e.target.value)}
-                  placeholder="0912..."
-                  className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs font-mono text-slate-900 focus:outline-none focus:border-indigo-500 shadow-2xs"
-                  dir="ltr"
-                />
+          {canSendTestSms && (
+            <div className="p-6 rounded-3xl bg-slate-50 border border-slate-200/90 shadow-xs space-y-4">
+              <div className="flex items-center gap-2 pb-2 border-b border-slate-200">
+                <Send className="w-4 h-4 text-indigo-600" />
+                <h4 className="text-xs sm:text-sm font-bold text-slate-900">
+                  ابزار تست زنده ارسال پیامک
+                </h4>
               </div>
 
-              <div className="md:col-span-2 flex items-end gap-2">
-                <div className="flex-1">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                <div>
                   <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                    متن پیام تست:
+                    شماره موبایل تست:
                   </label>
                   <input
                     type="text"
-                    value={testMessage}
-                    onChange={(e) => setTestMessage(e.target.value)}
-                    className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500 shadow-2xs"
+                    value={testPhone}
+                    onChange={(e) => setTestPhone(e.target.value)}
+                    placeholder="0912..."
+                    className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs font-mono text-slate-900 focus:outline-none focus:border-indigo-500 shadow-2xs"
+                    dir="ltr"
                   />
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleSendTestSms}
-                  disabled={testSending}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition cursor-pointer flex items-center gap-1.5 shrink-0 shadow-xs disabled:opacity-50"
-                >
-                  <Send className={`w-3.5 h-3.5 ${testSending ? 'animate-spin' : ''}`} />
-                  <span>{testSending ? 'در حال ارسال...' : 'ارسال تست'}</span>
-                </button>
-              </div>
-            </div>
+                <div className="md:col-span-2 flex items-end gap-2">
+                  <div className="flex-1">
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      متن پیام تست:
+                    </label>
+                    <input
+                      type="text"
+                      value={testMessage}
+                      onChange={(e) => setTestMessage(e.target.value)}
+                      className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500 shadow-2xs"
+                    />
+                  </div>
 
-            {testResult && (
-              <div
-                className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
-                  testResult.success
-                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                    : 'bg-rose-50 text-rose-800 border border-rose-200'
-                }`}
-              >
-                {testResult.success ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                ) : (
-                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                )}
-                <span>
-                  {testResult.message}{' '}
-                  {testResult.simulated && (
-                    <strong className="text-amber-800 font-bold">(حالت شبیه‌سازی - به علت عدم ورود API Key واقعی)</strong>
-                  )}
-                </span>
+                  <button
+                    type="button"
+                    onClick={handleSendTestSms}
+                    disabled={testSending}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition cursor-pointer flex items-center gap-1.5 shrink-0 shadow-xs disabled:opacity-50"
+                  >
+                    <Send className={`w-3.5 h-3.5 ${testSending ? 'animate-spin' : ''}`} />
+                    <span>{testSending ? 'در حال ارسال...' : 'ارسال تست'}</span>
+                  </button>
+                </div>
               </div>
-            )}
-          </div>
+
+              {testResult && (
+                <div
+                  className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
+                    testResult.success
+                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                      : 'bg-rose-50 text-rose-800 border border-rose-200'
+                  }`}
+                >
+                  {testResult.success ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  )}
+                  <span>
+                    {testResult.message}{' '}
+                    {testResult.simulated && (
+                      <strong className="text-amber-800 font-bold">(حالت شبیه‌سازی - به علت عدم ورود API Key واقعی)</strong>
+                    )}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Conditional Rules Engine (شرط‌های ارسال پیامک) */}
           <div className="p-6 rounded-3xl bg-white border border-slate-200/90 shadow-xs space-y-5">
@@ -955,14 +989,16 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={openNewRuleModal}
-                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition cursor-pointer flex items-center gap-1.5 shadow-sm"
-              >
-                <Plus className="w-4 h-4" />
-                <span>تعریف شرط پیامک جدید</span>
-              </button>
+              {canCreateSms && (
+                <button
+                  type="button"
+                  onClick={openNewRuleModal}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition cursor-pointer flex items-center gap-1.5 shadow-sm"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>تعریف شرط پیامک جدید</span>
+                </button>
+              )}
             </div>
 
             {/* Rules List */}
@@ -1035,40 +1071,48 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
                       )}
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
-                      {/* Toggle */}
-                      <button
-                        type="button"
-                        onClick={() => handleToggleRule(rule.id)}
-                        className={`px-3 py-1 rounded-xl text-xs font-bold transition cursor-pointer ${
-                          rule.enabled
-                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-200 hover:bg-emerald-200'
-                            : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
-                        }`}
-                      >
-                        {rule.enabled ? 'فعال' : 'غیرفعال'}
-                      </button>
+                    {(canEditSms || canDeleteSms) && (
+                      <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                        {/* Toggle */}
+                        {canEditSms && (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleRule(rule.id)}
+                            className={`px-3 py-1 rounded-xl text-xs font-bold transition cursor-pointer ${
+                              rule.enabled
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200 hover:bg-emerald-200'
+                                : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+                            }`}
+                          >
+                            {rule.enabled ? 'فعال' : 'غیرفعال'}
+                          </button>
+                        )}
 
-                      {/* Edit */}
-                      <button
-                        type="button"
-                        onClick={() => openEditRuleModal(rule)}
-                        className="p-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-600 transition cursor-pointer"
-                        title="ویرایش شرط"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                      </button>
+                        {/* Edit */}
+                        {canEditSms && (
+                          <button
+                            type="button"
+                            onClick={() => openEditRuleModal(rule)}
+                            className="p-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-600 transition cursor-pointer"
+                            title="ویرایش شرط"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
 
-                      {/* Delete */}
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteRule(rule.id)}
-                        className="p-1.5 rounded-xl bg-white hover:bg-rose-50 border border-slate-200 text-rose-500 transition cursor-pointer"
-                        title="حذف شرط"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                        {/* Delete */}
+                        {canDeleteSms && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteRule(rule.id)}
+                            className="p-1.5 rounded-xl bg-white hover:bg-rose-50 border border-slate-200 text-rose-500 transition cursor-pointer"
+                            title="حذف شرط"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1227,36 +1271,38 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
                     تصویر انتخاب‌شده با ابعاد متناسب در صفحه ورود و بالای فرم قرار خواهد گرفت. فرمت‌های مجاز: PNG، JPG، WebP، SVG (حداکثر ۵ مگابایت).
                   </p>
 
-                  <div className="flex flex-wrap items-center gap-2 pt-1 justify-center sm:justify-start">
-                    <input
-                      ref={logoInputRef}
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={handleLogoSelect}
-                    />
+                  {canEditSettings && (
+                    <div className="flex flex-wrap items-center gap-2 pt-1 justify-center sm:justify-start">
+                      <input
+                        ref={logoInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={handleLogoSelect}
+                      />
 
-                    <button
-                      type="button"
-                      disabled={logoUploading}
-                      onClick={() => logoInputRef.current?.click()}
-                      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition cursor-pointer flex items-center gap-1.5 shadow-sm disabled:opacity-50"
-                    >
-                      <UploadCloud className="w-4 h-4" />
-                      <span>{logoUploading ? 'در حال بارگذاری...' : 'انتخاب و بارگذاری لوگوی جدید'}</span>
-                    </button>
-
-                    {logoPreview && (
                       <button
                         type="button"
-                        onClick={handleRemoveLogo}
-                        className="px-3 py-2 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 font-bold text-xs transition cursor-pointer flex items-center gap-1"
+                        disabled={logoUploading}
+                        onClick={() => logoInputRef.current?.click()}
+                        className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition cursor-pointer flex items-center gap-1.5 shadow-sm disabled:opacity-50"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>حذف لوگو و بازگشت به پیش‌فرض</span>
+                        <UploadCloud className="w-4 h-4" />
+                        <span>{logoUploading ? 'در حال بارگذاری...' : 'انتخاب و بارگذاری لوگوی جدید'}</span>
                       </button>
-                    )}
-                  </div>
+
+                      {logoPreview && (
+                        <button
+                          type="button"
+                          onClick={handleRemoveLogo}
+                          className="px-3 py-2 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 font-bold text-xs transition cursor-pointer flex items-center gap-1"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>حذف لوگو و بازگشت به پیش‌فرض</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1286,16 +1332,18 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({ currentU
 
           </div>
 
-          <div className="flex items-center justify-end gap-3 pt-2">
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-6 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 active:scale-98 text-white font-bold text-xs sm:text-sm shadow-md shadow-indigo-500/20 transition cursor-pointer flex items-center gap-2 disabled:opacity-50"
-            >
-              <Save className="w-4 h-4" />
-              <span>{saving ? 'در حال ذخیره...' : 'ذخیره تغییرات عنوان و لوگو'}</span>
-            </button>
-          </div>
+          {canEditSettings && (
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="submit"
+                disabled={saving}
+                className="px-6 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 active:scale-98 text-white font-bold text-xs sm:text-sm shadow-md shadow-indigo-500/20 transition cursor-pointer flex items-center gap-2 disabled:opacity-50"
+              >
+                <Save className="w-4 h-4" />
+                <span>{saving ? 'در حال ذخیره...' : 'ذخیره تغییرات عنوان و لوگو'}</span>
+              </button>
+            </div>
+          )}
         </form>
       )}
 

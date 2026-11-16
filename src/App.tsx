@@ -17,6 +17,7 @@ import { SystemSettingsView } from './components/SystemSettingsView';
 import { SmsTestLab } from './components/SmsTestLab';
 import { LoginModal } from './components/LoginModal';
 import { OfflineIndicator } from './pwa/PWAComponents';
+import { hasPerm, hasAnyPerm } from './utils/permissions';
 import { 
   Plus, 
   Layers, 
@@ -160,18 +161,19 @@ export default function App() {
     if (!currentUser) return;
     setLoading(true);
     try {
-      const fetchResetsPromise = currentUser.role === 'ADMIN'
+      const canHandleResets = hasPerm(currentUser, 'system.users.edit');
+      const fetchResetsPromise = canHandleResets
         ? api.getPasswordResetRequests().catch(() => [])
         : Promise.resolve([]);
 
       const [prjs, flds, structs, usrs, pos, st, wfs, me, resets] = await Promise.all([
-        api.getProjects(),
-        api.getDynamicFields(),
-        api.getProjectStructures(),
-        api.getUsers(),
-        api.getPositions(),
-        api.getDashboardStats(),
-        api.getWorkflows(),
+        api.getProjects().catch(() => []),
+        api.getDynamicFields().catch(() => []),
+        api.getProjectStructures().catch(() => []),
+        api.getUsers().catch(() => []),
+        api.getPositions().catch(() => []),
+        api.getDashboardStats().catch(() => null),
+        api.getWorkflows().catch(() => []),
         api.getMe().catch(() => null),
         fetchResetsPromise,
       ]);
@@ -183,13 +185,18 @@ export default function App() {
       setStats(st);
       setWorkflows(wfs);
       setResetRequests(resets || []);
-      if (me && (
-        me.id !== currentUser.id ||
-        me.role !== currentUser.role ||
-        me.name !== currentUser.name ||
-        me.positionId !== currentUser.positionId
-      )) {
-        setCurrentUser(me);
+      if (me) {
+        const oldPerms = JSON.stringify(currentUser.permissions || []);
+        const newPerms = JSON.stringify(me.permissions || []);
+        if (
+          me.id !== currentUser.id ||
+          me.role !== currentUser.role ||
+          me.name !== currentUser.name ||
+          me.positionId !== currentUser.positionId ||
+          oldPerms !== newPerms
+        ) {
+          setCurrentUser(me);
+        }
       }
     } catch (err) {
       console.error('Error refreshing data:', err);
@@ -199,7 +206,7 @@ export default function App() {
   };
 
   const refreshResetRequests = async () => {
-    if (currentUser?.role !== 'ADMIN') return;
+    if (!hasPerm(currentUser, 'system.users.edit')) return;
     try {
       const reqs = await api.getPasswordResetRequests();
       setResetRequests(reqs);
@@ -234,6 +241,26 @@ export default function App() {
       refreshData();
     }
   }, [currentUser?.id]);
+
+  // Keep activeTab pointing to a section the user actually has permission to access
+  useEffect(() => {
+    if (!currentUser || activeTab === 'smstest') return;
+    const tabPermissions: Array<{ tab: typeof activeTab; perms: string[] }> = [
+      { tab: 'projects', perms: ['projects.view', 'projects.create', 'projects.edit', 'projects.delete', 'voting.cast', 'voting.confidential.view_all'] },
+      { tab: 'structures', perms: ['structures.view', 'structures.create', 'structures.edit', 'structures.delete'] },
+      { tab: 'workflows', perms: ['workflow.view', 'workflow.create', 'workflow.edit', 'workflow.delete'] },
+      { tab: 'users', perms: ['system.users.view', 'system.users.create', 'system.users.edit', 'system.users.delete', 'system.permissions.manage', 'org.positions.view', 'org.positions.create', 'org.positions.edit', 'org.positions.delete'] },
+      { tab: 'fields', perms: ['projects.fields.view', 'projects.fields.create', 'projects.fields.edit', 'projects.fields.delete'] },
+      { tab: 'settings', perms: ['settings.view', 'settings.edit', 'sms.rules.view', 'sms.rules.create', 'sms.rules.edit', 'sms.rules.delete'] },
+      { tab: 'chat', perms: ['chat.view', 'chat.group.send', 'chat.direct.send'] },
+    ];
+    const currentEntry = tabPermissions.find((t) => t.tab === activeTab);
+    if (currentEntry && hasAnyPerm(currentUser, currentEntry.perms)) return;
+    const firstAllowed = tabPermissions.find((t) => hasAnyPerm(currentUser, t.perms));
+    if (firstAllowed && firstAllowed.tab !== activeTab) {
+      setActiveTab(firstAllowed.tab);
+    }
+  }, [currentUser, activeTab]);
 
   const handleLogout = () => {
     api.logout();
@@ -276,7 +303,13 @@ export default function App() {
     return p.majorityResult === statusFilter;
   });
 
-  const pendingVotesCount = projects.filter((p) => !p.hasVoted).length;
+  const canViewProjects = hasPerm(currentUser, 'projects.view');
+  const canCreateProject = hasPerm(currentUser, 'projects.create');
+  const canCastVote = hasPerm(currentUser, 'voting.cast');
+  const canViewConfidentialVotes = hasPerm(currentUser, 'voting.confidential.view_all');
+  const canManagePasswordResets = hasPerm(currentUser, 'system.users.edit');
+
+  const pendingVotesCount = canViewProjects && canCastVote ? projects.filter((p) => !p.hasVoted).length : 0;
   const pendingResetRequests = resetRequests.filter((r) => r.status === 'PENDING');
 
   return (
@@ -315,8 +348,8 @@ export default function App() {
           {activeTab === 'projects' && (
             <div className="space-y-6">
               
-              {/* ===================== ADMIN CARTABLE: INLINE PASSWORD RESET REQUEST ROW (ظاهر شدن خودکار در صورت وجود درخواست) ===================== */}
-              {currentUser.role === 'ADMIN' && pendingResetRequests.length > 0 && (
+              {/* ===================== CARTABLE: INLINE PASSWORD RESET REQUEST ROW ===================== */}
+              {canManagePasswordResets && pendingResetRequests.length > 0 && (
                 <div className="space-y-3 animate-in slide-in-from-top-3 duration-200">
                   {cartableFeedbackMsg && (
                     <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs flex items-center justify-between gap-2 shadow-xs">
@@ -431,10 +464,10 @@ export default function App() {
                 <div>
                   <h2 className="text-lg font-extrabold text-slate-900 flex items-center gap-2">
                     <Layers className="w-5 h-5 text-indigo-600" />
-                    {currentUser.role === 'ADMIN' ? 'مدیریت و کارتابل مصوبات پروژه‌ها' : 'کارتابل ارزیابی پروژه‌های شورا'}
+                    {canViewConfidentialVotes ? 'مدیریت و کارتابل مصوبات پروژه‌ها' : 'کارتابل ارزیابی پروژه‌های شورا'}
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    {currentUser.role === 'ADMIN'
+                    {canViewConfidentialVotes
                       ? 'مشاهده وضعیت تجمیعی آرا، گردش کار سازمانی، ارجاعات و محاسبه خودکار اکثریت'
                       : 'مشاهده پروژه‌های ارجاع شده، ثبت رای محرمانه ۳ حالته (تایید، رد، اصلاح) و پیگیری گردش کار'}
                   </p>
@@ -450,7 +483,7 @@ export default function App() {
                     <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-indigo-600' : ''}`} />
                   </button>
 
-                  {currentUser.role === 'ADMIN' && (
+                  {canCreateProject && (
                     <button
                       onClick={() => {
                         setEditingProject(null);
@@ -490,7 +523,7 @@ export default function App() {
                     همه پروژه‌ها ({projects.length})
                   </button>
 
-                  {currentUser.role === 'COUNCIL' && (
+                  {canCastVote && !canViewConfidentialVotes && (
                     <button
                       onClick={() => setStatusFilter('PENDING_MY_VOTE')}
                       className={`px-3 py-1.5 rounded-xl font-semibold transition whitespace-nowrap cursor-pointer ${
@@ -539,12 +572,40 @@ export default function App() {
               </div>
 
               {/* Projects List */}
-              {filteredProjects.length === 0 ? (
+              {!canViewProjects ? (
+                <div className="p-12 text-center rounded-3xl bg-white border border-slate-200 text-slate-600 space-y-4 shadow-xs">
+                  <Layers className="w-12 h-12 text-slate-300 mx-auto" />
+                  <h3 className="text-base font-bold text-slate-800">
+                    {canCreateProject
+                      ? 'دسترسی مشاهده لیست پروژه‌ها فعال نیست (فقط امکان ثبت جدید دارید)'
+                      : 'شما مجوز مشاهده پروژه‌های کارتابل را ندارید'}
+                  </h3>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                    {canCreateProject
+                      ? 'برای حساب کاربری شما دسترسی «ثبت پروژه جدید» فعال است. می‌توانید از دکمه زیر طرح جدید ثبت کنید و در صورت نیاز از مدیر سامانه دسترسی «نمایش پروژه‌ها» را نیز درخواست نمایید.'
+                      : 'جهت مشاهده پروژه‌ها و مصوبات، باید تیک «نمایش پروژه‌ها و کارتابل» در سطح دسترسی شما فعال شود.'}
+                  </p>
+                  {canCreateProject && (
+                    <div className="pt-1">
+                      <button
+                        onClick={() => {
+                          setEditingProject(null);
+                          setShowCreateModal(true);
+                        }}
+                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>ثبت پروژه جدید</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : filteredProjects.length === 0 ? (
                 <div className="p-12 text-center rounded-3xl bg-white border border-slate-200 text-slate-500 space-y-3 shadow-xs">
                   <Layers className="w-12 h-12 text-slate-300 mx-auto" />
                   <h3 className="text-base font-bold text-slate-800">پروژه‌ای با این مشخصات یافت نشد</h3>
                   <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                    می‌توانید فیلترهای جستجو را تغییر دهید یا با حساب کاربری مدیر، پروژه جدیدی را ثبت فرمایید.
+                    می‌توانید فیلترهای جستجو را تغییر دهید{canCreateProject ? ' یا پروژه جدیدی ثبت فرمایید.' : '.'}
                   </p>
                 </div>
               ) : (

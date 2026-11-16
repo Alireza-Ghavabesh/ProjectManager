@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Position, User } from '../types';
 import { api } from '../services/api';
 import { PermissionsTreeModal } from './PermissionsTreeModal';
+import { hasPerm } from '../utils/permissions';
 import { 
   Network, 
   Plus, 
@@ -38,7 +39,10 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const isAdmin = currentUser.role === 'ADMIN';
+  const canCreatePos = hasPerm(currentUser, 'org.positions.create');
+  const canEditPos = hasPerm(currentUser, 'org.positions.edit');
+  const canDeletePos = hasPerm(currentUser, 'org.positions.delete');
+  const canManagePerms = hasPerm(currentUser, 'system.permissions.manage');
 
   // Build tree hierarchy from flat positions
   const buildTree = (posList: Position[], parentId: string | null = null): (Position & { children?: any[] })[] => {
@@ -168,44 +172,46 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
             {/* Actions for this node */}
             <div className="flex items-center gap-1.5">
               {/* Permission Tree Button */}
-              <button
-                onClick={() => setSelectedPosForPerms(node)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 text-slate-700 hover:text-blue-700 text-xs font-medium transition cursor-pointer"
-                title="مشاهده و ویرایش درخت دسترسی‌های این سمت"
-              >
-                <Lock className="w-3.5 h-3.5 text-blue-600" />
-                <span className="hidden sm:inline">درخت دسترسی‌ها</span>
-                <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded-md font-bold">
-                  {node.permissions?.length || 0}
-                </span>
-              </button>
+              {canManagePerms && (
+                <button
+                  onClick={() => setSelectedPosForPerms(node)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 text-slate-700 hover:text-blue-700 text-xs font-medium transition cursor-pointer"
+                  title="مشاهده و ویرایش درخت دسترسی‌های این سمت"
+                >
+                  <Lock className="w-3.5 h-3.5 text-blue-600" />
+                  <span className="hidden sm:inline">درخت دسترسی‌ها</span>
+                  <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded-md font-bold">
+                    {node.permissions?.length || 0}
+                  </span>
+                </button>
+              )}
 
-              {isAdmin && (
-                <>
-                  <button
-                    onClick={() => openAddChildModal(node)}
-                    className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition cursor-pointer"
-                    title="افزودن سمت زیرمجموعه به این گره"
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => openEditModal(node)}
-                    className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition cursor-pointer"
-                    title="ویرایش سمت"
-                  >
-                    <Edit3 className="w-4 h-4" />
-                  </button>
-                  {depth > 0 && (
-                    <button
-                      onClick={() => handleDelete(node.id, node.title)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
-                      title="حذف سمت"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
-                </>
+              {canCreatePos && (
+                <button
+                  onClick={() => openAddChildModal(node)}
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition cursor-pointer"
+                  title="افزودن سمت زیرمجموعه به این گره"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              )}
+              {canEditPos && (
+                <button
+                  onClick={() => openEditModal(node)}
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition cursor-pointer"
+                  title="ویرایش سمت"
+                >
+                  <Edit3 className="w-4 h-4" />
+                </button>
+              )}
+              {canDeletePos && depth > 0 && (
+                <button
+                  onClick={() => handleDelete(node.id, node.title)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                  title="حذف سمت"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               )}
             </div>
           </div>
@@ -235,13 +241,15 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
                         {u.name.charAt(0)}
                       </span>
                       <span>{u.name}</span>
-                      <button
-                        onClick={() => setSelectedUserForPerms(u)}
-                        className="mr-1 px-1.5 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 text-[10px] font-bold border border-blue-200 transition cursor-pointer"
-                        title="ویرایش دسترسی‌های این کاربر"
-                      >
-                        دسترسی‌ها
-                      </button>
+                      {canManagePerms && (
+                        <button
+                          onClick={() => setSelectedUserForPerms(u)}
+                          className="mr-1 px-1.5 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 text-[10px] font-bold border border-blue-200 transition cursor-pointer"
+                          title="ویرایش دسترسی‌های این کاربر"
+                        >
+                          دسترسی‌ها
+                        </button>
+                      )}
                     </span>
                   ))}
                 </div>
@@ -289,7 +297,7 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
           </p>
         </div>
 
-        {isAdmin && (
+        {canCreatePos && (
           <button
             onClick={() => openAddChildModal()}
             className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-blue-600 hover:bg-blue-700 text-xs font-bold text-white shadow-sm transition cursor-pointer"

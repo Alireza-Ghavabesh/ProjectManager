@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { User, Position } from '../types';
 import { api } from '../services/api';
 import { PermissionsTreeModal } from './PermissionsTreeModal';
+import { hasPerm, hasAnyPerm } from '../utils/permissions';
 import { 
   Users, 
   Briefcase, 
@@ -35,8 +36,45 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
   currentUser,
   onRefresh,
 }) => {
-  const [subTab, setSubTab] = useState<'users' | 'positions' | 'permissions'>('users');
-  const isAdmin = currentUser.role === 'ADMIN';
+  const canViewUsers = hasAnyPerm(currentUser, [
+    'system.users.view',
+    'system.users.create',
+    'system.users.edit',
+    'system.users.delete',
+    'system.permissions.manage',
+  ]);
+  const canCreateUser = hasPerm(currentUser, 'system.users.create');
+  const canEditUser = hasPerm(currentUser, 'system.users.edit');
+  const canDeleteUser = hasPerm(currentUser, 'system.users.delete');
+  const canAssignAdmin = hasPerm(currentUser, 'system.users.assign_admin');
+  const canManagePerms = hasPerm(currentUser, 'system.permissions.manage');
+
+  const canViewPos = hasAnyPerm(currentUser, [
+    'org.positions.view',
+    'org.positions.create',
+    'org.positions.edit',
+    'org.positions.delete',
+    'system.permissions.manage',
+  ]);
+  const canCreatePos = hasPerm(currentUser, 'org.positions.create');
+  const canEditPos = hasPerm(currentUser, 'org.positions.edit');
+  const canDeletePos = hasPerm(currentUser, 'org.positions.delete');
+
+  const [subTab, setSubTab] = useState<'users' | 'positions' | 'permissions'>(() => {
+    if (canViewUsers) return 'users';
+    if (canViewPos) return 'positions';
+    return 'permissions';
+  });
+
+  useEffect(() => {
+    if (subTab === 'users' && !canViewUsers) {
+      setSubTab(canViewPos ? 'positions' : 'permissions');
+    } else if (subTab === 'positions' && !canViewPos) {
+      setSubTab(canViewUsers ? 'users' : 'permissions');
+    } else if (subTab === 'permissions' && !canManagePerms) {
+      setSubTab(canViewUsers ? 'users' : 'positions');
+    }
+  }, [subTab, canViewUsers, canViewPos, canManagePerms]);
 
   // Selected for permissions modal
   const [selectedUserForPerms, setSelectedUserForPerms] = useState<User | null>(null);
@@ -82,7 +120,7 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
       setUserUsername('');
       setUserPassword('');
       setUserRole('COUNCIL');
-      setUserPositionId(positions[0]?.id || '');
+      setUserPositionId('');
       setUserPhone('');
     }
     setError('');
@@ -241,37 +279,43 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 self-stretch sm:self-auto overflow-x-auto">
-          <button
-            onClick={() => setSubTab('users')}
-            className={`flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
-              subTab === 'users'
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            کاربران شورا ({users.length})
-          </button>
-          <button
-            onClick={() => setSubTab('positions')}
-            className={`flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
-              subTab === 'positions'
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            سمت‌های سازمانی ({positions.length})
-          </button>
-          <button
-            onClick={() => setSubTab('permissions')}
-            className={`flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-              subTab === 'permissions'
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Shield className="w-3.5 h-3.5" />
-            <span>ماتریس دسترسی‌ها</span>
-          </button>
+          {canViewUsers && (
+            <button
+              onClick={() => setSubTab('users')}
+              className={`flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
+                subTab === 'users'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              کاربران شورا ({users.length})
+            </button>
+          )}
+          {canViewPos && (
+            <button
+              onClick={() => setSubTab('positions')}
+              className={`flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
+                subTab === 'positions'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              سمت‌های سازمانی ({positions.length})
+            </button>
+          )}
+          {canManagePerms && (
+            <button
+              onClick={() => setSubTab('permissions')}
+              className={`flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+                subTab === 'permissions'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Shield className="w-3.5 h-3.5" />
+              <span>ماتریس دسترسی‌ها</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -290,13 +334,13 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
               <Search className="w-4 h-4 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
             </div>
 
-            {isAdmin && (
+            {canCreateUser && (
               <button
                 onClick={() => openUserModal()}
                 className="flex items-center justify-center gap-2 px-4 py-2 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
-                <span>تعریف کاربر جدید (با امکان تعیین کاربر ارشد)</span>
+                <span>تعریف کاربر جدید</span>
               </button>
             )}
           </div>
@@ -379,27 +423,31 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                     )}
                   </div>
 
-                  {isAdmin && (
+                  {(canManagePerms || canEditUser || canDeleteUser) && (
                     <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
-                      <button
-                        onClick={() => setSelectedUserForPerms(u)}
-                        className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                        title="تنظیم و ویرایش مستقیم سطوح دسترسی کاربر"
-                      >
-                        <Shield className="w-3.5 h-3.5 text-indigo-600" />
-                        <span>تنظیم دسترسی‌ها</span>
-                      </button>
+                      {canManagePerms ? (
+                        <button
+                          onClick={() => setSelectedUserForPerms(u)}
+                          className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                          title="تنظیم و ویرایش مستقیم سطوح دسترسی کاربر"
+                        >
+                          <Shield className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>تنظیم دسترسی‌ها</span>
+                        </button>
+                      ) : <span />}
 
                       <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => openUserModal(u)}
-                          className="px-2.5 py-1.5 rounded-xl text-xs text-slate-700 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
-                          title="ویرایش سمت، مشخصات یا سطح ارشد"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                          <span className="hidden sm:inline">مشخصات</span>
-                        </button>
-                        {u.id !== currentUser.id && (
+                        {canEditUser && (
+                          <button
+                            onClick={() => openUserModal(u)}
+                            className="px-2.5 py-1.5 rounded-xl text-xs text-slate-700 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
+                            title="ویرایش سمت، مشخصات یا سطح ارشد"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">مشخصات</span>
+                          </button>
+                        )}
+                        {canDeleteUser && u.id !== currentUser.id && (
                           <button
                             onClick={() => handleDeleteUser(u.id, u.name)}
                             className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
@@ -433,7 +481,7 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
               <Search className="w-4 h-4 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
             </div>
 
-            {isAdmin && (
+            {canCreatePos && (
               <button
                 onClick={() => openPosModal()}
                 className="flex items-center justify-center gap-2 px-4 py-2 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
@@ -479,32 +527,38 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                     )}
                   </div>
 
-                  {isAdmin && (
+                  {(canManagePerms || canEditPos || canDeletePos) && (
                     <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2 mt-4">
-                      <button
-                        onClick={() => setSelectedPosForPerms(p)}
-                        className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                        title="تنظیم درخت مجوزهای این سمت"
-                      >
-                        <Shield className="w-3.5 h-3.5 text-indigo-600" />
-                        <span>دسترسی‌های سمت</span>
-                      </button>
+                      {canManagePerms ? (
+                        <button
+                          onClick={() => setSelectedPosForPerms(p)}
+                          className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                          title="تنظیم درخت مجوزهای این سمت"
+                        >
+                          <Shield className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>دسترسی‌های سمت</span>
+                        </button>
+                      ) : <span />}
 
                       <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => openPosModal(p)}
-                          className="px-2.5 py-1.5 rounded-xl text-xs text-slate-700 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                          <span>ویرایش</span>
-                        </button>
-                        <button
-                          onClick={() => handleDeletePosition(p.id, p.title)}
-                          className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
-                          title="حذف سمت"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        {canEditPos && (
+                          <button
+                            onClick={() => openPosModal(p)}
+                            className="px-2.5 py-1.5 rounded-xl text-xs text-slate-700 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            <span>ویرایش</span>
+                          </button>
+                        )}
+                        {canDeletePos && (
+                          <button
+                            onClick={() => handleDeletePosition(p.id, p.title)}
+                            className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                            title="حذف سمت"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   )}
@@ -745,34 +799,36 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
               </div>
 
               {/* Senior System Admin (کاربر ارشد سیستم) Checkbox Requirement */}
-              <div
-                className={`p-3.5 rounded-2xl border transition ${
-                  userRole === 'ADMIN'
-                    ? 'bg-amber-50/90 border-amber-300 ring-2 ring-amber-400/40 shadow-xs'
-                    : 'bg-slate-50 border-slate-200'
-                }`}
-              >
-                <label className="flex items-start gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={userRole === 'ADMIN'}
-                    onChange={(e) => {
-                      const isChecked = e.target.checked;
-                      setUserRole(isChecked ? 'ADMIN' : 'COUNCIL');
-                    }}
-                    className="mt-1 w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300 cursor-pointer shrink-0"
-                  />
-                  <div>
-                    <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                      <Crown className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                      <span>کاربر ارشد سیستم (مدیر ارشد با کلیه دسترسی‌ها)</span>
+              {canAssignAdmin && (
+                <div
+                  className={`p-3.5 rounded-2xl border transition ${
+                    userRole === 'ADMIN'
+                      ? 'bg-amber-50/90 border-amber-300 ring-2 ring-amber-400/40 shadow-xs'
+                      : 'bg-slate-50 border-slate-200'
+                  }`}
+                >
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={userRole === 'ADMIN'}
+                      onChange={(e) => {
+                        const isChecked = e.target.checked;
+                        setUserRole(isChecked ? 'ADMIN' : 'COUNCIL');
+                      }}
+                      className="mt-1 w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300 cursor-pointer shrink-0"
+                    />
+                    <div>
+                      <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                        <Crown className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <span>کاربر ارشد سیستم (مدیر ارشد با کلیه دسترسی‌ها)</span>
+                      </div>
+                      <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
+                        با فعال‌سازی این تیک، کاربر دقیقاً مشابه مدیر اصلی سیستم تعریف می‌شود و کلیه دسترسی‌های سامانه را خواهد داشت.
+                      </p>
                     </div>
-                    <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
-                      با فعال‌سازی این تیک، کاربر دقیقاً مشابه مدیر اصلی سیستم تعریف می‌شود و کلیه ۳۰ سطح دسترسی (شامل ماتریس دسترسی‌ها، ساختارها، حذف و ویرایش کاربران، صدور مصوبه نهایی و نظارت بر آرا) را خواهد داشت.
-                    </p>
-                  </div>
-                </label>
-              </div>
+                  </label>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-bold text-slate-800 mb-1.5">

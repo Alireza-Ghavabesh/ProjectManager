@@ -1,5 +1,6 @@
 import React from 'react';
 import { User } from '../types';
+import { hasAnyPerm } from '../utils/permissions';
 import { PWAInstallButton } from '../pwa/PWAComponents';
 import { 
   Building2, 
@@ -51,15 +52,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   React.useEffect(() => {
     setLogoLoadError(false);
   }, [branding?.login_logo_url]);
-  // Check if current user has permission
-  const hasAccess = (permissionCode?: string): boolean => {
+  // Check if current user has any required permission
+  const hasAccess = (permissionCode?: string | string[]): boolean => {
     if (!permissionCode) return true;
-    if (currentUser.role === 'ADMIN') return true;
-    return Array.isArray(currentUser.permissions) && currentUser.permissions.includes(permissionCode);
+    if (Array.isArray(permissionCode)) return hasAnyPerm(currentUser, permissionCode);
+    return hasAnyPerm(currentUser, [permissionCode]);
   };
 
-  // Structured menu items with permission gating
-  // Note: 'stats' (داشبورد تحلیلی) and 'org' (چارت درختی) are hidden as requested by user
+  // Structured menu items with granular CRUD permission gating
   const menuGroups = [
     {
       groupTitle: 'پروژه‌ها و کارتابل شورا',
@@ -71,7 +71,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: Layers,
           badge: pendingVotesCount > 0 ? `${pendingVotesCount} در انتظار` : null,
           badgeColor: 'bg-amber-500/20 text-amber-700 border-amber-300',
-          permission: undefined,
+          permission: ['projects.view', 'projects.create', 'projects.edit', 'projects.delete', 'voting.cast', 'voting.confidential.view_all'],
         },
       ],
     },
@@ -85,7 +85,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: FolderTree,
           badge: null,
           badgeColor: '',
-          permission: 'projects.fields.manage',
+          permission: ['structures.view', 'structures.create', 'structures.edit', 'structures.delete'],
         },
         {
           id: 'workflows' as const,
@@ -94,19 +94,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: GitBranch,
           badge: null,
           badgeColor: '',
-          permission: 'workflow.definitions.manage',
+          permission: ['workflow.view', 'workflow.create', 'workflow.edit', 'workflow.delete'],
         },
-        /* 'org' (چارت و ساختار درختی سمت‌ها) - فعلا به درخواست کاربر پنهان شده است
-        {
-          id: 'org' as const,
-          title: 'چارت و سمت‌های سازمانی',
-          shortTitle: 'چارت سمت‌ها',
-          icon: Network,
-          badge: null,
-          badgeColor: '',
-          permission: 'org.positions.view',
-        },
-        */
         {
           id: 'users' as const,
           title: 'کاربران و سطوح دسترسی',
@@ -114,7 +103,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: Users,
           badge: null,
           badgeColor: '',
-          permission: 'system.users.view',
+          permission: [
+            'system.users.view',
+            'system.users.create',
+            'system.users.edit',
+            'system.users.delete',
+            'system.permissions.manage',
+            'org.positions.view',
+            'org.positions.create',
+            'org.positions.edit',
+            'org.positions.delete',
+          ],
         },
       ],
     },
@@ -128,17 +127,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: Sliders,
           badge: null,
           badgeColor: '',
-          permission: 'projects.fields.manage',
+          permission: ['projects.fields.view', 'projects.fields.create', 'projects.fields.edit', 'projects.fields.delete'],
         },
-        ...(currentUser.role === 'ADMIN' ? [{
+        {
           id: 'settings' as const,
           title: 'تنظیمات مهلت و قوانین شورا',
           shortTitle: 'تنظیمات مهلت',
           icon: Settings,
           badge: null,
           badgeColor: '',
-          permission: 'system',
-        }] : []),
+          permission: ['settings.view', 'settings.edit', 'sms.rules.view', 'sms.rules.create', 'sms.rules.edit', 'sms.rules.delete'],
+        },
       ],
     },
     {
@@ -151,19 +150,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: MessageSquare,
           badge: null,
           badgeColor: '',
-          permission: 'chat.group.send',
+          permission: ['chat.view', 'chat.group.send', 'chat.direct.send'],
         },
-        /* 'stats' (داشبورد و آمار تحلیلی) - فعلا به درخواست کاربر پنهان شده است
-        {
-          id: 'stats' as const,
-          title: 'داشبورد و آمار تحلیلی',
-          shortTitle: 'آمار',
-          icon: BarChart3,
-          badge: null,
-          badgeColor: '',
-          permission: undefined,
-        },
-        */
       ],
     },
   ];

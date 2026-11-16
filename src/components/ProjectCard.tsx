@@ -23,6 +23,7 @@ import {
 
 import { ProjectAttachments } from './ProjectAttachments';
 import { formatBudgetDisplay, isDeadlineExpired } from '../utils/formatters';
+import { hasPerm } from '../utils/permissions';
 
 interface ProjectCardProps {
   project: Project;
@@ -47,7 +48,12 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
 }) => {
   const [showAdminVotes, setShowAdminVotes] = useState(false);
   const [showAttachments, setShowAttachments] = useState(false);
-  const isAdmin = currentUser.role === 'ADMIN';
+  const canEditProject = hasPerm(currentUser, 'projects.edit');
+  const canDeleteProject = hasPerm(currentUser, 'projects.delete');
+  const canCreateProject = hasPerm(currentUser, 'projects.create');
+  const canViewConfidential = hasPerm(currentUser, 'voting.confidential.view_all');
+  const canCastVote = hasPerm(currentUser, 'voting.cast');
+  const canManageAttachments = canEditProject || (canCreateProject && currentUser.id === project.createdById);
 
   // Helper for majority badge
   const getMajorityBadge = (maj: string) => {
@@ -185,10 +191,10 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           {/* Majority status */}
           {getMajorityBadge(project.majorityResult)}
 
-          {/* Admin delete & edit */}
-          {isAdmin && (
+          {/* Edit & Delete actions based on granular permissions */}
+          {(canEditProject || canDeleteProject) && (
             <div className="flex items-center gap-1 mr-2">
-              {onEditProject && (
+              {canEditProject && onEditProject && (
                 <button
                   onClick={() => onEditProject(project)}
                   className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-slate-100 transition cursor-pointer"
@@ -197,7 +203,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   <Edit3 className="w-4 h-4" />
                 </button>
               )}
-              {onDeleteProject && (
+              {canDeleteProject && onDeleteProject && (
                 <button
                   onClick={() => {
                     if (confirm(`آیا از حذف پروژه «${project.title}» اطمینان دارید؟`)) {
@@ -295,13 +301,13 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   <Lock className="w-3.5 h-3.5 text-rose-600" />
                   مهلت رای‌گیری پایان یافته
                 </span>
-                {(isAdmin || currentUser.id === project.createdById) && (
+                {(canEditProject || currentUser.id === project.createdById) && (
                   <span className="text-[10px] text-slate-500 font-normal">
                     (برای بازگشایی مجدد، مهلت را با دکمه ویرایش ✏️ تمدید نمایید)
                   </span>
                 )}
               </div>
-            ) : currentUser.role === 'COUNCIL' ? (
+            ) : canCastVote && !canViewConfidential ? (
               <button
                 onClick={() => onOpenVoteModal(project)}
                 className="text-amber-800 font-bold hover:text-amber-900 bg-amber-100/80 hover:bg-amber-100 px-2.5 py-1 rounded-lg border border-amber-300 flex items-center gap-1 cursor-pointer transition shadow-2xs"
@@ -444,16 +450,16 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           projectId={project.id}
           projectTitle={project.title}
           attachments={project.attachments || []}
-          canManage={isAdmin}
+          canManage={canManageAttachments}
           onAttachmentChange={() => {
             if (onRefreshData) onRefreshData();
           }}
         />
       </div>
 
-      {/* Role-Specific Voting Section */}
-      {isAdmin ? (
-        /* ======================== ADMIN VIEW ======================== */
+      {/* Permission-Specific Voting Section */}
+      {canViewConfidential ? (
+        /* ======================== CONFIDENTIAL VIEW (VOTING SUPERVISOR) ======================== */
         <div className="pt-4 border-t border-slate-100">
           
           {/* Tally Summary Bar */}
@@ -556,8 +562,8 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           )}
 
         </div>
-      ) : (
-        /* ======================== COUNCIL MEMBER VIEW ======================== */
+      ) : canCastVote ? (
+        /* ======================== COUNCIL MEMBER VOTE ACTION VIEW ======================== */
         <div className="pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
           
           {/* Member's Confidential Vote Status */}
@@ -588,7 +594,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           </button>
 
         </div>
-      )}
+      ) : null}
 
     </div>
   );

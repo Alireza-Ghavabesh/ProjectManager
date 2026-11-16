@@ -14,7 +14,11 @@ import {
   RotateCcw,
   Search,
   Check,
-  AlertCircle
+  AlertCircle,
+  Eye,
+  PlusCircle,
+  Edit3,
+  Trash2
 } from 'lucide-react';
 
 interface PermissionsTreeModalProps {
@@ -22,6 +26,22 @@ interface PermissionsTreeModalProps {
   user?: User | null;
   onClose: () => void;
   onSuccess: () => void;
+}
+
+const CRUD_META = [
+  { key: 'view', label: 'نمایش', icon: Eye, activeCls: 'bg-sky-50 border-sky-400 text-sky-900 ring-1 ring-sky-300', iconCls: 'text-sky-600' },
+  { key: 'create', label: 'ثبت جدید', icon: PlusCircle, activeCls: 'bg-emerald-50 border-emerald-400 text-emerald-900 ring-1 ring-emerald-300', iconCls: 'text-emerald-600' },
+  { key: 'edit', label: 'ویرایش', icon: Edit3, activeCls: 'bg-amber-50 border-amber-400 text-amber-900 ring-1 ring-amber-300', iconCls: 'text-amber-600' },
+  { key: 'delete', label: 'حذف', icon: Trash2, activeCls: 'bg-rose-50 border-rose-400 text-rose-900 ring-1 ring-rose-300', iconCls: 'text-rose-600' },
+] as const;
+
+function getCrudSlot(code: string): 'view' | 'create' | 'edit' | 'delete' | null {
+  if (code === 'workflow.history.view' || code === 'voting.confidential.view_all') return null;
+  if (code.endsWith('.view')) return 'view';
+  if (code.endsWith('.create')) return 'create';
+  if (code.endsWith('.edit')) return 'edit';
+  if (code.endsWith('.delete')) return 'delete';
+  return null;
 }
 
 export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
@@ -52,7 +72,6 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
       const permData = await api.getPermissions();
       setTree(permData.tree);
       setAllPermissionsList(permData.permissions || []);
-      // Expand all root nodes by default
       setExpandedNodes(new Set(permData.tree.map((r) => r.code)));
 
       if (user) {
@@ -97,39 +116,51 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
     setSelectedCodes(all);
   };
 
+  const selectViewOnlyAll = () => {
+    const views = new Set<string>();
+    tree.forEach((root) => {
+      const viewChildren = (root.children || []).filter((c) => getCrudSlot(c.code) === 'view');
+      if (viewChildren.length > 0) {
+        views.add(root.code);
+        viewChildren.forEach((c) => views.add(c.code));
+      }
+    });
+    setSelectedCodes(views);
+  };
+
   const deselectAll = () => {
     setSelectedCodes(new Set());
   };
 
-  const togglePermission = (code: string, isParent: boolean, children?: Permission[]) => {
+  const toggleRootBranch = (root: Permission) => {
+    const children = root.children || [];
+    const allChildrenSelected = children.length > 0 && children.every((c) => selectedCodes.has(c.code));
     setSelectedCodes((prev) => {
       const next = new Set(prev);
-      if (next.has(code)) {
-        next.delete(code);
-        // If parent, also remove children
-        if (isParent && children) {
-          children.forEach((c) => next.delete(c.code));
-        }
+      if (allChildrenSelected || (children.length === 0 && next.has(root.code))) {
+        next.delete(root.code);
+        children.forEach((c) => next.delete(c.code));
       } else {
-        next.add(code);
-        // If parent, also grant children
-        if (isParent && children) {
-          children.forEach((c) => next.add(c.code));
-        }
+        next.add(root.code);
+        children.forEach((c) => next.add(c.code));
       }
       return next;
     });
   };
 
-  const toggleChildPermission = (childCode: string, parentCode: string) => {
+  const toggleChildPermission = (childCode: string, root: Permission) => {
+    const children = root.children || [];
     setSelectedCodes((prev) => {
       const next = new Set(prev);
       if (next.has(childCode)) {
         next.delete(childCode);
+        const anyRemaining = children.some((c) => next.has(c.code));
+        if (!anyRemaining) {
+          next.delete(root.code);
+        }
       } else {
         next.add(childCode);
-        // Automatically ensure parent root permission is active
-        next.add(parentCode);
+        next.add(root.code);
       }
       return next;
     });
@@ -165,10 +196,10 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
         await api.updatePositionPermissions(position.id, codes);
       }
       setSuccessMsg('تغییرات با موفقیت ذخیره شدند.');
+      onSuccess();
       setTimeout(() => {
-        onSuccess();
         onClose();
-      }, 500);
+      }, 350);
     } catch (err: any) {
       setError(err.message || 'خطا در ذخیره دسترسی‌ها');
     } finally {
@@ -176,7 +207,6 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
     }
   };
 
-  // Filter tree based on search query
   const filteredTree = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return tree;
@@ -206,9 +236,19 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
       .filter(Boolean) as Permission[];
   }, [tree, searchQuery]);
 
+  // Leaf permissions count (more meaningful than including root container codes)
+  const selectedLeafCount = useMemo(() => {
+    const rootCodes = new Set(tree.map((r) => r.code));
+    let count = 0;
+    selectedCodes.forEach((c) => {
+      if (!rootCodes.has(c)) count++;
+    });
+    return count;
+  }, [selectedCodes, tree]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/50 backdrop-blur-xs overflow-y-auto">
-      <div className="w-full max-w-3xl rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden my-4 sm:my-6 animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[92vh]">
+      <div className="w-full max-w-4xl rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden my-4 sm:my-6 animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[92vh]">
         
         {/* Modal Header */}
         <div className="p-4 sm:p-5 border-b border-slate-100 bg-slate-50/80 flex items-start justify-between gap-3 shrink-0">
@@ -219,7 +259,7 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs text-slate-500 font-medium">
-                  {isUserTarget ? 'مدیریت و انتصاب مجوزهای کاربر:' : 'ماتریس درختی مجوزهای سمت سازمانی:'}
+                  {isUserTarget ? 'ماتریس مجوزهای اختصاصی کاربر:' : 'ماتریس مجوزهای پایه سمت سازمانی:'}
                 </span>
                 <span className="text-sm font-bold text-slate-900">{targetTitle}</span>
                 {user?.positionTitle && (
@@ -240,9 +280,7 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
                 )}
               </div>
               <p className="text-[11px] text-slate-500 mt-1">
-                {isUserTarget
-                  ? 'تعیین دقیق اختیارات این کاربر در سامانه. تغییر مجوزها بلافاصله در نشست کاربری اعمال می‌شود.'
-                  : 'تعریف اختیارات پایه سمت. پرسنل منتسب به این سمت به‌صورت خودکار این دسترسی‌ها را دریافت می‌کنند.'}
+                برای هر موجودیت می‌توانید دسترسی‌های تفکیک‌شده‌ی <strong>نمایش، ثبت جدید، ویرایش و حذف</strong> و مجوزهای تخصصی را به‌صورت مستقل فعال یا غیرفعال کنید.
               </p>
             </div>
           </div>
@@ -277,7 +315,7 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="جستجو در نام یا کد مجوز..."
+              placeholder="جستجو در موجودیت، عملیات یا کد مجوز..."
               className="w-full rounded-xl bg-slate-50 border border-slate-200 pr-8 pl-3 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white transition"
             />
             <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-2.5 pointer-events-none" />
@@ -290,6 +328,15 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
               className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[11px] font-semibold text-slate-700 transition cursor-pointer"
             >
               انتخاب همه
+            </button>
+            <button
+              type="button"
+              onClick={selectViewOnlyAll}
+              className="px-2.5 py-1 rounded-lg bg-sky-50 hover:bg-sky-100 border border-sky-200 text-[11px] font-bold text-sky-800 transition cursor-pointer flex items-center gap-1"
+              title="فقط دسترسی نمایش تمام بخش‌ها را فعال می‌کند"
+            >
+              <Eye className="w-3 h-3 text-sky-600" />
+              <span>فقط نمایش</span>
             </button>
             <button
               type="button"
@@ -321,8 +368,8 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
           </div>
         </div>
 
-        {/* Tree Content */}
-        <div className="p-4 sm:p-5 overflow-y-auto space-y-3.5 flex-1">
+        {/* Entity CRUD Tree Content */}
+        <div className="p-4 sm:p-5 overflow-y-auto space-y-3.5 flex-1 bg-slate-50/40">
           {loading ? (
             <div className="text-center py-12 text-slate-500 text-xs">
               در حال بارگذاری ماتریس دسترسی‌ها...
@@ -334,22 +381,36 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
           ) : (
             filteredTree.map((root) => {
               const isExpanded = expandedNodes.has(root.code) || searchQuery.trim().length > 0;
-              const isRootSelected = selectedCodes.has(root.code);
               const children = root.children || [];
               const selectedChildrenCount = children.filter((c) => selectedCodes.has(c.code)).length;
+              const allChildrenSelected = children.length > 0 && selectedChildrenCount === children.length;
+              const partialSelected = selectedChildrenCount > 0 && !allChildrenSelected;
+
+              // Separate standard CRUD leaves from specialized leaves
+              const crudMap: Partial<Record<'view' | 'create' | 'edit' | 'delete', Permission>> = {};
+              const specialChildren: Permission[] = [];
+              children.forEach((child) => {
+                const slot = getCrudSlot(child.code);
+                if (slot && !crudMap[slot]) {
+                  crudMap[slot] = child;
+                } else {
+                  specialChildren.push(child);
+                }
+              });
+              const hasCrudStrip = Object.keys(crudMap).length > 0;
 
               return (
                 <div
                   key={root.code}
                   className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-2xs"
                 >
-                  {/* Root Branch */}
-                  <div className="flex items-center justify-between p-3.5 bg-slate-50/90 hover:bg-indigo-50/40 transition">
-                    <div className="flex items-center gap-2.5">
+                  {/* Entity Header Row */}
+                  <div className="flex items-center justify-between p-3.5 bg-slate-50/90 hover:bg-indigo-50/40 transition gap-2">
+                    <div className="flex items-center gap-2.5 min-w-0">
                       <button
                         type="button"
                         onClick={() => toggleExpand(root.code)}
-                        className="text-slate-400 hover:text-slate-700 cursor-pointer p-0.5"
+                        className="text-slate-400 hover:text-slate-700 cursor-pointer p-0.5 shrink-0"
                       >
                         {isExpanded ? (
                           <ChevronDown className="w-4 h-4 text-indigo-600" />
@@ -360,88 +421,149 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
 
                       <button
                         type="button"
-                        onClick={() => togglePermission(root.code, true, children)}
-                        className="flex items-center gap-2 cursor-pointer text-right"
+                        onClick={() => toggleRootBranch(root)}
+                        className="flex items-center gap-2 cursor-pointer text-right min-w-0"
+                        title="انتخاب یا لغو کل دسترسی‌های این موجودیت"
                       >
-                        {isRootSelected ? (
+                        {allChildrenSelected ? (
                           <CheckSquare className="w-4 h-4 text-indigo-600 shrink-0" />
+                        ) : partialSelected ? (
+                          <div className="w-4 h-4 rounded border-2 border-indigo-600 bg-indigo-100 flex items-center justify-center shrink-0">
+                            <div className="w-2 h-0.5 bg-indigo-700 rounded" />
+                          </div>
                         ) : (
                           <Square className="w-4 h-4 text-slate-400 shrink-0" />
                         )}
-                        <div>
-                          <span className="text-xs font-bold text-slate-900 block leading-tight">
+                        <div className="min-w-0">
+                          <span className="text-xs sm:text-sm font-bold text-slate-900 block leading-tight">
                             {root.title}
                           </span>
-                          <span className="text-[10px] text-slate-500 font-mono" dir="ltr">
-                            {root.code}
-                          </span>
+                          {root.description && (
+                            <span className="text-[11px] text-slate-500 block truncate mt-0.5">
+                              {root.description}
+                            </span>
+                          )}
                         </div>
                       </button>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0">
                       {root.isDanger ? (
                         <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1 font-bold">
                           <ShieldAlert className="w-2.5 h-2.5" />
                           حساس
                         </span>
                       ) : null}
-                      <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-slate-200 text-slate-700 font-semibold">
+                      <span
+                        className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold ${
+                          selectedChildrenCount > 0
+                            ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
+                            : 'bg-slate-200 text-slate-600'
+                        }`}
+                      >
                         {selectedChildrenCount} از {children.length} فعال
                       </span>
                     </div>
                   </div>
 
-                  {/* Children Nodes (Tree Leaves) */}
+                  {/* Expanded Body: 4-Column CRUD Strip + Extra Specialized Permissions */}
                   {isExpanded && children.length > 0 && (
-                    <div className="p-3 pr-8 space-y-2 border-t border-slate-100 bg-slate-50/40">
-                      {children.map((child) => {
-                        const isChildSelected = selectedCodes.has(child.code);
-                        return (
-                          <div
-                            key={child.code}
-                            className={`p-2.5 rounded-xl border transition flex items-center justify-between gap-3 ${
-                              isChildSelected
-                                ? 'bg-indigo-50/70 border-indigo-200 text-slate-900'
-                                : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                            }`}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => toggleChildPermission(child.code, root.code)}
-                              className="flex items-start gap-2.5 cursor-pointer text-right flex-1"
-                            >
-                              <div className="mt-0.5">
-                                {isChildSelected ? (
-                                  <CheckSquare className="w-4 h-4 text-indigo-600" />
-                                ) : (
-                                  <Square className="w-4 h-4 text-slate-400" />
-                                )}
-                              </div>
-                              <div>
-                                <div className="text-xs font-bold leading-tight flex items-center gap-2">
-                                  <span>{child.title}</span>
-                                  {child.isDanger ? (
-                                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1 font-bold">
-                                      <ShieldAlert className="w-2.5 h-2.5" />
-                                      اختیار حساس
-                                    </span>
-                                  ) : null}
+                    <div className="p-3.5 space-y-3 border-t border-slate-100 bg-white">
+                      {hasCrudStrip && (
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          {CRUD_META.map((meta) => {
+                            const perm = crudMap[meta.key];
+                            if (!perm) {
+                              return (
+                                <div
+                                  key={meta.key}
+                                  className="px-3 py-2 rounded-xl border border-dashed border-slate-200 bg-slate-50/50 text-[11px] text-slate-300 flex items-center justify-center"
+                                >
+                                  —
                                 </div>
-                                {child.description && (
-                                  <div className="text-[11px] text-slate-500 mt-0.5 font-normal">
-                                    {child.description}
-                                  </div>
+                              );
+                            }
+                            const checked = selectedCodes.has(perm.code);
+                            const IconComp = meta.icon;
+                            return (
+                              <button
+                                key={perm.code}
+                                type="button"
+                                onClick={() => toggleChildPermission(perm.code, root)}
+                                title={perm.description || perm.title}
+                                className={`px-3 py-2.5 rounded-xl border text-right transition cursor-pointer flex items-center justify-between gap-2 ${
+                                  checked
+                                    ? meta.activeCls
+                                    : 'bg-slate-50/80 border-slate-200 text-slate-600 hover:bg-slate-100 hover:border-slate-300'
+                                }`}
+                              >
+                                <span className="flex items-center gap-1.5 min-w-0">
+                                  <IconComp className={`w-3.5 h-3.5 shrink-0 ${checked ? meta.iconCls : 'text-slate-400'}`} />
+                                  <span className="text-xs font-bold truncate">{meta.label}</span>
+                                </span>
+                                {checked ? (
+                                  <CheckSquare className={`w-4 h-4 shrink-0 ${meta.iconCls}`} />
+                                ) : (
+                                  <Square className="w-4 h-4 text-slate-300 shrink-0" />
                                 )}
-                              </div>
-                            </button>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
 
-                            <span className="text-[10px] text-slate-400 font-mono shrink-0 hidden sm:inline" dir="ltr">
-                              {child.code}
-                            </span>
+                      {specialChildren.length > 0 && (
+                        <div className="space-y-1.5 pt-1">
+                          {hasCrudStrip && (
+                            <div className="text-[10px] font-bold text-slate-400 px-1">
+                              اختیارات تخصصی و تکمیلی:
+                            </div>
+                          )}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            {specialChildren.map((child) => {
+                              const isChildSelected = selectedCodes.has(child.code);
+                              return (
+                                <button
+                                  key={child.code}
+                                  type="button"
+                                  onClick={() => toggleChildPermission(child.code, root)}
+                                  className={`p-2.5 rounded-xl border transition flex items-start justify-between gap-2 text-right cursor-pointer ${
+                                    isChildSelected
+                                      ? 'bg-indigo-50/70 border-indigo-300 text-slate-900'
+                                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                                  }`}
+                                >
+                                  <div className="flex items-start gap-2 min-w-0">
+                                    <div className="mt-0.5 shrink-0">
+                                      {isChildSelected ? (
+                                        <CheckSquare className="w-4 h-4 text-indigo-600" />
+                                      ) : (
+                                        <Square className="w-4 h-4 text-slate-400" />
+                                      )}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <div className="text-xs font-bold leading-tight flex items-center gap-1.5 flex-wrap">
+                                        <span>{child.title}</span>
+                                        {child.isDanger ? (
+                                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1 font-bold">
+                                            <ShieldAlert className="w-2.5 h-2.5" />
+                                            حساس
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                      {child.description && (
+                                        <div className="text-[11px] text-slate-500 mt-0.5 font-normal">
+                                          {child.description}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </button>
+                              );
+                            })}
                           </div>
-                        );
-                      })}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -454,7 +576,7 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
         <div className="flex items-center justify-between p-4 border-t border-slate-100 bg-slate-50/90 shrink-0">
           <div className="text-xs text-slate-600 flex items-center gap-1.5">
             <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-            <span>مجموع مجوزهای انتخاب‌شده: <strong className="text-indigo-700">{selectedCodes.size}</strong> مجوز</span>
+            <span>مجموع عملیات مجاز انتخاب‌شده: <strong className="text-indigo-700">{selectedLeafCount}</strong> مجوز</span>
           </div>
 
           <div className="flex items-center gap-2.5">

@@ -381,59 +381,121 @@ export function initDatabase() {
 function seedInitialData() {
   const now = new Date().toISOString();
 
-  // 1. Seed Tree-structured Permissions
-  const permCount = (db.prepare('SELECT count(*) as count FROM permissions').get() as any).count;
-  if (permCount === 0) {
-    const insertPerm = db.prepare(`
-      INSERT INTO permissions (id, code, title, category, parentCode, description, isDanger)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
+  // 1. Seed & Synchronize Full Entity-Based CRUD Permissions Tree
+  const isFirstCrudMigration = !db.prepare("SELECT 1 FROM permissions WHERE code = 'projects.view'").get();
 
-    const permissionsData = [
-      // Root: System & Security
-      ['p-1', 'system', 'مدیریت کل سیستم و امنیت', 'سیستم و امنیت', null, 'دسترسی ریشه به کل تنظیمات و ماژول‌ها', 1],
-      ['p-2', 'system.users.view', 'مشاهده کاربران و پروفایل‌ها', 'کاربران', 'system', 'امکان مشاهده لیست پرسنل و مشخصات', 0],
-      ['p-3', 'system.users.create', 'تعریف و ثبت کاربر جدید', 'کاربران', 'system', 'ثبت اعضای جدید با شناسه و رمز', 0],
-      ['p-4', 'system.users.edit', 'ویرایش مشخصات کاربران', 'کاربران', 'system', 'تغییر نام، شماره و سمت پرسنل', 0],
-      ['p-5', 'system.users.delete', 'حذف حساب کاربران', 'کاربران', 'system', 'حذف دسترسی کاربری', 1],
-      ['p-6', 'system.users.assign_admin', 'اعطای نقش مدیر (ادمین) به کاربر', 'امنیت بالا', 'system', 'فقط مدیران ارشد مجاز به انتصاب ادمین هستند', 1],
-      ['p-7', 'system.permissions.manage', 'تنظیم ماتریس سطح دسترسی‌ها', 'امنیت بالا', 'system', 'تخصیص مجوزهای درختی به سمت‌ها', 1],
+  const permissionsData: Array<[string, string, string, string, string | null, string, number]> = [
+    // Entity 1: پروژه‌ها و مصوبات
+    ['p-12', 'projects', 'پروژه‌ها و کارتابل مصوبات', 'پروژه‌ها', null, 'کنترل نمایش، ثبت، ویرایش، حذف و تصویب نهایی پروژه‌ها', 0],
+    ['p-29', 'projects.view', 'نمایش پروژه‌ها و کارتابل', 'پروژه‌ها', 'projects', 'مشاهده لیست پروژه‌ها، جزئیات، فایل‌ها و وضعیت بررسی', 0],
+    ['p-14', 'projects.create', 'ثبت پروژه جدید', 'پروژه‌ها', 'projects', 'تعریف پروژه جدید و ارسال به گردش کار و کارتابل', 0],
+    ['p-15', 'projects.edit', 'ویرایش پروژه و فایل‌ها', 'پروژه‌ها', 'projects', 'ویرایش مشخصات، بودجه و مدیریت فایل‌های پیوست پروژه', 0],
+    ['p-16', 'projects.delete', 'حذف پروژه', 'پروژه‌ها', 'projects', 'حذف کامل پروژه و سوابق آن از سامانه', 1],
+    ['p-17', 'projects.finalize', 'تصویب نهایی و صدور ابلاغیه', 'پروژه‌ها', 'projects', 'خاتمه گردش کار و صدور مصوبه رسمی شورا', 1],
 
-      // Root: Org Structure
-      ['p-8', 'org', 'چارت و ساختار سازمانی شورا', 'ساختار شورا', null, 'مدیریت کل چارت سازمانی و سطوح', 0],
-      ['p-9', 'org.positions.view', 'مشاهده ساختار درختی سمت‌ها', 'ساختار شورا', 'org', 'دیدن گراف درختی سلسله مراتب', 0],
-      ['p-10', 'org.positions.manage', 'ایجاد و ویرایش سمت‌ها و گره‌های چارت', 'ساختار شورا', 'org', 'تعریف رده‌های سازمانی و تغییر والد', 1],
-      ['p-11', 'org.positions.assign', 'انتصاب کاربران به سمت‌های چارت', 'ساختار شورا', 'org', 'جابجایی سمت پرسنل شورا', 0],
+    // Entity 2: فیلدهای پویا و ویژگی‌های پروژه
+    ['p-30', 'fields', 'فیلدهای پویای پروژه', 'فیلدهای پویا', null, 'مدیریت فیلدها و ویژگی‌های سلسله‌مراتبی فرم پروژه', 0],
+    ['p-31', 'projects.fields.view', 'نمایش فیلدهای پویا', 'فیلدهای پویا', 'fields', 'مشاهده لیست و درخت ویژگی‌های فیلدهای پروژه', 0],
+    ['p-32', 'projects.fields.create', 'ثبت فیلد یا ویژگی جدید', 'فیلدهای پویا', 'fields', 'افزودن فیلد جدید و زیرویژگی برای پروژه‌ها', 0],
+    ['p-33', 'projects.fields.edit', 'ویرایش و چیدمان درختی فیلدها', 'فیلدهای پویا', 'fields', 'ویرایش مشخصات و جابجایی درختی فیلدها با درگ‌اند‌دراپ', 0],
+    ['p-34', 'projects.fields.delete', 'حذف فیلد پویا', 'فیلدهای پویا', 'fields', 'حذف فیلدهای پویا از فرم پروژه', 1],
 
-      // Root: Dynamic Fields & Projects
-      ['p-12', 'projects', 'پروژه‌ها و فیلدهای نیاز', 'پروژه‌ها', null, 'مدیریت طرح‌ها، فیلدها و مصوبات', 0],
-      ['p-13', 'projects.fields.manage', 'تعریف و مدیریت فیلدهای پویای نیاز پروژه', 'فیلدهای پویا', 'projects', 'افزودن و حذف فیلدهای اختصاصی بدون تغییر کد', 1],
-      ['p-28', 'system.structures.manage', 'تعریف انواع و ساختارهای پروژه', 'ساختارهای پروژه', 'projects', 'مدیریت پویا و بدون کدنویسی انواع ساختار تولید', 1],
-      ['p-14', 'projects.create', 'ثبت و ارسال پروژه جدید به کارتابل', 'پروژه‌ها', 'projects', 'ایجاد طرح جدید و ارجاع به گردش کار', 0],
-      ['p-15', 'projects.edit', 'ویرایش مشخصات و بودجه پروژه', 'پروژه‌ها', 'projects', 'تغییر عوامل و برآوردها', 0],
-      ['p-16', 'projects.delete', 'حذف پروژه از شورا', 'پروژه‌ها', 'projects', 'حذف کامل پروژه از سیستم', 1],
-      ['p-17', 'projects.finalize', 'تصویب نهایی و صدور ابلاغیه', 'مصوبات', 'projects', 'خاتمه گردش کار و صدور مصوبه رسمی', 1],
+    // Entity 3: ساختارهای سازمانی
+    ['p-35', 'structures', 'ساختارهای سازمانی', 'ساختارهای سازمانی', null, 'تعریف ساختارها و چیدمان درختی سمت‌ها در هر ساختار', 0],
+    ['p-36', 'structures.view', 'نمایش ساختارهای سازمانی', 'ساختارهای سازمانی', 'structures', 'مشاهده ساختارها، چارت درختی و نفرات منتصب', 0],
+    ['p-37', 'structures.create', 'ثبت ساختار و افزودن سمت', 'ساختارهای سازمانی', 'structures', 'ایجاد ساختار جدید و افزودن سمت به ساختار', 0],
+    ['p-38', 'structures.edit', 'ویرایش ساختار، چیدمان و انتصاب نفرات', 'ساختارهای سازمانی', 'structures', 'ویرایش مشخصات، جابجایی درگ‌اند‌دراپ و انتصاب کاربران', 0],
+    ['p-39', 'structures.delete', 'حذف ساختار یا گره از ساختار', 'ساختارهای سازمانی', 'structures', 'حذف ساختار سازمانی یا حذف سمت از درخت ساختار', 1],
 
-      // Root: Workflow
-      ['p-18', 'workflow', 'گردش کار و فرآیند سازمانی', 'گردش کار', null, 'طراحی و اجرای گردش پروژه‌ها در چارت', 0],
-      ['p-19', 'workflow.definitions.manage', 'تعریف و تغییر فرآیندهای گردش کار', 'گردش کار', 'workflow', 'تعریف گام‌های متوالی بر روی سمت‌ها', 1],
-      ['p-20', 'workflow.forward', 'ارجاع و تایید در گردش کار سازمانی', 'گردش کار', 'workflow', 'انتقال پروژه به گام یا سمت بعدی چارت', 0],
-      ['p-21', 'workflow.history.view', 'مشاهده تاریخچه کامل گردش کار', 'گردش کار', 'workflow', 'دیدن سوابق ارجاعات و امضاها', 0],
+    // Entity 4: سمت‌های سازمانی (چارت کلان)
+    ['p-8', 'org', 'سمت‌های سازمانی و چارت کلان', 'سمت‌های سازمانی', null, 'مدیریت کتابخانه سمت‌های سازمانی و سلسله‌مراتب شورا', 0],
+    ['p-9', 'org.positions.view', 'نمایش سمت‌ها و چارت سازمانی', 'سمت‌های سازمانی', 'org', 'مشاهده لیست سمت‌ها، چارت درختی و پرسنل هر سمت', 0],
+    ['p-40', 'org.positions.create', 'ثبت سمت سازمانی جدید', 'سمت‌های سازمانی', 'org', 'ایجاد سمت و گره جدید در چارت سازمانی', 0],
+    ['p-41', 'org.positions.edit', 'ویرایش سمت و جایگاه درختی', 'سمت‌های سازمانی', 'org', 'تغییر عنوان، شرح وظایف و سمت والد', 0],
+    ['p-42', 'org.positions.delete', 'حذف سمت سازمانی', 'سمت‌های سازمانی', 'org', 'حذف سمت از چارت سازمانی', 1],
+    ['p-11', 'org.positions.assign', 'انتصاب کاربران به سمت‌ها', 'سمت‌های سازمانی', 'org', 'انتصاب و جابجایی کاربران در سمت‌های شورا و ساختارها', 0],
 
-      // Root: Cartable & Confidential Voting
-      ['p-22', 'voting', 'کارتابل و سیستم رای‌گیری', 'آرا و کارتابل', null, 'مدیریت نظرات و تصمیم‌گیری شورا', 0],
-      ['p-23', 'voting.cast', 'ثبت رای تخصصی در کارتابل', 'آرا و کارتابل', 'voting', 'رای موافق، مخالف یا نیاز به اصلاح', 0],
-      ['p-24', 'voting.confidential.view_all', 'مشاهده محرمانه تفصیلی آرای اعضا', 'نظارت شورا', 'voting', 'فقط مدیران جلسه مجاز به دیدن رای دیگران هستند', 1],
+    // Entity 5: گردش کار و ارجاعات
+    ['p-18', 'workflow', 'گردش کار و ارجاعات', 'گردش کار', null, 'طراحی و اجرای فرآیندهای گردش کار روی پروژه‌ها', 0],
+    ['p-43', 'workflow.view', 'نمایش فرآیندهای گردش کار', 'گردش کار', 'workflow', 'مشاهده مراحل، شروط و مسیرهای گردش کار تعریف‌شده', 0],
+    ['p-44', 'workflow.create', 'ثبت و طراحی گردش کار جدید', 'گردش کار', 'workflow', 'ایجاد فرآیند گردش کار جدید با طراح بصری', 0],
+    ['p-45', 'workflow.edit', 'ویرایش گردش کار و مراحل', 'گردش کار', 'workflow', 'ویرایش گام‌ها، شروط تایید/رد و تعیین گردش کار پیش‌فرض', 0],
+    ['p-46', 'workflow.delete', 'حذف گردش کار', 'گردش کار', 'workflow', 'حذف فرآیند گردش کار از سامانه', 1],
+    ['p-20', 'workflow.forward', 'تایید و ارجاع در مراحل گردش کار', 'گردش کار', 'workflow', 'انتقال پروژه به گام یا سمت بعدی در کارتابل', 0],
+    ['p-21', 'workflow.history.view', 'نمایش تاریخچه ارجاعات گردش کار', 'گردش کار', 'workflow', 'مشاهده سوابق ارجاع، امضاها و یادداشت‌های مراحل', 0],
 
-      // Root: Communication
-      ['p-25', 'chat', 'ارتباطات و پیام‌رسانی', 'ارتباطات', null, 'گفتگوی گروهی و خصوصی اعضا', 0],
-      ['p-26', 'chat.group.send', 'ارسال پیام در تالار عمومی شورا', 'ارتباطات', 'chat', 'تبادل نظر عمومی پیرامون پروژه‌ها', 0],
-      ['p-27', 'chat.direct.send', 'گفتگوی خصوصی (پی‌وی) با اعضا', 'ارتباطات', 'chat', 'پیام محرمانه دو نفره با مدیر یا شورا', 0],
-    ];
+    // Entity 6: کاربران و سطوح دسترسی
+    ['p-1', 'system', 'کاربران و سطوح دسترسی', 'کاربران و امنیت', null, 'مدیریت حساب‌های کاربری، رمز عبور و ماتریس دسترسی‌ها', 1],
+    ['p-2', 'system.users.view', 'نمایش لیست کاربران و پروفایل‌ها', 'کاربران و امنیت', 'system', 'مشاهده فهرست اعضا، سمت‌ها و اطلاعات تماس', 0],
+    ['p-3', 'system.users.create', 'ثبت کاربر جدید', 'کاربران و امنیت', 'system', 'ایجاد حساب کاربری جدید با شناسه و سمت', 0],
+    ['p-4', 'system.users.edit', 'ویرایش کاربران و درخواست‌های رمز', 'کاربران و امنیت', 'system', 'ویرایش مشخصات کاربران و تایید/رد درخواست تغییر رمز', 0],
+    ['p-5', 'system.users.delete', 'حذف حساب کاربر', 'کاربران و امنیت', 'system', 'حذف کامل حساب کاربری از سامانه', 1],
+    ['p-6', 'system.users.assign_admin', 'اعطای نقش مدیر ارشد به کاربر', 'کاربران و امنیت', 'system', 'ارتقای کاربر به سطح مدیرکل با دسترسی نامحدود', 1],
+    ['p-7', 'system.permissions.manage', 'تنظیم ماتریس سطح دسترسی‌ها', 'کاربران و امنیت', 'system', 'ویرایش مجوزهای اختصاصی کاربران و سمت‌ها', 1],
 
-    for (const p of permissionsData) {
-      insertPerm.run(...p);
+    // Entity 7: تنظیمات سامانه و برندینگ
+    ['p-47', 'settings', 'تنظیمات سامانه و ظاهر', 'تنظیمات سامانه', null, 'تنظیم مهلت ارزیابی، سقف حجم فایل و برندینگ صفحه ورود', 0],
+    ['p-48', 'settings.view', 'نمایش تنظیمات سامانه', 'تنظیمات سامانه', 'settings', 'مشاهده تنظیمات مهلت، آپلود و ظاهر سامانه', 0],
+    ['p-49', 'settings.edit', 'ویرایش تنظیمات سامانه و برندینگ', 'تنظیمات سامانه', 'settings', 'تغییر سیاست‌های مهلت، سقف فایل و لوگوی ورود', 1],
+
+    // Entity 8: سامانه پیامک و شرط‌های اطلاع‌رسانی
+    ['p-50', 'sms', 'سامانه پیامک و شرط‌های اطلاع‌رسانی', 'موتور پیامک', null, 'پیکربندی درگاه پیامک، شرط‌های ارسال خودکار و گزارش‌ها', 0],
+    ['p-51', 'sms.rules.view', 'نمایش شرط‌ها و لاگ پیامک‌ها', 'موتور پیامک', 'sms', 'مشاهده شرط‌های پیامکی، تنظیمات درگاه و تاریخچه ارسال‌ها', 0],
+    ['p-52', 'sms.rules.create', 'ثبت شرط پیامک جدید و ارسال تست', 'موتور پیامک', 'sms', 'تعریف شرط‌های ارسال خودکار پیامک و آزمایش وب‌سرویس', 0],
+    ['p-53', 'sms.rules.edit', 'ویرایش و فعال‌سازی شرط‌های پیامک', 'موتور پیامک', 'sms', 'ویرایش، تغییر وضعیت و تنظیم وب‌سرویس پیامک', 0],
+    ['p-54', 'sms.rules.delete', 'حذف شرط پیامک', 'موتور پیامک', 'sms', 'حذف شرط ارسال خودکار پیامک', 1],
+
+    // Entity 9: رای‌گیری و نظارت شورا
+    ['p-22', 'voting', 'رای‌گیری و نظارت شورا', 'آرا و کارتابل', null, 'ثبت رای تخصصی و مشاهده آرای محرمانه اعضا', 0],
+    ['p-23', 'voting.cast', 'ثبت و ویرایش رای تخصصی', 'آرا و کارتابل', 'voting', 'ثبت رای موافق، مخالف یا نیاز به اصلاح در کارتابل', 0],
+    ['p-24', 'voting.confidential.view_all', 'نمایش محرمانه آرای تمام اعضا', 'آرا و کارتابل', 'voting', 'مشاهده تفصیلی و محرمانه رای همه اعضای شورا', 1],
+
+    // Entity 10: ارتباطات و تالار گفتگو
+    ['p-25', 'chat', 'گفتگوی شورا و پیام‌رسان', 'ارتباطات', null, 'مشاهده تالار گفتگو و ارسال پیام گروهی یا خصوصی', 0],
+    ['p-55', 'chat.view', 'نمایش تالار گفتگو و پیام‌ها', 'ارتباطات', 'chat', 'مشاهده تاریخچه پیام‌های گروهی و خصوصی شورا', 0],
+    ['p-26', 'chat.group.send', 'ارسال پیام در گروه عمومی شورا', 'ارتباطات', 'chat', 'ثبت پیام جدید در گفتگوی گروهی اعضا', 0],
+    ['p-27', 'chat.direct.send', 'ارسال پیام خصوصی (پی‌وی)', 'ارتباطات', 'chat', 'ارسال پیام دو نفره به اعضای شورا و مدیران', 0],
+  ];
+
+  // Upsert all canonical permissions cleanly without breaking foreign keys
+  const upsertPerm = db.prepare(`
+    INSERT INTO permissions (id, code, title, category, parentCode, description, isDanger)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(code) DO UPDATE SET
+      title = excluded.title,
+      category = excluded.category,
+      parentCode = excluded.parentCode,
+      description = excluded.description,
+      isDanger = excluded.isDanger
+  `);
+  for (const p of permissionsData) {
+    upsertPerm.run(...p);
+  }
+
+  // Migrate legacy monolithic `.manage` grants to granular CRUD codes before removing legacy rows
+  const legacyMigrations: Array<[string, string[]]> = [
+    ['projects.fields.manage', ['fields', 'projects.fields.view', 'projects.fields.create', 'projects.fields.edit', 'projects.fields.delete']],
+    ['system.structures.manage', ['structures', 'structures.view', 'structures.create', 'structures.edit', 'structures.delete']],
+    ['org.positions.manage', ['org', 'org.positions.view', 'org.positions.create', 'org.positions.edit', 'org.positions.delete']],
+    ['workflow.definitions.manage', ['workflow', 'workflow.view', 'workflow.create', 'workflow.edit', 'workflow.delete']],
+  ];
+
+  for (const [legacyCode, targetCodes] of legacyMigrations) {
+    const posHolders = db.prepare('SELECT positionId FROM position_permissions WHERE permissionCode = ?').all(legacyCode) as { positionId: string }[];
+    for (const h of posHolders) {
+      for (const tc of targetCodes) {
+        db.prepare('INSERT OR IGNORE INTO position_permissions (positionId, permissionCode) VALUES (?, ?)').run(h.positionId, tc);
+      }
     }
+    const userHolders = db.prepare('SELECT userId FROM user_permissions WHERE permissionCode = ?').all(legacyCode) as { userId: string }[];
+    for (const h of userHolders) {
+      for (const tc of targetCodes) {
+        db.prepare('INSERT OR IGNORE INTO user_permissions (userId, permissionCode) VALUES (?, ?)').run(h.userId, tc);
+      }
+    }
+    db.prepare('DELETE FROM position_permissions WHERE permissionCode = ?').run(legacyCode);
+    db.prepare('DELETE FROM user_permissions WHERE permissionCode = ?').run(legacyCode);
+    db.prepare('DELETE FROM permissions WHERE code = ?').run(legacyCode);
   }
 
   // 2. Seed Tree-structured Positions (چارت سازمانی درختی شورا)
@@ -464,15 +526,15 @@ function seedInitialData() {
   insertPos.run('pos-admin-affairs', 'مدیر امور اداری و پرسنلی', 'رسیدگی به امور کارکنان، مرخصی‌ها، احکام و رفاهیات', 'blue', null, 1, 0, now);
   insertPos.run('pos-mission-lead', 'سرپرست ماموریت‌ها و اعزام', 'برنامه‌ریزی، تایید و هماهنگی ماموریت‌های کاری و لجستیک', 'purple', null, 1, 0, now);
 
-  // Assign permissions to positions safely based on existing positions
+  // Assign permissions to positions on initial seed or first CRUD migration
   const posPermCount = (db.prepare('SELECT count(*) as count FROM position_permissions').get() as any).count;
-  if (posPermCount === 0) {
-    const existingPositions = (db.prepare('SELECT id FROM positions').all() as { id: string }[]).map(p => p.id);
-    const existingPosSet = new Set(existingPositions);
-    const allPerms = db.prepare('SELECT code FROM permissions').all() as { code: string }[];
-    const insertPosPerm = db.prepare('INSERT OR IGNORE INTO position_permissions (positionId, permissionCode) VALUES (?, ?)');
-    
-    // Admin position (pos-1 and pos-root) gets ALL permissions if they exist
+  const existingPositions = (db.prepare('SELECT id FROM positions').all() as { id: string }[]).map(p => p.id);
+  const existingPosSet = new Set(existingPositions);
+  const allPerms = db.prepare('SELECT code FROM permissions').all() as { code: string }[];
+  const insertPosPerm = db.prepare('INSERT OR IGNORE INTO position_permissions (positionId, permissionCode) VALUES (?, ?)');
+
+  if (posPermCount === 0 || isFirstCrudMigration) {
+    // Admin positions (pos-1 and pos-root) get ALL permissions
     for (const p of allPerms) {
       if (existingPosSet.has('pos-1')) {
         try { insertPosPerm.run('pos-1', p.code); } catch (e) {}
@@ -482,13 +544,26 @@ function seedInitialData() {
       }
     }
 
-    // Standard Council Positions get voting, chat, view, and workflow forward
+    // Standard Council Positions get view, voting, chat, and workflow forward permissions
     const councilPerms = [
+      'projects',
+      'projects.view',
+      'fields',
+      'projects.fields.view',
+      'structures',
+      'structures.view',
+      'system',
       'system.users.view',
+      'org',
       'org.positions.view',
+      'workflow',
+      'workflow.view',
       'workflow.forward',
       'workflow.history.view',
+      'voting',
       'voting.cast',
+      'chat',
+      'chat.view',
       'chat.group.send',
       'chat.direct.send',
     ];
@@ -498,6 +573,16 @@ function seedInitialData() {
       if (existingPosSet.has(posId)) {
         for (const pCode of councilPerms) {
           try { insertPosPerm.run(posId, pCode); } catch (e) {}
+        }
+      }
+    }
+
+    // Any other existing non-admin position that had voting/chat also retains view access to projects & chat on migration
+    if (isFirstCrudMigration) {
+      const voterPositions = db.prepare("SELECT DISTINCT positionId FROM position_permissions WHERE permissionCode IN ('voting.cast', 'chat.group.send')").all() as { positionId: string }[];
+      for (const vp of voterPositions) {
+        for (const viewCode of ['projects', 'projects.view', 'chat', 'chat.view']) {
+          try { insertPosPerm.run(vp.positionId, viewCode); } catch (e) {}
         }
       }
     }
@@ -646,15 +731,7 @@ function seedInitialData() {
     }
   }
 
-  // Ensure permission p-28 exists even in existing database
-  try {
-    db.prepare(`
-      INSERT OR IGNORE INTO permissions (id, code, title, category, parentCode, description, isDanger)
-      VALUES ('p-28', 'system.structures.manage', 'تعریف و مدیریت ساختارهای سازمانی', 'ساختارهای سازمانی', 'org', 'تعریف ساختارهای اداری، مالی، ماموریت، مرخصی و چیدمان سمت‌ها', 1)
-    `).run();
-    db.prepare("INSERT OR IGNORE INTO position_permissions (positionId, permissionCode) VALUES ('pos-1', 'system.structures.manage')").run();
-    db.prepare("INSERT OR IGNORE INTO position_permissions (positionId, permissionCode) VALUES ('pos-root', 'system.structures.manage')").run();
-  } catch (e) {}
+  // (Permissions already synchronized and migrated above)
 
   // 7. Seed Projects (مستقیماً برای تمام اعضای شورا در کارتابل ارسال می‌شود)
   const prjCount = (db.prepare('SELECT count(*) as count FROM projects').get() as any).count;

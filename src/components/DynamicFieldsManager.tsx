@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { DynamicField, User } from '../types';
 import { api } from '../services/api';
 import { formatBudgetDisplay, formatCurrencyInput } from '../utils/formatters';
+import { hasPerm } from '../utils/permissions';
 import {
   Sliders,
   Plus,
@@ -81,9 +82,9 @@ export const DynamicFieldsManager: React.FC<DynamicFieldsManagerProps> = ({
   const [dropTargetKey, setDropTargetKey] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  const isAdmin =
-    currentUser.role === 'ADMIN' ||
-    (Array.isArray(currentUser.permissions) && currentUser.permissions.includes('projects.fields.manage'));
+  const canCreateField = hasPerm(currentUser, 'projects.fields.create');
+  const canEditField = hasPerm(currentUser, 'projects.fields.edit');
+  const canDeleteField = hasPerm(currentUser, 'projects.fields.delete');
 
   const showToast = (type: 'success' | 'error', text: string) => {
     setToast({ type, text });
@@ -303,7 +304,7 @@ export const DynamicFieldsManager: React.FC<DynamicFieldsManagerProps> = ({
     return (
       <div key={field.id} className="relative flex flex-col items-stretch">
         {/* Drop Strip BEFORE sibling for reordering */}
-        {isAdmin && draggedFieldId && (
+        {canEditField && draggedFieldId && (
           <div
             onDragOver={(e) => {
               if (draggedFieldId === field.id || (field.parentId && isFieldDescendant(draggedFieldId, field.parentId))) return;
@@ -334,9 +335,9 @@ export const DynamicFieldsManager: React.FC<DynamicFieldsManagerProps> = ({
 
         {/* Field Card */}
         <div
-          draggable={isAdmin}
+          draggable={canEditField}
           onDragStart={(e) => {
-            if (!isAdmin) return;
+            if (!canEditField) return;
             e.stopPropagation();
             e.dataTransfer.effectAllowed = 'move';
             e.dataTransfer.setData('text/plain', field.id);
@@ -347,7 +348,7 @@ export const DynamicFieldsManager: React.FC<DynamicFieldsManagerProps> = ({
             setDropTargetKey(null);
           }}
           onDragOver={(e) => {
-            if (!isAdmin || !draggedFieldId || isInvalidTarget) return;
+            if (!canEditField || !draggedFieldId || isInvalidTarget) return;
             e.preventDefault();
             e.stopPropagation();
             setDropTargetKey(`field:${field.id}`);
@@ -387,7 +388,7 @@ export const DynamicFieldsManager: React.FC<DynamicFieldsManagerProps> = ({
           <div className="flex flex-wrap items-center justify-between gap-3">
             {/* Left Info */}
             <div className="flex items-center gap-2.5 min-w-0">
-              {isAdmin && (
+              {canEditField && (
                 <span
                   className="p-1.5 rounded-lg bg-slate-100 text-slate-400 group-hover:text-indigo-600 cursor-grab active:cursor-grabbing shrink-0 transition"
                   title="برای تغییر والد یا ترتیب بکشید و رها کنید"
@@ -449,19 +450,21 @@ export const DynamicFieldsManager: React.FC<DynamicFieldsManagerProps> = ({
             </div>
 
             {/* Right Actions */}
-            {isAdmin && (
+            {(canCreateField || canEditField || canDeleteField) && (
               <div className="flex items-center gap-1.5 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => handleOpenAdd(field.id)}
-                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[11px] font-bold transition cursor-pointer"
-                  title="افزودن ویژگی زیرمجموعه برای این فیلد (مثلاً هزینه یا ساعت کار)"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>افزودن ویژگی</span>
-                </button>
+                {canCreateField && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenAdd(field.id)}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[11px] font-bold transition cursor-pointer"
+                    title="افزودن ویژگی زیرمجموعه برای این فیلد (مثلاً هزینه یا ساعت کار)"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>افزودن ویژگی</span>
+                  </button>
+                )}
 
-                {depth > 0 && (
+                {canEditField && depth > 0 && (
                   <button
                     type="button"
                     onClick={() => moveFieldNode(field.id, null)}
@@ -472,23 +475,27 @@ export const DynamicFieldsManager: React.FC<DynamicFieldsManagerProps> = ({
                   </button>
                 )}
 
-                <button
-                  type="button"
-                  onClick={() => handleOpenEdit(field)}
-                  className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
-                  title="ویرایش فیلد"
-                >
-                  <Edit3 className="w-4 h-4" />
-                </button>
+                {canEditField && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenEdit(field)}
+                    className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
+                    title="ویرایش فیلد"
+                  >
+                    <Edit3 className="w-4 h-4" />
+                  </button>
+                )}
 
-                <button
-                  type="button"
-                  onClick={() => handleDeleteField(field.id, field.name)}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
-                  title="حذف فیلد"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                {canDeleteField && (
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteField(field.id, field.name)}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                    title="حذف فیلد"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -570,7 +577,7 @@ export const DynamicFieldsManager: React.FC<DynamicFieldsManagerProps> = ({
             <span>{showPreview ? 'بستن پیش‌نمایش فرم' : 'پیش‌نمایش فرم پروژه'}</span>
           </button>
 
-          {isAdmin && (
+          {canCreateField && (
             <button
               type="button"
               onClick={() => handleOpenAdd(null)}
@@ -623,7 +630,7 @@ export const DynamicFieldsManager: React.FC<DynamicFieldsManagerProps> = ({
               بوم چیدمان سلسله‌مراتب و ویژگی‌های فیلدها
             </h3>
           </div>
-          {isAdmin && (
+          {canEditField && (
             <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-xl bg-slate-100 text-slate-600">
               <Move className="w-3.5 h-3.5 text-indigo-600" />
               هر فیلد را روی فیلد دیگری رها کنید تا ویژگیِ آن شود
@@ -632,7 +639,7 @@ export const DynamicFieldsManager: React.FC<DynamicFieldsManagerProps> = ({
         </div>
 
         {/* Root Drop Zone */}
-        {isAdmin && (
+        {canEditField && (
           <div
             onDragOver={(e) => {
               if (!draggedFieldId) return;

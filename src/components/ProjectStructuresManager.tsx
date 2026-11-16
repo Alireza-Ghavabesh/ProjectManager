@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ProjectStructure, User, Position, StructurePositionNode } from '../types';
 import { api } from '../services/api';
 import { PermissionsTreeModal } from './PermissionsTreeModal';
+import { hasPerm, hasAnyPerm } from '../utils/permissions';
 import { 
   FolderTree, 
   Plus, 
@@ -105,9 +106,15 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
   const [quickPosTitle, setQuickPosTitle] = useState('');
   const [quickPosAdding, setQuickPosAdding] = useState(false);
 
-  const isAdmin = currentUser.role === 'ADMIN' || 
-    (Array.isArray(currentUser.permissions) && 
-      (currentUser.permissions.includes('system.structures.manage') || currentUser.permissions.includes('org.positions.manage')));
+  const canCreateStruct = hasPerm(currentUser, 'structures.create');
+  const canEditStruct = hasPerm(currentUser, 'structures.edit');
+  const canDeleteStruct = hasPerm(currentUser, 'structures.delete');
+  const canAddPosNode = hasAnyPerm(currentUser, ['structures.create', 'structures.edit', 'org.positions.create']);
+  const canEditPosNode = hasAnyPerm(currentUser, ['structures.edit', 'org.positions.edit']);
+  const canDeletePosNode = hasAnyPerm(currentUser, ['structures.delete', 'org.positions.delete']);
+  const canAssignUsers = hasAnyPerm(currentUser, ['structures.edit', 'org.positions.assign']);
+  const canManagePerms = hasPerm(currentUser, 'system.permissions.manage');
+  const canDragCanvas = canEditPosNode || canAddPosNode || canAssignUsers;
 
   // Extract unique categories
   const categories = Array.from(new Set(structures.map((s) => s.category || 'سازمانی و اداری')));
@@ -408,14 +415,16 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
     e.preventDefault();
     e.stopPropagation();
     setDropTargetKey(null);
-    if (!isAdmin || !dragPayload) return;
+    if (!dragPayload) return;
 
     const payload = dragPayload;
     setDragPayload(null);
 
     if (payload.kind === 'tree-node') {
+      if (!canEditPosNode) return;
       await moveStructureNode(payload.nodeId, targetNodeId);
     } else if (payload.kind === 'palette-position') {
+      if (!canAddPosNode) return;
       try {
         await api.addStructurePosition(selectedStructureId, {
           positionId: payload.positionId,
@@ -428,6 +437,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
         showToast('error', err.message || 'خطا در افزودن سمت');
       }
     } else if (payload.kind === 'palette-user') {
+      if (!canAssignUsers) return;
       try {
         await api.assignUserToStructurePosition(selectedStructureId, targetNodeId, payload.userId);
         await loadStructureTree(selectedStructureId);
@@ -443,14 +453,16 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
     e.preventDefault();
     e.stopPropagation();
     setDropTargetKey(null);
-    if (!isAdmin || !dragPayload) return;
+    if (!dragPayload) return;
 
     const payload = dragPayload;
     setDragPayload(null);
 
     if (payload.kind === 'tree-node') {
+      if (!canEditPosNode) return;
       await moveStructureNode(payload.nodeId, null);
     } else if (payload.kind === 'palette-position') {
+      if (!canAddPosNode) return;
       try {
         await api.addStructurePosition(selectedStructureId, {
           positionId: payload.positionId,
@@ -471,7 +483,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
     e.preventDefault();
     e.stopPropagation();
     setDropTargetKey(null);
-    if (!isAdmin || !dragPayload) return;
+    if (!dragPayload) return;
 
     const payload = dragPayload;
     setDragPayload(null);
@@ -537,7 +549,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
     return (
       <div key={node.id} className="relative flex flex-col items-stretch">
         {/* Drop strip BEFORE this sibling for reordering */}
-        {isAdmin && dragPayload && dragPayload.kind !== 'palette-user' && (
+        {canEditPosNode && dragPayload && dragPayload.kind !== 'palette-user' && (
           <div
             onDragOver={(e) => {
               if (dragPayload.kind === 'tree-node' && (dragPayload.nodeId === node.id || (node.parentId && isNodeDescendant(dragPayload.nodeId, node.parentId)))) return;
@@ -561,9 +573,9 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
 
         {/* Node Box */}
         <div
-          draggable={isAdmin}
+          draggable={canEditPosNode}
           onDragStart={(e) => {
-            if (!isAdmin) return;
+            if (!canEditPosNode) return;
             e.stopPropagation();
             e.dataTransfer.effectAllowed = 'move';
             e.dataTransfer.setData('text/plain', node.id);
@@ -574,7 +586,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
             setDropTargetKey(null);
           }}
           onDragOver={(e) => {
-            if (!isAdmin || !dragPayload || isInvalidDrop) return;
+            if (!canDragCanvas || !dragPayload || isInvalidDrop) return;
             e.preventDefault();
             e.stopPropagation();
             setDropTargetKey(`node:${node.id}`);
@@ -611,7 +623,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
           {/* Header Row: Position Title, Hierarchy Level, Actions */}
           <div className="flex flex-wrap items-center justify-between gap-3 mb-2.5">
             <div className="flex items-center gap-2.5">
-              {isAdmin && (
+              {canEditPosNode && (
                 <span
                   className="p-1.5 rounded-lg bg-slate-100 text-slate-400 group-hover:text-indigo-600 cursor-grab active:cursor-grabbing transition"
                   title="برای جابجایی یا تغییر والد بکشید و رها کنید"
@@ -647,60 +659,66 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
             {/* Actions for this Node */}
             <div className="flex items-center gap-1.5 flex-wrap">
               {/* Position-level permissions button */}
-              <button
-                onClick={() => {
-                  const basePos = positions.find((p) => p.id === node.positionId) || {
-                    id: node.positionId,
-                    title: node.title,
-                    createdAt: node.createdAt || new Date().toISOString(),
-                  };
-                  setSelectedPosForPerms(basePos);
-                }}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 text-slate-700 hover:text-indigo-700 text-xs font-medium transition cursor-pointer"
-                title="مشاهده و ویرایش ماتریس دسترسی‌های پایه این سمت"
-              >
-                <Lock className="w-3.5 h-3.5 text-indigo-600" />
-                <span className="hidden sm:inline">دسترسی‌های سمت</span>
-                <span className="text-[10px] px-1.5 py-0.2 bg-indigo-100 text-indigo-800 rounded font-bold">
-                  {node.permissions?.length || 0}
-                </span>
-              </button>
+              {canManagePerms && (
+                <button
+                  onClick={() => {
+                    const basePos = positions.find((p) => p.id === node.positionId) || {
+                      id: node.positionId,
+                      title: node.title,
+                      createdAt: node.createdAt || new Date().toISOString(),
+                    };
+                    setSelectedPosForPerms(basePos);
+                  }}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 text-slate-700 hover:text-indigo-700 text-xs font-medium transition cursor-pointer"
+                  title="مشاهده و ویرایش ماتریس دسترسی‌های پایه این سمت"
+                >
+                  <Lock className="w-3.5 h-3.5 text-indigo-600" />
+                  <span className="hidden sm:inline">دسترسی‌های سمت</span>
+                  <span className="text-[10px] px-1.5 py-0.2 bg-indigo-100 text-indigo-800 rounded font-bold">
+                    {node.permissions?.length || 0}
+                  </span>
+                </button>
+              )}
 
-              {isAdmin && (
-                <>
-                  <button
-                    onClick={() => handleOpenAssignUser(node)}
-                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 text-xs font-semibold transition cursor-pointer"
-                    title="انتصاب پرسنل و کاربر به این سمت در ساختار"
-                  >
-                    <UserPlus className="w-3.5 h-3.5" />
-                    <span className="hidden md:inline">انتصاب کاربر</span>
-                  </button>
+              {canAssignUsers && (
+                <button
+                  onClick={() => handleOpenAssignUser(node)}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 text-xs font-semibold transition cursor-pointer"
+                  title="انتصاب پرسنل و کاربر به این سمت در ساختار"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">انتصاب کاربر</span>
+                </button>
+              )}
 
-                  <button
-                    onClick={() => handleOpenAddNode(node)}
-                    className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
-                    title="افزودن سمت زیرمجموعه به این گره"
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
+              {canAddPosNode && (
+                <button
+                  onClick={() => handleOpenAddNode(node)}
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
+                  title="افزودن سمت زیرمجموعه به این گره"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              )}
 
-                  <button
-                    onClick={() => handleOpenEditNode(node)}
-                    className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition cursor-pointer"
-                    title="ویرایش سمت یا تغییر والد"
-                  >
-                    <Edit3 className="w-4 h-4" />
-                  </button>
+              {canEditPosNode && (
+                <button
+                  onClick={() => handleOpenEditNode(node)}
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition cursor-pointer"
+                  title="ویرایش سمت یا تغییر والد"
+                >
+                  <Edit3 className="w-4 h-4" />
+                </button>
+              )}
 
-                  <button
-                    onClick={() => handleDeletePositionNode(node)}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
-                    title="حذف سمت از این ساختار"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </>
+              {canDeletePosNode && (
+                <button
+                  onClick={() => handleDeletePositionNode(node)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                  title="حذف سمت از این ساختار"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               )}
             </div>
           </div>
@@ -749,16 +767,18 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
 
                     {/* Direct Button: Edit Individual User Permissions right from this node! */}
                     <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        onClick={() => setSelectedUserForPerms(u)}
-                        className="flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold shadow-2xs transition cursor-pointer"
-                        title="ویرایش مستقیم دسترسی‌های این کاربر در سامانه"
-                      >
-                        <Shield className="w-3 h-3" />
-                        <span>دسترسی‌ها</span>
-                      </button>
+                      {canManagePerms && (
+                        <button
+                          onClick={() => setSelectedUserForPerms(u)}
+                          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold shadow-2xs transition cursor-pointer"
+                          title="ویرایش مستقیم دسترسی‌های این کاربر در سامانه"
+                        >
+                          <Shield className="w-3 h-3" />
+                          <span>دسترسی‌ها</span>
+                        </button>
+                      )}
 
-                      {isAdmin && (
+                      {canAssignUsers && (
                         <button
                           onClick={() => handleRemoveUserFromNode(node, u)}
                           className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
@@ -776,7 +796,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
                 <span className="text-xs text-slate-400">
                   هنوز کاربری به این سمت در ساختار «{currentStructureDetail?.title || ''}» منتصب نشده است.
                 </span>
-                {isAdmin && (
+                {canAssignUsers && (
                   <button
                     onClick={() => handleOpenAssignUser(node)}
                     className="mr-2 text-xs font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer"
@@ -853,7 +873,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
                 <RefreshCw className={`w-4 h-4 ${treeLoading ? 'animate-spin text-indigo-600' : ''}`} />
               </button>
 
-              {isAdmin && (
+              {canAddPosNode && (
                 <button
                   onClick={() => handleOpenAddNode()}
                   className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-sm transition cursor-pointer"
@@ -864,7 +884,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
               )}
             </>
           ) : (
-            isAdmin && (
+            canCreateStruct && (
               <button
                 onClick={handleOpenCreateStructure}
                 className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-sm transition cursor-pointer"
@@ -1021,30 +1041,36 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
                       <span>مدیریت چارت، سمت‌ها و پرسنل این ساختار</span>
                     </button>
 
-                    {isAdmin && (
+                    {(canEditStruct || canDeleteStruct) && (
                       <div className="flex items-center justify-between pt-1">
-                        <button
-                          onClick={() => handleToggleActiveStructure(struct)}
-                          className="text-[11px] text-slate-500 hover:text-slate-800 transition cursor-pointer"
-                        >
-                          {isAct ? 'غیرفعال‌سازی' : 'فعال‌سازی'}
-                        </button>
+                        {canEditStruct ? (
+                          <button
+                            onClick={() => handleToggleActiveStructure(struct)}
+                            className="text-[11px] text-slate-500 hover:text-slate-800 transition cursor-pointer"
+                          >
+                            {isAct ? 'غیرفعال‌سازی' : 'فعال‌سازی'}
+                          </button>
+                        ) : <span />}
 
                         <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleOpenEditStructure(struct)}
-                            className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
-                            title="ویرایش مشخصات ساختار"
-                          >
-                            <Edit3 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteStructure(struct)}
-                            className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
-                            title="حذف ساختار"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {canEditStruct && (
+                            <button
+                              onClick={() => handleOpenEditStructure(struct)}
+                              className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
+                              title="ویرایش مشخصات ساختار"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+                          )}
+                          {canDeleteStruct && (
+                            <button
+                              onClick={() => handleDeleteStructure(struct)}
+                              className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                              title="حذف ساختار"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </div>
                     )}
@@ -1085,7 +1111,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
                   </option>
                 ))}
               </select>
-              {isAdmin && (
+              {canDragCanvas && (
                 <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200">
                   <Move className="w-3.5 h-3.5" />
                   حالت طراحی بصری با درگ‌اند‌دراپ فعال است
@@ -1117,7 +1143,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
           {/* 2-Column Visual Drag & Drop Workspace */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
             {/* Side Palette: Positions & Users */}
-            {isAdmin && (
+            {canDragCanvas && (
               <div className="lg:col-span-4 space-y-4 lg:sticky lg:top-4">
                 {/* Palette 1: Draggable Positions */}
                 <div className="p-4 rounded-3xl bg-white border border-slate-200 shadow-xs space-y-3">
@@ -1278,7 +1304,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
             )}
 
             {/* Visual Tree Hierarchy Canvas */}
-            <div className={`${isAdmin ? 'lg:col-span-8' : 'lg:col-span-12'} p-4 sm:p-6 rounded-3xl bg-white border border-slate-200 shadow-sm space-y-5`}>
+            <div className={`${canDragCanvas ? 'lg:col-span-8' : 'lg:col-span-12'} p-4 sm:p-6 rounded-3xl bg-white border border-slate-200 shadow-sm space-y-5`}>
               <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
                 <div>
                   <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
@@ -1290,7 +1316,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
                   </p>
                 </div>
 
-                {isAdmin && (
+                {canAddPosNode && (
                   <button
                     onClick={() => handleOpenAddNode()}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-bold transition cursor-pointer"
@@ -1302,7 +1328,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
               </div>
 
               {/* Root Drop Zone */}
-              {isAdmin && (
+              {canDragCanvas && (
                 <div
                   onDragOver={(e) => {
                     if (!dragPayload || dragPayload.kind === 'palette-user') return;
@@ -1341,7 +1367,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
                   <p className="text-xs text-slate-500 max-w-md mx-auto">
                     یک سمت را از پنل سمت راست بکشید و در «منطقه ریشه چارت» رها کنید، یا با دکمه زیر اولین سمت را بسازید.
                   </p>
-                  {isAdmin && (
+                  {canAddPosNode && (
                     <button
                       onClick={() => handleOpenAddNode()}
                       className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs cursor-pointer"

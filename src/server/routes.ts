@@ -109,11 +109,15 @@ export function getUserPermissionsList(user: { id: string; role: string; positio
   return Array.from(permSet);
 }
 
-// Check permission helper
-function hasPermission(user: any, permissionCode: string): boolean {
+// Check permission helper (supports single code or array of acceptable codes)
+function hasPermission(user: any, permissionCode: string | string[]): boolean {
   if (!user) return false;
   if (user.role === 'ADMIN') return true;
-  return Array.isArray(user.permissions) && user.permissions.includes(permissionCode);
+  if (!Array.isArray(user.permissions)) return false;
+  if (Array.isArray(permissionCode)) {
+    return permissionCode.some((c) => user.permissions.includes(c));
+  }
+  return user.permissions.includes(permissionCode);
 }
 
 // Majority calculator helper
@@ -667,7 +671,7 @@ apiRouter.get('/positions', (_req: Request, res: Response) => {
 
 apiRouter.post('/positions', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || !hasPermission(currentUser, 'org.positions.manage')) {
+  if (!currentUser || !hasPermission(currentUser, 'org.positions.create')) {
     return res.status(403).json({ error: 'شما مجاز به ایجاد سمت و گره جدید در چارت سازمانی نیستید.' });
   }
 
@@ -704,7 +708,7 @@ apiRouter.post('/positions', (req: Request, res: Response) => {
 
 apiRouter.put('/positions/:id', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || !hasPermission(currentUser, 'org.positions.manage')) {
+  if (!currentUser || !hasPermission(currentUser, 'org.positions.edit')) {
     return res.status(403).json({ error: 'شما مجاز به ویرایش چارت و سمت‌ها نیستید.' });
   }
 
@@ -739,7 +743,7 @@ apiRouter.put('/positions/:id', (req: Request, res: Response) => {
 
 apiRouter.delete('/positions/:id', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || !hasPermission(currentUser, 'org.positions.manage')) {
+  if (!currentUser || !hasPermission(currentUser, 'org.positions.delete')) {
     return res.status(403).json({ error: 'شما مجاز به حذف سمت‌ها نیستید.' });
   }
   const { id } = req.params;
@@ -797,7 +801,7 @@ apiRouter.get('/workflows', (_req: Request, res: Response) => {
 
 apiRouter.post('/workflows', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || !hasPermission(currentUser, 'workflow.definitions.manage')) {
+  if (!currentUser || !hasPermission(currentUser, 'workflow.create')) {
     return res.status(403).json({ error: 'شما مجاز به طراحی و تعریف فرآیند گردش کار نیستید.' });
   }
 
@@ -843,7 +847,7 @@ apiRouter.post('/workflows', (req: Request, res: Response) => {
 
 apiRouter.put('/workflows/:id', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || !hasPermission(currentUser, 'workflow.definitions.manage')) {
+  if (!currentUser || !hasPermission(currentUser, 'workflow.edit')) {
     return res.status(403).json({ error: 'شما مجاز به ویرایش فرآیند گردش کار نیستید.' });
   }
 
@@ -890,7 +894,7 @@ apiRouter.put('/workflows/:id', (req: Request, res: Response) => {
 
 apiRouter.delete('/workflows/:id', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || !hasPermission(currentUser, 'workflow.definitions.manage')) {
+  if (!currentUser || !hasPermission(currentUser, 'workflow.delete')) {
     return res.status(403).json({ error: 'شما مجاز به حذف گردش کار نیستید.' });
   }
 
@@ -911,7 +915,7 @@ apiRouter.delete('/workflows/:id', (req: Request, res: Response) => {
 
 apiRouter.post('/workflows/:id/set-default', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || !hasPermission(currentUser, 'workflow.definitions.manage')) {
+  if (!currentUser || !hasPermission(currentUser, 'workflow.edit')) {
     return res.status(403).json({ error: 'شما مجاز به تعیین گردش کار پیش‌فرض نیستید.' });
   }
   const { id } = req.params;
@@ -1068,7 +1072,7 @@ apiRouter.get('/project-structures', (_req: Request, res: Response) => {
 
 apiRouter.post('/project-structures', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'projects.fields.manage'))) {
+  if (!currentUser || !hasPermission(currentUser, 'structures.create')) {
     return res.status(403).json({ error: 'شما مجاز به تعریف ساختار سازمانی جدید نیستید.' });
   }
 
@@ -1114,7 +1118,7 @@ apiRouter.post('/project-structures', (req: Request, res: Response) => {
 
 apiRouter.put('/project-structures/:id', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'projects.fields.manage'))) {
+  if (!currentUser || !hasPermission(currentUser, 'structures.edit')) {
     return res.status(403).json({ error: 'شما مجاز به ویرایش این ساختار سازمانی نیستید.' });
   }
 
@@ -1174,7 +1178,7 @@ apiRouter.put('/project-structures/:id', (req: Request, res: Response) => {
 
 apiRouter.delete('/project-structures/:id', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'projects.fields.manage'))) {
+  if (!currentUser || !hasPermission(currentUser, 'structures.delete')) {
     return res.status(403).json({ error: 'شما مجاز به حذف این ساختار سازمانی نیستید.' });
   }
 
@@ -1276,7 +1280,7 @@ apiRouter.get('/project-structures/:id/positions', (req: Request, res: Response)
 // Add a position to a structure's tree (reusing existing position or creating new)
 apiRouter.post('/project-structures/:id/positions', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'org.positions.manage'))) {
+  if (!currentUser || !hasPermission(currentUser, ['structures.create', 'structures.edit', 'org.positions.create'])) {
     return res.status(403).json({ error: 'شما مجاز به تعریف و چینش سمت در ساختار نیستید.' });
   }
 
@@ -1354,7 +1358,7 @@ function hasParentCycle(items: Array<{ id: string; parentId?: string | null }>, 
 // Batch reorder / re-parent structure positions (drag & drop)
 apiRouter.put('/project-structures/:id/positions-reorder', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'org.positions.manage'))) {
+  if (!currentUser || !hasPermission(currentUser, ['structures.edit', 'org.positions.edit'])) {
     return res.status(403).json({ error: 'شما مجاز به تغییر چینش ساختار نیستید.' });
   }
 
@@ -1397,7 +1401,7 @@ apiRouter.put('/project-structures/:id/positions-reorder', (req: Request, res: R
 // Update a position node in a structure (change parent, update position details)
 apiRouter.put('/project-structures/:id/positions/:spId', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'org.positions.manage'))) {
+  if (!currentUser || !hasPermission(currentUser, ['structures.edit', 'org.positions.edit'])) {
     return res.status(403).json({ error: 'شما مجاز به ویرایش سمت در ساختار نیستید.' });
   }
 
@@ -1446,7 +1450,7 @@ apiRouter.put('/project-structures/:id/positions/:spId', (req: Request, res: Res
 // Delete position from structure's tree
 apiRouter.delete('/project-structures/:id/positions/:spId', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'org.positions.manage'))) {
+  if (!currentUser || !hasPermission(currentUser, ['structures.delete', 'org.positions.delete'])) {
     return res.status(403).json({ error: 'شما مجاز به حذف سمت از این ساختار نیستید.' });
   }
 
@@ -1473,7 +1477,7 @@ apiRouter.delete('/project-structures/:id/positions/:spId', (req: Request, res: 
 // Assign user to a structure position
 apiRouter.post('/project-structures/:id/positions/:spId/users', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'org.positions.assign'))) {
+  if (!currentUser || !hasPermission(currentUser, ['structures.edit', 'org.positions.assign'])) {
     return res.status(403).json({ error: 'شما مجاز به انتصاب کاربر به این سمت نیستید.' });
   }
 
@@ -1505,7 +1509,7 @@ apiRouter.post('/project-structures/:id/positions/:spId/users', (req: Request, r
 // Remove user from a structure position
 apiRouter.delete('/project-structures/:id/positions/:spId/users/:userId', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || (!hasPermission(currentUser, 'system.structures.manage') && !hasPermission(currentUser, 'org.positions.assign'))) {
+  if (!currentUser || !hasPermission(currentUser, ['structures.edit', 'org.positions.assign'])) {
     return res.status(403).json({ error: 'شما مجاز به لغو انتصاب کاربر از این سمت نیستید.' });
   }
 
@@ -1533,10 +1537,9 @@ apiRouter.get('/dynamic-fields', (_req: Request, res: Response) => {
 
 apiRouter.post('/dynamic-fields', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  // STRICT REQUIREMENT: "هرکسی نتونه نیاز پروژه تعریف کنه"
-  if (!currentUser || !hasPermission(currentUser, 'projects.fields.manage')) {
+  if (!currentUser || !hasPermission(currentUser, 'projects.fields.create')) {
     return res.status(403).json({
-      error: 'عدم دسترسی: شما مجوز تعریف یا تغییر فیلدهای نیاز پروژه را ندارید. این دسترسی مخصوص مدیران تعیین‌شده در ساختار دسترسی است.',
+      error: 'عدم دسترسی: شما مجوز ثبت فیلد یا ویژگی پویای جدید را ندارید.',
     });
   }
 
@@ -1598,7 +1601,7 @@ apiRouter.post('/dynamic-fields', (req: Request, res: Response) => {
 // MUST be registered before /dynamic-fields/:id
 apiRouter.put('/dynamic-fields/reorder', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || !hasPermission(currentUser, 'projects.fields.manage')) {
+  if (!currentUser || !hasPermission(currentUser, 'projects.fields.edit')) {
     return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به تغییر ترتیب و ساختار فیلدهای پروژه نیستید.' });
   }
 
@@ -1638,7 +1641,7 @@ apiRouter.put('/dynamic-fields/reorder', (req: Request, res: Response) => {
 
 apiRouter.put('/dynamic-fields/:id', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || !hasPermission(currentUser, 'projects.fields.manage')) {
+  if (!currentUser || !hasPermission(currentUser, 'projects.fields.edit')) {
     return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به ویرایش فیلدهای پروژه نیستید.' });
   }
 
@@ -1690,7 +1693,7 @@ apiRouter.put('/dynamic-fields/:id', (req: Request, res: Response) => {
 
 apiRouter.delete('/dynamic-fields/:id', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || !hasPermission(currentUser, 'projects.fields.manage')) {
+  if (!currentUser || !hasPermission(currentUser, 'projects.fields.delete')) {
     return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به حذف فیلدهای پروژه نیستید.' });
   }
   const { id } = req.params;
@@ -1713,6 +1716,10 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
   if (!currentUser) {
     return res.status(401).json({ error: 'احراز هویت نشده است.' });
+  }
+
+  if (!hasPermission(currentUser, 'projects.view')) {
+    return res.json({ projects: [], restrictedView: true });
   }
 
   const projects = db.prepare(`
@@ -2069,14 +2076,21 @@ apiRouter.get('/attachments/:id/download', (req: Request, res: Response) => {
 // Binary Streaming Upload endpoint (supports huge files up to 10GB without memory buffer)
 apiRouter.post('/projects/:id/attachments/stream', async (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || (!hasPermission(currentUser, 'projects.edit') && !hasPermission(currentUser, 'projects.create'))) {
-    return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به پیوست فایل برای این پروژه نیستید.' });
+  if (!currentUser) {
+    return res.status(401).json({ error: 'احراز هویت نشده است.' });
   }
 
   const { id: projectId } = req.params;
-  const project = db.prepare('SELECT id, title FROM projects WHERE id = ?').get(projectId) as any;
+  const project = db.prepare('SELECT id, title, createdById FROM projects WHERE id = ?').get(projectId) as any;
   if (!project) {
     return res.status(404).json({ error: 'پروژه مورد نظر یافت نشد.' });
+  }
+
+  const canUpload =
+    hasPermission(currentUser, 'projects.edit') ||
+    (hasPermission(currentUser, 'projects.create') && project.createdById === currentUser.id);
+  if (!canUpload) {
+    return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به پیوست فایل برای این پروژه نیستید.' });
   }
 
   const rawFileName = (req.query.fileName as string) || (req.headers['x-file-name'] as string) || 'attachment.dat';
@@ -2176,14 +2190,21 @@ apiRouter.post('/projects/:id/attachments/stream', async (req: Request, res: Res
 // Upload a new attachment to a project (JSON fallback)
 apiRouter.post('/projects/:id/attachments', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || (!hasPermission(currentUser, 'projects.edit') && !hasPermission(currentUser, 'projects.create'))) {
-    return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به پیوست فایل برای این پروژه نیستید.' });
+  if (!currentUser) {
+    return res.status(401).json({ error: 'احراز هویت نشده است.' });
   }
 
   const { id: projectId } = req.params;
-  const project = db.prepare('SELECT id, title FROM projects WHERE id = ?').get(projectId) as any;
+  const project = db.prepare('SELECT id, title, createdById FROM projects WHERE id = ?').get(projectId) as any;
   if (!project) {
     return res.status(404).json({ error: 'پروژه مورد نظر یافت نشد.' });
+  }
+
+  const canUpload =
+    hasPermission(currentUser, 'projects.edit') ||
+    (hasPermission(currentUser, 'projects.create') && project.createdById === currentUser.id);
+  if (!canUpload) {
+    return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به پیوست فایل برای این پروژه نیستید.' });
   }
 
   const { fileName, fileSize, fileType, data } = req.body;
@@ -2424,6 +2445,9 @@ apiRouter.get('/messages', (req: Request, res: Response) => {
   if (!currentUser) {
     return res.status(401).json({ error: 'احراز هویت نشده است.' });
   }
+  if (!hasPermission(currentUser, ['chat.view', 'chat.group.send', 'chat.direct.send'])) {
+    return res.json({ messages: [], restrictedView: true });
+  }
 
   const isGroup = req.query.isGroup === '1' || req.query.isGroup === 'true';
   const partnerId = req.query.partnerId as string;
@@ -2469,6 +2493,12 @@ apiRouter.post('/messages', (req: Request, res: Response) => {
   }
 
   const { content, isGroup, receiverId, projectId } = req.body;
+  const requiredPerm = isGroup ? 'chat.group.send' : 'chat.direct.send';
+  if (!hasPermission(currentUser, requiredPerm)) {
+    return res.status(403).json({
+      error: isGroup ? 'شما مجاز به ارسال پیام در تالار گروهی شورا نیستید.' : 'شما مجاز به ارسال پیام خصوصی نیستید.',
+    });
+  }
   if (!content || !content.trim()) {
     return res.status(400).json({ error: 'متن پیام خالی است.' });
   }
@@ -2524,7 +2554,7 @@ apiRouter.get('/dashboard/stats', (req: Request, res: Response) => {
   const pendingMajority = (db.prepare("SELECT count(*) as count FROM projects WHERE majorityResult = 'PENDING' OR majorityResult = 'TIED'").get() as any)?.count || 0;
 
   let userPendingCount = 0;
-  if (currentUser.role === 'COUNCIL') {
+  if (hasPermission(currentUser, 'voting.cast') && hasPermission(currentUser, 'projects.view')) {
     const unvoted = db.prepare(`
       SELECT count(*) as count FROM projects p
       WHERE NOT EXISTS (SELECT 1 FROM votes v WHERE v.projectId = p.id AND v.userId = ?)
@@ -2556,19 +2586,23 @@ apiRouter.get('/settings', (req: Request, res: Response) => {
     return res.status(401).json({ error: 'احراز هویت نشده است.' });
   }
 
+  const canSeeSensitiveSettings = hasPermission(currentUser, ['settings.view', 'settings.edit', 'sms.rules.view', 'sms.rules.create', 'sms.rules.edit']);
   const list = db.prepare('SELECT key, value, description, updatedAt FROM system_settings').all() as any[];
   const settings: Record<string, string> = {};
   for (const item of list) {
+    if (!canSeeSensitiveSettings && item.key === 'sms_api_key') {
+      continue;
+    }
     settings[item.key] = item.value;
   }
 
-  res.json({ settings, list });
+  res.json({ settings, list: canSeeSensitiveSettings ? list : list.filter((i) => i.key !== 'sms_api_key') });
 });
 
 apiRouter.put('/settings', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || currentUser.role !== 'ADMIN') {
-    return res.status(403).json({ error: 'دسترسی غیرمجاز: صرفاً مدیرکل (کاربر ارشد سیستم) مجاز به تغییر تنظیمات سامانه است.' });
+  if (!currentUser || !hasPermission(currentUser, ['settings.edit', 'sms.rules.edit'])) {
+    return res.status(403).json({ error: 'دسترسی غیرمجاز: شما مجوز ویرایش تنظیمات سامانه را ندارید.' });
   }
 
   const { settings } = req.body;
@@ -2626,11 +2660,11 @@ apiRouter.get('/system/public-settings', (req: Request, res: Response) => {
   });
 });
 
-// Upload login logo image (Admin only)
+// Upload login logo image
 apiRouter.post('/system/upload-logo', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || currentUser.role !== 'ADMIN') {
-    return res.status(403).json({ error: 'صرفاً کاربر ارشد سیستم مجاز به تغییر لوگو است.' });
+  if (!currentUser || !hasPermission(currentUser, 'settings.edit')) {
+    return res.status(403).json({ error: 'شما مجوز تغییر لوگو و ظاهر سامانه را ندارید.' });
   }
 
   const { logoData, fileName } = req.body;
@@ -2719,6 +2753,9 @@ apiRouter.get('/system/logo', (req: Request, res: Response) => {
 apiRouter.get('/sms/rules', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
   if (!currentUser) return res.status(401).json({ error: 'احراز هویت نشده است.' });
+  if (!hasPermission(currentUser, ['sms.rules.view', 'sms.rules.create', 'sms.rules.edit', 'sms.rules.delete', 'settings.view'])) {
+    return res.status(403).json({ error: 'شما مجوز مشاهده شرط‌های پیامک را ندارید.' });
+  }
 
   const rawRules = db.prepare('SELECT * FROM sms_rules ORDER BY createdAt DESC').all() as any[];
   const rules = rawRules.map((r) => {
@@ -2751,11 +2788,11 @@ apiRouter.get('/sms/rules', (req: Request, res: Response) => {
   res.json({ rules });
 });
 
-// Create SMS rule (Admin only)
+// Create SMS rule
 apiRouter.post('/sms/rules', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || currentUser.role !== 'ADMIN') {
-    return res.status(403).json({ error: 'صرفاً مدیرکل مجاز به تعریف شرط‌های پیامک است.' });
+  if (!currentUser || !hasPermission(currentUser, 'sms.rules.create')) {
+    return res.status(403).json({ error: 'شما مجوز ثبت شرط پیامک جدید را ندارید.' });
   }
 
   const {
@@ -2826,8 +2863,8 @@ apiRouter.post('/sms/rules', (req: Request, res: Response) => {
 // Update SMS rule
 apiRouter.put('/sms/rules/:id', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || currentUser.role !== 'ADMIN') {
-    return res.status(403).json({ error: 'صرفاً مدیرکل مجاز به ویرایش شرط پیامک است.' });
+  if (!currentUser || !hasPermission(currentUser, 'sms.rules.edit')) {
+    return res.status(403).json({ error: 'شما مجوز ویرایش شرط پیامک را ندارید.' });
   }
 
   const { id } = req.params;
@@ -2896,8 +2933,8 @@ apiRouter.put('/sms/rules/:id', (req: Request, res: Response) => {
 // Toggle rule active/inactive
 apiRouter.post('/sms/rules/:id/toggle', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || currentUser.role !== 'ADMIN') {
-    return res.status(403).json({ error: 'دسترسی غیرمجاز.' });
+  if (!currentUser || !hasPermission(currentUser, 'sms.rules.edit')) {
+    return res.status(403).json({ error: 'دسترسی غیرمجاز برای تغییر وضعیت شرط پیامک.' });
   }
 
   const { id } = req.params;
@@ -2917,8 +2954,8 @@ apiRouter.post('/sms/rules/:id/toggle', (req: Request, res: Response) => {
 // Delete SMS rule
 apiRouter.delete('/sms/rules/:id', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || currentUser.role !== 'ADMIN') {
-    return res.status(403).json({ error: 'صرفاً مدیرکل مجاز به حذف شرط پیامک است.' });
+  if (!currentUser || !hasPermission(currentUser, 'sms.rules.delete')) {
+    return res.status(403).json({ error: 'شما مجوز حذف شرط پیامک را ندارید.' });
   }
 
   const { id } = req.params;
@@ -2929,8 +2966,8 @@ apiRouter.delete('/sms/rules/:id', (req: Request, res: Response) => {
 // Send test SMS
 apiRouter.post('/sms/send-test', async (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || currentUser.role !== 'ADMIN') {
-    return res.status(403).json({ error: 'صرفاً مدیرکل مجاز به ارسال پیامک تستی است.' });
+  if (!currentUser || !hasPermission(currentUser, ['sms.rules.create', 'sms.rules.edit'])) {
+    return res.status(403).json({ error: 'شما مجوز ارسال پیامک تستی را ندارید.' });
   }
 
   const { phone, message } = req.body;
@@ -2974,7 +3011,7 @@ apiRouter.post('/sms/send-test', async (req: Request, res: Response) => {
 // Get SMS logs
 apiRouter.get('/sms/logs', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || currentUser.role !== 'ADMIN') {
+  if (!currentUser || !hasPermission(currentUser, ['sms.rules.view', 'sms.rules.create', 'sms.rules.edit'])) {
     return res.status(403).json({ error: 'دسترسی غیرمجاز به لاگ پیامک‌ها.' });
   }
 

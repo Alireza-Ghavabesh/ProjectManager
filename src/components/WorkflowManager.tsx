@@ -8,6 +8,7 @@ import {
   StructurePositionNode,
 } from '../types';
 import { api } from '../services/api';
+import { hasPerm } from '../utils/permissions';
 import {
   GitBranch,
   Plus,
@@ -115,9 +116,9 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
   const [structurePositionsMap, setStructurePositionsMap] = useState<Record<string, StructurePositionNode[]>>({});
   const [loadingStructureMap, setLoadingStructureMap] = useState(false);
 
-  const isAdmin =
-    currentUser.role === 'ADMIN' ||
-    (Array.isArray(currentUser.permissions) && currentUser.permissions.includes('workflow.definitions.manage'));
+  const canCreateWf = hasPerm(currentUser, 'workflow.create');
+  const canEditWf = hasPerm(currentUser, 'workflow.edit');
+  const canDeleteWf = hasPerm(currentUser, 'workflow.delete');
 
   const actionTypeLabels: Record<string, string> = Object.fromEntries(
     ACTION_PRESETS.map((p) => [p.value, p.label])
@@ -499,7 +500,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
             <RefreshCw className={`w-4 h-4 ${loadingStructureMap ? 'animate-spin text-indigo-600' : ''}`} />
           </button>
 
-          {isAdmin && (
+          {canCreateWf && (
             <button
               onClick={handleOpenCreate}
               className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
@@ -550,9 +551,9 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                   )}
                 </div>
 
-                {isAdmin && (
+                {(canEditWf || canDeleteWf) && (
                   <div className="flex items-center gap-1.5">
-                    {!wf.isDefault && (
+                    {canEditWf && !wf.isDefault && (
                       <button
                         onClick={() => handleSetDefault(wf.id)}
                         className="px-3 py-1 rounded-xl text-xs font-semibold text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
@@ -560,15 +561,17 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                         تنظیم به عنوان پیش‌فرض
                       </button>
                     )}
-                    <button
-                      onClick={() => handleOpenEdit(wf)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-xs font-bold transition cursor-pointer"
-                      title="ویرایش بصری گردش کار"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                      <span>ویرایش بصری</span>
-                    </button>
-                    {!wf.isDefault && (
+                    {canEditWf && (
+                      <button
+                        onClick={() => handleOpenEdit(wf)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-xs font-bold transition cursor-pointer"
+                        title="ویرایش بصری گردش کار"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                        <span>ویرایش بصری</span>
+                      </button>
+                    )}
+                    {canDeleteWf && !wf.isDefault && (
                       <button
                         onClick={() => handleDeleteWorkflow(wf.id, wf.title)}
                         className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
