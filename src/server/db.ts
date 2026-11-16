@@ -176,6 +176,7 @@ export function initDatabase() {
       stepOrder INTEGER NOT NULL,
       userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       positionId TEXT REFERENCES positions(id) ON DELETE SET NULL,
+      decision TEXT NOT NULL DEFAULT 'APPROVE',
       comment TEXT,
       createdAt TEXT NOT NULL,
       UNIQUE(projectId, stepOrder, userId)
@@ -407,6 +408,9 @@ export function initDatabase() {
       WHERE (positionIdsJson IS NULL OR positionIdsJson = '' OR positionIdsJson = '[]')
         AND positionId IS NOT NULL
     `).run();
+  } catch (e) {}
+  try {
+    db.prepare("ALTER TABLE workflow_step_approvals ADD COLUMN decision TEXT NOT NULL DEFAULT 'APPROVE'").run();
   } catch (e) {}
   try {
     db.prepare('ALTER TABLE projects ADD COLUMN workflowTrackingCode TEXT').run();

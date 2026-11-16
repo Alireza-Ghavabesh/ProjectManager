@@ -403,7 +403,8 @@ export default function App() {
   const hasNonWorkflowProjects = projects.some((p) => !isWorkflowProject(p));
   const pendingVotesCount =
     canViewProjects && canCastVote ? projects.filter((p) => !isWorkflowProject(p) && !p.hasVoted).length : 0;
-  const myTurnCount = canViewProjects ? projects.filter((p) => Boolean(p.isMyWorkflowTurn)).length : 0;
+  const myTurnCount = projects.filter((p) => Boolean(p.isMyWorkflowTurn)).length;
+  const canSeeCartableList = canViewProjects || projects.length > 0;
   const pendingResetRequests = resetRequests.filter((r) => r.status === 'PENDING');
 
   return (
@@ -416,6 +417,7 @@ export default function App() {
         setActiveTab={setActiveTab}
         onLogout={handleLogout}
         pendingVotesCount={pendingVotesCount}
+        myTurnCount={myTurnCount}
         mobileOpen={mobileMenuOpen}
         setMobileOpen={setMobileMenuOpen}
         collapsed={sidebarCollapsed}
@@ -677,18 +679,26 @@ export default function App() {
               </div>
 
               {/* Projects List */}
-              {!canViewProjects ? (
+              {!canViewProjects && projects.length > 0 && (
+                <div className="p-3.5 rounded-2xl bg-blue-50 border border-blue-200 text-blue-900 text-xs flex items-center justify-between gap-2">
+                  <span>
+                    دسترسی «نمایش همه پروژه‌ها و کارتابل» برای شما فعال نیست؛ فقط پروژه‌هایی که هم‌اکنون در نوبت گردش کار شما هستند نمایش داده می‌شوند.
+                  </span>
+                </div>
+              )}
+
+              {!canSeeCartableList ? (
                 <div className="p-12 text-center rounded-3xl bg-white border border-slate-200 text-slate-600 space-y-4 shadow-xs">
                   <Layers className="w-12 h-12 text-slate-300 mx-auto" />
                   <h3 className="text-base font-bold text-slate-800">
                     {canCreateProject
                       ? 'دسترسی مشاهده لیست پروژه‌ها فعال نیست (فقط امکان ثبت جدید دارید)'
-                      : 'شما مجوز مشاهده پروژه‌های کارتابل را ندارید'}
+                      : 'شما مجوز مشاهده همه پروژه‌های کارتابل را ندارید'}
                   </h3>
                   <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
                     {canCreateProject
-                      ? 'برای حساب کاربری شما دسترسی «ثبت پروژه جدید» فعال است. می‌توانید از دکمه زیر طرح جدید ثبت کنید و در صورت نیاز از مدیر سامانه دسترسی «نمایش پروژه‌ها» را نیز درخواست نمایید.'
-                      : 'جهت مشاهده پروژه‌ها و مصوبات، باید تیک «نمایش پروژه‌ها و کارتابل» در سطح دسترسی شما فعال شود.'}
+                      ? 'برای حساب کاربری شما دسترسی «ثبت پروژه جدید» فعال است. می‌توانید از دکمه زیر طرح جدید ثبت کنید و در صورت نیاز از مدیر سامانه دسترسی «نمایش پروژه‌ها و کارتابل» را نیز درخواست نمایید.'
+                      : 'جهت مشاهده همه پروژه‌ها، باید تیک «نمایش پروژه‌ها و کارتابل» در سطح دسترسی شما فعال شود (در غیر این صورت فقط پروژه‌هایی که در گردش کار به نوبت شما برسند نمایش داده می‌شوند).'}
                   </p>
                   {canCreateProject && (
                     <div className="pt-1">

@@ -47,13 +47,21 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
   currentUser,
   onRefresh,
 }) => {
-  // Navigation / View state: 'list' for all structures cards, 'tree' for managing a specific structure's positions
-  const [viewMode, setViewMode] = useState<'list' | 'tree'>('list');
+  // Navigation / View state: 'list' for all structures cards, 'positions' for standalone positions bank, 'tree' for managing a specific structure's positions
+  const [viewMode, setViewMode] = useState<'list' | 'positions' | 'tree'>('list');
   const [selectedStructureId, setSelectedStructureId] = useState<string>(structures[0]?.id || '');
   
   // List view filters
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
+  const [posSearch, setPosSearch] = useState('');
+
+  // Standalone Position Modal (completely independent from structures)
+  const [standalonePosModalOpen, setStandalonePosModalOpen] = useState(false);
+  const [editingStandalonePos, setEditingStandalonePos] = useState<Position | null>(null);
+  const [standalonePosTitle, setStandalonePosTitle] = useState('');
+  const [standalonePosDesc, setStandalonePosDesc] = useState('');
+  const [standalonePosColor, setStandalonePosColor] = useState('indigo');
   
   // Structure Metadata Modal (Create / Edit Structure itself)
   const [structureModalOpen, setStructureModalOpen] = useState(false);
@@ -110,6 +118,9 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
   const canCreateStruct = hasPerm(currentUser, 'structures.create');
   const canEditStruct = hasPerm(currentUser, 'structures.edit');
   const canDeleteStruct = hasPerm(currentUser, 'structures.delete');
+  const canCreateStandalonePos = hasPerm(currentUser, 'org.positions.create');
+  const canEditStandalonePos = hasPerm(currentUser, 'org.positions.edit');
+  const canDeleteStandalonePos = hasPerm(currentUser, 'org.positions.delete');
   const canAddPosNode = hasAnyPerm(currentUser, ['structures.create', 'structures.edit', 'org.positions.create']);
   const canEditPosNode = hasAnyPerm(currentUser, ['structures.edit', 'org.positions.edit']);
   const canDeletePosNode = hasAnyPerm(currentUser, ['structures.delete', 'org.positions.delete']);
@@ -276,12 +287,73 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
     }
   };
 
+  // Standalone Position CRUD (independent of structures)
+  const handleOpenCreateStandalonePos = () => {
+    setEditingStandalonePos(null);
+    setStandalonePosTitle('');
+    setStandalonePosDesc('');
+    setStandalonePosColor('indigo');
+    setError('');
+    setStandalonePosModalOpen(true);
+  };
+
+  const handleOpenEditStandalonePos = (pos: Position) => {
+    setEditingStandalonePos(pos);
+    setStandalonePosTitle(pos.title);
+    setStandalonePosDesc(pos.description || '');
+    setStandalonePosColor(pos.color || 'indigo');
+    setError('');
+    setStandalonePosModalOpen(true);
+  };
+
+  const handleSaveStandalonePos = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!standalonePosTitle.trim()) {
+      setError('عنوان سمت الزامی است.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      if (editingStandalonePos) {
+        await api.updatePosition(editingStandalonePos.id, {
+          title: standalonePosTitle.trim(),
+          description: standalonePosDesc.trim(),
+          color: standalonePosColor,
+        });
+      } else {
+        await api.createPosition({
+          title: standalonePosTitle.trim(),
+          description: standalonePosDesc.trim(),
+          color: standalonePosColor,
+        });
+      }
+      setStandalonePosModalOpen(false);
+      onRefresh();
+    } catch (err: any) {
+      setError(err.message || 'خطا در ذخیره سمت');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteStandalonePos = async (pos: Position) => {
+    if (!confirm(`آیا از حذف سمت «${pos.title}» اطمینان دارید؟`)) return;
+    try {
+      await api.deletePosition(pos.id);
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'خطا در حذف سمت');
+    }
+  };
+
   // Node (Position within structure) management
   const handleOpenAddNode = (parentNode?: StructurePositionNode) => {
     setEditingNode(null);
     setNodeParentSpId(parentNode ? parentNode.id : null);
-    setPositionMode('existing');
-    setSelectedExistingPosId(positions[0]?.id || '');
+    const firstUnused = positions.find((p) => !structureRawPositions.some((sp) => sp.positionId === p.id));
+    setPositionMode(firstUnused ? 'existing' : 'new');
+    setSelectedExistingPosId(firstUnused?.id || '');
     setNewPosTitle('');
     setNewPosDescription('');
     setNewPosColor(parentNode ? parentNode.color || 'indigo' : 'indigo');
@@ -906,68 +978,112 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
     <div className="space-y-6">
       
       {/* Top Banner & Mode Toggle */}
-      <div className="p-5 sm:p-6 rounded-3xl bg-white border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2.5 mb-1.5">
-            <span className="p-2 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-200/60">
-              <FolderTree className="w-5 h-5" />
-            </span>
-            <h2 className="text-lg font-bold text-slate-900">
-              {viewMode === 'list' 
-                ? 'مدیریت ساختار سازمانی'
-                : `چارت سازمانی، سمت‌ها و پرسنل ساختار: ${currentStructureDetail?.title || ''}`
-              }
-            </h2>
+      <div className="p-5 sm:p-6 rounded-3xl bg-white border border-slate-200 shadow-sm flex flex-col gap-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2.5 mb-1.5">
+              <span className="p-2 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-200/60">
+                <FolderTree className="w-5 h-5" />
+              </span>
+              <h2 className="text-lg font-bold text-slate-900">
+                {viewMode === 'tree'
+                  ? `چارت سازمانی، سمت‌ها و پرسنل ساختار: ${currentStructureDetail?.title || ''}`
+                  : viewMode === 'positions'
+                  ? 'مدیریت سمت‌های سازمانی (مستقل و قابل استفاده در چندین ساختار)'
+                  : 'مدیریت ساختار سازمانی'}
+              </h2>
+            </div>
+            <p className="text-xs text-slate-500 max-w-2xl leading-relaxed">
+              {viewMode === 'tree'
+                ? 'طراحی درخت سلسله‌مراتب سمت‌ها در این ساختار، انتصاب کاربران به هر سمت و ویرایش مستقیم سطوح دسترسی هر فرد.'
+                : viewMode === 'positions'
+                ? 'سمت‌ها به صورت مستقل تعریف می‌شوند و نیازی به انتخاب ساختار هنگام تعریف ندارند. هر سمت می‌تواند همزمان در یک یا چندین ساختار سازمانی و گردش کار استفاده شود.'
+                : 'تعریف ساختارهای سازمانی (مانند اداری، مالی، ماموریت و...)، چینش درختی سمت‌ها، انتصاب پرسنل و استفاده مشترک از سمت‌ها در ساختارهای مختلف.'}
+            </p>
           </div>
-          <p className="text-xs text-slate-500 max-w-2xl leading-relaxed">
-            {viewMode === 'list'
-              ? 'تعریف ساختارهای سازمانی (مانند اداری، مالی، ماموریت، مرخصی و...)، چینش درختی سمت‌ها، انتصاب پرسنل و تنظیم دسترسی‌های فردی.'
-              : 'طراحی درخت سلسله‌مراتب سمت‌ها در این ساختار، انتصاب کاربران به هر سمت و ویرایش مستقیم سطوح دسترسی هر فرد.'
-            }
-          </p>
-        </div>
 
-        <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
-          {viewMode === 'tree' ? (
-            <>
-              <button
-                onClick={() => setViewMode('list')}
-                className="flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition cursor-pointer"
-              >
-                <ArrowRight className="w-4 h-4" />
-                <span>بازگشت به فهرست ساختارها</span>
-              </button>
-
-              <button
-                onClick={() => loadStructureTree(selectedStructureId, { silent: true })}
-                className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition cursor-pointer"
-                title="بروزرسانی درخت سمت‌ها"
-              >
-                <RefreshCw className={`w-4 h-4 ${treeLoading || treeSyncing ? 'animate-spin text-indigo-600' : ''}`} />
-              </button>
-
-              {canAddPosNode && (
+          <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+            {viewMode === 'tree' ? (
+              <>
                 <button
-                  onClick={() => handleOpenAddNode()}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-sm transition cursor-pointer"
+                  onClick={() => setViewMode('list')}
+                  className="flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition cursor-pointer"
                 >
-                  <Plus className="w-4 h-4" />
-                  <span>افزودن سمت جدید در ریشه ساختار</span>
+                  <ArrowRight className="w-4 h-4" />
+                  <span>بازگشت به فهرست ساختارها</span>
                 </button>
-              )}
-            </>
-          ) : (
-            canCreateStruct && (
-              <button
-                onClick={handleOpenCreateStructure}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-sm transition cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>تعریف ساختار سازمانی جدید</span>
-              </button>
-            )
-          )}
+
+                <button
+                  onClick={() => loadStructureTree(selectedStructureId, { silent: true })}
+                  className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition cursor-pointer"
+                  title="بروزرسانی درخت سمت‌ها"
+                >
+                  <RefreshCw className={`w-4 h-4 ${treeLoading || treeSyncing ? 'animate-spin text-indigo-600' : ''}`} />
+                </button>
+
+                {canAddPosNode && (
+                  <button
+                    onClick={() => handleOpenAddNode()}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-sm transition cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>افزودن سمت در ریشه ساختار</span>
+                  </button>
+                )}
+              </>
+            ) : (
+              <>
+                {canCreateStandalonePos && (
+                  <button
+                    onClick={handleOpenCreateStandalonePos}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-xs font-bold text-white shadow-sm transition cursor-pointer"
+                  >
+                    <Briefcase className="w-4 h-4" />
+                    <span>تعریف سمت جدید (بدون نیاز به ساختار)</span>
+                  </button>
+                )}
+                {canCreateStruct && (
+                  <button
+                    onClick={handleOpenCreateStructure}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-sm transition cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>تعریف ساختار سازمانی جدید</span>
+                  </button>
+                )}
+              </>
+            )}
+          </div>
         </div>
+
+        {viewMode !== 'tree' && (
+          <div className="flex items-center gap-2 pt-3 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => setViewMode('list')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                viewMode === 'list'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              <FolderTree className="w-4 h-4" />
+              <span>ساختارهای سازمانی ({structures.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('positions')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                viewMode === 'positions'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              <Briefcase className="w-4 h-4" />
+              <span>بانک سمت‌های مستقل ({positions.length})</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ===================== VIEW MODE 1: LIST OF STRUCTURES ===================== */}
@@ -1164,6 +1280,138 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
         </div>
       )}
 
+      {/* ===================== VIEW MODE 1B: STANDALONE POSITIONS BANK ===================== */}
+      {viewMode === 'positions' && (
+        <div className="space-y-5">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-4 rounded-2xl bg-white border border-slate-200 shadow-xs">
+            <div className="relative w-full sm:w-80">
+              <Search className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={posSearch}
+                onChange={(e) => setPosSearch(e.target.value)}
+                placeholder="جستجو در عنوان یا شرح سمت..."
+                className="w-full pr-9 pl-3 py-2 text-xs rounded-xl bg-slate-50 border border-slate-200 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white transition"
+              />
+            </div>
+            <div className="text-xs text-slate-500">
+              یک سمت می‌تواند در چندین ساختار سازمانی به صورت همزمان به کار برود.
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {positions
+              .filter(
+                (p) =>
+                  !posSearch.trim() ||
+                  p.title.toLowerCase().includes(posSearch.toLowerCase()) ||
+                  (p.description && p.description.toLowerCase().includes(posSearch.toLowerCase()))
+              )
+              .map((pos) => (
+                <div
+                  key={pos.id}
+                  className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs hover:shadow-md transition flex flex-col justify-between gap-4"
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="p-2 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-200/70 shrink-0">
+                          <Briefcase className="w-4 h-4" />
+                        </span>
+                        <div className="min-w-0">
+                          <h3 className="font-bold text-slate-900 text-sm truncate">{pos.title}</h3>
+                          <span className="text-[10px] text-slate-400">سمت مستقل سامانه</span>
+                        </div>
+                      </div>
+                      <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 shrink-0">
+                        {pos.userCount || 0} نفر
+                      </span>
+                    </div>
+
+                    {pos.description && (
+                      <p className="text-xs text-slate-500 leading-relaxed line-clamp-2 mb-3">
+                        {pos.description}
+                      </p>
+                    )}
+
+                    <div className="pt-2.5 border-t border-slate-100">
+                      <span className="text-[10px] font-bold text-slate-500 block mb-1.5">
+                        ساختارهای استفاده‌کننده:
+                      </span>
+                      {pos.structures && pos.structures.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {pos.structures.map((st) => (
+                            <button
+                              key={st.id}
+                              type="button"
+                              onClick={() => handleOpenStructureTree(st.id)}
+                              className="text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition cursor-pointer"
+                            >
+                              {st.title}
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="inline-block text-[10px] font-medium px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          مستقل (آماده افزودن در یک یا چند ساختار)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-medium text-slate-500 flex items-center gap-1">
+                      <Lock className="w-3.5 h-3.5 text-slate-400" />
+                      {pos.permissions?.length || 0} مجوز پایه
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {canManagePerms && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPosForPerms(pos)}
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-[11px] font-bold transition cursor-pointer"
+                          title="مدیریت دسترسی‌های سمت"
+                        >
+                          <Shield className="w-3.5 h-3.5" />
+                          <span>دسترسی‌ها</span>
+                        </button>
+                      )}
+                      {canEditStandalonePos && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditStandalonePos(pos)}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
+                          title="ویرایش سمت"
+                        >
+                          <Edit3 className="w-4 h-4" />
+                        </button>
+                      )}
+                      {canDeleteStandalonePos && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteStandalonePos(pos)}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                          title="حذف سمت"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+          </div>
+
+          {positions.length === 0 && (
+            <div className="p-8 text-center bg-white rounded-2xl border border-slate-200">
+              <Briefcase className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+              <p className="text-sm font-semibold text-slate-600">هنوز سمتی تعریف نشده است.</p>
+              <p className="text-xs text-slate-400 mt-1">می‌توانید با دکمه «تعریف سمت جدید» بدون نیاز به انتخاب ساختار، سمت بسازید.</p>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ===================== VIEW MODE 2: VISUAL DRAG & DROP STRUCTURE BUILDER ===================== */}
       {viewMode === 'tree' && (
         <div className="space-y-4">
@@ -1285,7 +1533,14 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
                           >
                             <div className="flex items-center gap-2 min-w-0">
                               <GripVertical className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                              <span className="font-bold truncate">{pos.title}</span>
+                              <div className="min-w-0">
+                                <span className="font-bold truncate block">{pos.title}</span>
+                                {pos.structures && pos.structures.length > 0 && (
+                                  <span className="text-[9px] text-slate-400 block truncate">
+                                    استفاده در {pos.structures.length} ساختار
+                                  </span>
+                                )}
+                              </div>
                             </div>
                             {alreadyInStruct ? (
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
@@ -1636,7 +1891,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
                       positionMode === 'new' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600'
                     }`}
                   >
-                    تعریف سمت جدید اختصاصی
+                    تعریف سمت جدید (قابل استفاده در همه ساختارها)
                   </button>
                 </div>
               )}
@@ -1645,18 +1900,28 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
               {!editingNode && positionMode === 'existing' && (
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    انتخاب سمت مورد نظر از فهرست:
+                    انتخاب سمت مورد نظر از فهرست (سمت‌ها در چندین ساختار قابل استفاده‌اند):
                   </label>
                   <select
                     value={selectedExistingPosId}
                     onChange={(e) => setSelectedExistingPosId(e.target.value)}
                     className="w-full px-3.5 py-2.5 text-xs sm:text-sm rounded-xl bg-slate-50 border border-slate-200 text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white transition"
                   >
-                    {positions.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.title} {p.description ? `- (${p.description})` : ''}
-                      </option>
-                    ))}
+                    <option value="">-- یک سمت انتخاب کنید --</option>
+                    {positions.map((p) => {
+                      const alreadyInThisStruct = structureRawPositions.some((sp) => sp.positionId === p.id);
+                      const structCount = p.structures?.length || 0;
+                      return (
+                        <option key={p.id} value={p.id} disabled={alreadyInThisStruct}>
+                          {p.title}
+                          {alreadyInThisStruct
+                            ? ' (قبلاً در این ساختار اضافه شده)'
+                            : structCount > 0
+                            ? ` (فعال در ${structCount} ساختار دیگر)`
+                            : ''}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
               )}
@@ -1835,6 +2100,93 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===================== MODAL: STANDALONE POSITION CREATE / EDIT ===================== */}
+      {standalonePosModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs overflow-y-auto">
+          <div className="w-full max-w-md rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden my-6 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/70">
+              <div className="flex items-center gap-2.5">
+                <span className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
+                  <Briefcase className="w-5 h-5" />
+                </span>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    {editingStandalonePos ? `ویرایش سمت «${editingStandalonePos.title}»` : 'تعریف سمت سازمانی مستقل'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    بدون نیاز به انتخاب ساختار؛ قابل استفاده در چندین ساختار و گردش کار
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStandalonePosModalOpen(false)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {error && (
+              <div className="m-5 mb-0 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs">
+                {error}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveStandalonePos} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  عنوان سمت *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={standalonePosTitle}
+                  onChange={(e) => setStandalonePosTitle(e.target.value)}
+                  placeholder="مثال: مدیر فنی، کارشناس مالی، ناظر پروژه..."
+                  className="w-full px-3.5 py-2.5 text-xs sm:text-sm rounded-xl bg-slate-50 border border-slate-200 text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white transition"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  شرح وظایف و توضیحات (اختیاری)
+                </label>
+                <textarea
+                  rows={3}
+                  value={standalonePosDesc}
+                  onChange={(e) => setStandalonePosDesc(e.target.value)}
+                  placeholder="توضیح مختصر درباره نقش این سمت در سازمان..."
+                  className="w-full px-3.5 py-2 text-xs rounded-xl bg-slate-50 border border-slate-200 text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white transition resize-none"
+                />
+              </div>
+
+              <div className="p-3 rounded-xl bg-indigo-50/70 border border-indigo-200/70 text-[11px] text-indigo-800 leading-relaxed">
+                این سمت به صورت سراسری در سامانه ثبت می‌شود و می‌توانید بعداً آن را به دلخواه در هر تعداد ساختار سازمانی یا گردش کار قرار دهید.
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setStandalonePosModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+                >
+                  انصراف
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-xs font-bold text-white shadow-sm transition cursor-pointer flex items-center gap-2"
+                >
+                  {loading && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{editingStandalonePos ? 'ذخیره تغییرات' : 'ایجاد سمت مستقل'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

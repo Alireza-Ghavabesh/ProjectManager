@@ -198,7 +198,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
     };
   };
 
-  const getStepUniqueAssignees = (positionIds: string[], structureId?: string | null) => {
+  const getStepUniqueAssignees = (positionIds: string[], structureId?: string | null, explicitUserIds?: string[]) => {
     const seen = new Map<string, string>();
     for (const pid of positionIds) {
       const d = getPositionDetails(pid, structureId);
@@ -206,6 +206,12 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
         const u = users.find((x) => x.id === uid);
         seen.set(uid, u?.name || `کاربر ${idx + 1}`);
       });
+    }
+    if (Array.isArray(explicitUserIds)) {
+      for (const uid of explicitUserIds) {
+        const u = users.find((x) => x.id === uid);
+        if (u) seen.set(uid, u.name);
+      }
     }
     const names = Array.from(seen.values());
     return {
@@ -242,10 +248,10 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
     const n = memberCount;
     if (mode === 'MAJORITY') {
       if (n <= 0) {
-        return 'پروژه هم‌زمان در کارتابل تمام افراد این گام قرار می‌گیرد و پس از تایید بیش از نصف آن‌ها (بیش از ۵۰٪) به مرحله بعد می‌رود.';
+        return 'پروژه هم‌زمان در کارتابل تمام افراد این گام قرار می‌گیرد؛ هر فرد می‌تواند رای موافق یا مخالف ثبت کند و با رسیدن آرا به اکثریت (بیش از ۵۰٪) نتیجه اعمال می‌شود.';
       }
       const req = Math.floor(n / 2) + 1;
-      return `این گام هم‌اکنون ${n} نفر عضو دارد؛ پروژه در کارتابل هر ${n} نفر قرار می‌گیرد و پس از تایید حداقل ${req} نفر به مرحله بعد می‌رود.`;
+      return `این گام هم‌اکنون ${n} نفر عضو دارد؛ پروژه هم‌زمان به کارتابل هر ${n} نفر می‌رود و با کسب حداقل ${req} رای موافق تایید یا با اکثریت آرای مخالف رد می‌شود.`;
     }
     if (mode === 'ALL') {
       if (n <= 0) {
@@ -293,7 +299,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
     setTitle(wf.title);
     setDescription(wf.description || '');
     setIsDefault(Boolean(wf.isDefault));
-    setToolboxStructureId(wf.steps[0]?.structureId || '');
+    setToolboxStructureId('');
     setToolboxSearch('');
     const mapped: EditableStep[] = wf.steps.map((s) => {
       let parsedCfg: WorkflowStepConfig = s.config || {};
@@ -323,6 +329,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
           onRejectStepOrder: parsedCfg.onRejectStepOrder,
           onApproveStepOrder: parsedCfg.onApproveStepOrder,
           conditionLabel: parsedCfg.conditionLabel || '',
+          userIds: Array.isArray(parsedCfg.userIds) ? parsedCfg.userIds : [],
         },
       };
     });
@@ -336,10 +343,8 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
   };
 
   const createDefaultStep = (overrides: Partial<EditableStep> = {}): EditableStep => {
-    const structId = overrides.structureId !== undefined ? overrides.structureId : toolboxStructureId || null;
-    const structPositions = structId ? structurePositionsMap[structId] : undefined;
-    const fallbackPos =
-      structPositions && structPositions.length > 0 ? structPositions[0].positionId : positions[0]?.id || '';
+    const structId = overrides.structureId !== undefined ? overrides.structureId : null;
+    const fallbackPos = positions[0]?.id || '';
     const positionIds =
       overrides.positionIds && overrides.positionIds.length > 0
         ? overrides.positionIds
@@ -397,6 +402,42 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
       copy[stepIndex] = {
         ...step,
         positionIds: step.positionIds.filter((id) => id !== positionId),
+      };
+      return copy;
+    });
+  };
+
+  const addDirectUserToStep = (stepIndex: number, userId: string) => {
+    if (!userId) return;
+    setSteps((prev) => {
+      const copy = [...prev];
+      const step = copy[stepIndex];
+      if (!step) return prev;
+      const existing = Array.isArray(step.config.userIds) ? step.config.userIds : [];
+      if (existing.includes(userId)) return prev;
+      copy[stepIndex] = {
+        ...step,
+        config: {
+          ...step.config,
+          userIds: [...existing, userId],
+        },
+      };
+      return copy;
+    });
+  };
+
+  const removeDirectUserFromStep = (stepIndex: number, userId: string) => {
+    setSteps((prev) => {
+      const copy = [...prev];
+      const step = copy[stepIndex];
+      if (!step) return prev;
+      const existing = Array.isArray(step.config.userIds) ? step.config.userIds : [];
+      copy[stepIndex] = {
+        ...step,
+        config: {
+          ...step.config,
+          userIds: existing.filter((id) => id !== userId),
+        },
       };
       return copy;
     });
@@ -500,7 +541,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
         slotIdx,
         createDefaultStep({
           title: `بررسی در ${payload.title}`,
-          structureId: payload.structureId,
+          structureId: null,
           positionIds: [payload.positionId],
         })
       );
@@ -515,7 +556,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
     if (!payload) return;
 
     if (payload.kind === 'toolbox-position') {
-      addParallelPositionToStep(targetStepIdx, payload.positionId, payload.structureId);
+      addParallelPositionToStep(targetStepIdx, payload.positionId, null);
     } else if (payload.kind === 'step-reorder' && payload.fromIndex !== targetStepIdx) {
       reorderStep(payload.fromIndex, targetStepIdx > payload.fromIndex ? targetStepIdx + 1 : targetStepIdx);
     }
@@ -783,7 +824,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                           : st.positionId
                           ? [st.positionId]
                           : [];
-                      const stepAssignees = getStepUniqueAssignees(posIds, st.structureId);
+                      const stepAssignees = getStepUniqueAssignees(posIds, st.structureId, st.config?.userIds);
                       const structTitle = st.structureTitle || getStructureTitle(st.structureId);
                       const stepCfg: WorkflowStepConfig = st.config || {};
 
@@ -998,10 +1039,10 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                       onChange={(e) => setToolboxStructureId(e.target.value)}
                       className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-xs font-bold text-indigo-900 focus:outline-none focus:border-indigo-500"
                     >
-                      <option value="">چارت عمومی سازمان (همه سمت‌ها)</option>
+                      <option value="">همه سمت‌ها (مستقل از ساختار — توصیه‌شده)</option>
                       {structures.map((s) => (
                         <option key={s.id} value={s.id}>
-                          ساختار: {s.title}
+                          فیلتر بر اساس ساختار: {s.title}
                         </option>
                       ))}
                     </select>
@@ -1054,7 +1095,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    addParallelPositionToStep(selectedStepIdx, sp.positionId, toolboxStructureId)
+                                    addParallelPositionToStep(selectedStepIdx, sp.positionId, null)
                                   }
                                   className="text-[10px] px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-600 hover:text-white font-bold cursor-pointer transition"
                                   title="ارسال هم‌زمان به این سمت در گام انتخاب‌شده"
@@ -1069,7 +1110,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                                     steps.length,
                                     createDefaultStep({
                                       title: `بررسی در ${sp.title}`,
-                                      structureId: toolboxStructureId,
+                                      structureId: null,
                                       positionIds: [sp.positionId],
                                     })
                                   )
@@ -1122,7 +1163,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                                       addParallelPositionToStep(
                                         selectedStepIdx,
                                         pos.id,
-                                        toolboxStructureId || null
+                                        null
                                       )
                                     }
                                     className="text-[10px] px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-600 hover:text-white font-bold cursor-pointer transition"
@@ -1138,7 +1179,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                                       steps.length,
                                       createDefaultStep({
                                         title: `بررسی در ${pos.title}`,
-                                        structureId: toolboxStructureId || null,
+                                        structureId: null,
                                         positionIds: [pos.id],
                                       })
                                     )
@@ -1189,7 +1230,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                       {steps.map((st, idx) => {
                         const isSelected = idx === selectedStepIdx;
                         const isFirst = idx === 0;
-                        const assignees = getStepUniqueAssignees(st.positionIds, st.structureId);
+                        const assignees = getStepUniqueAssignees(st.positionIds, st.structureId, st.config.userIds);
                         const isBeingDragged =
                           dragPayload?.kind === 'step-reorder' && dragPayload.fromIndex === idx;
                         const isParallelDropActive =
@@ -1406,7 +1447,11 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
 
                   {/* Step Inspector Panel (Full Customization for Selected Step) */}
                   {selectedStep && (() => {
-                    const inspectorAssignees = getStepUniqueAssignees(selectedStep.positionIds, selectedStep.structureId);
+                    const inspectorAssignees = getStepUniqueAssignees(
+                      selectedStep.positionIds,
+                      selectedStep.structureId,
+                      selectedStep.config.userIds
+                    );
                     const availableToAddParallel = stepCandidatePositions.filter(
                       (p) => !selectedStep.positionIds.includes(p.id)
                     );
@@ -1443,10 +1488,10 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                             />
                           </div>
 
-                          {/* Structure Selector */}
+                          {/* Optional Structure Filter */}
                           <div>
                             <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                              محدوده سمت‌ها (ساختار سازمانی)
+                              محدودیت ساختار (اختیاری)
                             </label>
                             <select
                               value={selectedStep.structureId || ''}
@@ -1455,10 +1500,10 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                               }
                               className="w-full rounded-xl bg-slate-50 border border-slate-300 px-3 py-2 text-xs font-bold text-indigo-900 focus:outline-none focus:border-indigo-500 focus:bg-white cursor-pointer"
                             >
-                              <option value="">چارت عمومی سازمان (پیش‌فرض — بدون محدودیت ساختار)</option>
+                              <option value="">همه ساختارها (بدون محدودیت — پیش‌فرض)</option>
                               {structures.map((s) => (
                                 <option key={s.id} value={s.id}>
-                                  ساختار اختصاصی: {s.title}
+                                  فقط در ساختار: {s.title}
                                 </option>
                               ))}
                             </select>
@@ -1534,6 +1579,62 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                             <span className="text-[10px] text-slate-500">
                               یا سمت مورد نظر را مستقیماً روی کارت همین گام در بوم بکشید.
                             </span>
+                          </div>
+
+                          {/* Optional Direct Individual Users Selection */}
+                          <div className="pt-2.5 mt-2 border-t border-slate-200/80 space-y-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="text-[11px] font-bold text-slate-700">
+                                افزودن مستقیم کاربران خاص به این گام (اختیاری — علاوه بر سمت‌ها):
+                              </span>
+                              <span className="text-[10px] text-slate-500">
+                                مجموع کل افراد این گام: <strong className="text-indigo-700">{inspectorAssignees.count} نفر</strong>
+                              </span>
+                            </div>
+
+                            {Array.isArray(selectedStep.config.userIds) && selectedStep.config.userIds.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5">
+                                {selectedStep.config.userIds.map((uid) => {
+                                  const usr = users.find((u) => u.id === uid);
+                                  if (!usr) return null;
+                                  return (
+                                    <span
+                                      key={uid}
+                                      className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900"
+                                    >
+                                      <span>{usr.name} (@{usr.username})</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => removeDirectUserFromStep(selectedStepIdx, uid)}
+                                        className="p-0.5 rounded text-emerald-700 hover:text-rose-600 cursor-pointer"
+                                        title="حذف کاربر از این گام"
+                                      >
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            <select
+                              value=""
+                              onChange={(e) => {
+                                if (e.target.value) {
+                                  addDirectUserToStep(selectedStepIdx, e.target.value);
+                                }
+                              }}
+                              className="w-full sm:w-auto min-w-[240px] rounded-xl bg-white border border-slate-300 px-3 py-1.5 text-xs font-semibold text-emerald-800 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                            >
+                              <option value="">+ انتخاب مستقیم کاربر خاص (مثلاً Usertest1..4 یا مدیر)...</option>
+                              {users
+                                .filter((u) => !(selectedStep.config.userIds || []).includes(u.id))
+                                .map((u) => (
+                                  <option key={u.id} value={u.id}>
+                                    {u.name} (@{u.username}){u.positionTitle ? ` — ${u.positionTitle}` : ''}
+                                  </option>
+                                ))}
+                            </select>
                           </div>
                         </div>
 

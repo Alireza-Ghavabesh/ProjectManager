@@ -457,6 +457,20 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                 </button>
               )}
 
+            {hasWorkflow &&
+              !hasCurrentUserApproved &&
+              !canForwardWorkflow &&
+              !isCompletedOrRejected &&
+              isMyTurnInWorkflow && (
+                <span
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-300 text-[10px] font-bold whitespace-nowrap shrink-0"
+                  title="برای ثبت اقدام باید دسترسی «تایید و ارجاع در مراحل گردش کار» به کاربر یا سمت داده شود"
+                >
+                  <Lock className="w-3 h-3 text-amber-600" />
+                  <span>نیاز به مجوز ارجاع</span>
+                </span>
+              )}
+
             {!hasWorkflow && !isExpanded && isExpired && !project.hasVoted && (
               <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-700 whitespace-nowrap">
                 <Lock className="w-3 h-3" />
@@ -565,8 +579,13 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   (project.currentStepApprovalProgress.mode === 'MAJORITY' ||
                     project.currentStepApprovalProgress.mode === 'ALL') ? (
                     <span className="text-violet-800 font-semibold">
-                      تایید مرحله فعلی: {project.currentStepApprovalProgress.approvedUserIds.length} از{' '}
-                      {project.currentStepApprovalProgress.requiredCount} نفر لازم
+                      {project.currentStepApprovalProgress.mode === 'MAJORITY'
+                        ? `آرای مرحله: ${project.currentStepApprovalProgress.approvedUserIds.length} موافق / ${
+                            project.currentStepApprovalProgress.rejectedUserIds?.length || 0
+                          } مخالف (حدنصاب: ${project.currentStepApprovalProgress.requiredCount} از ${
+                            project.currentStepApprovalProgress.totalAssignees
+                          } نفر)`
+                        : `تایید مرحله فعلی: ${project.currentStepApprovalProgress.approvedUserIds.length} از ${project.currentStepApprovalProgress.requiredCount} نفر لازم`}
                     </span>
                   ) : (
                     <span>
@@ -838,8 +857,11 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   (project.currentStepApprovalProgress.mode === 'MAJORITY' ||
                     project.currentStepApprovalProgress.mode === 'ALL') && (
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-violet-50 text-violet-800 border border-violet-200 tabular-nums">
-                      تایید مرحله: {project.currentStepApprovalProgress.approvedUserIds.length} از{' '}
-                      {project.currentStepApprovalProgress.requiredCount} نفر لازم
+                      {project.currentStepApprovalProgress.mode === 'MAJORITY'
+                        ? `موافق: ${project.currentStepApprovalProgress.approvedUserIds.length} | مخالف: ${
+                            project.currentStepApprovalProgress.rejectedUserIds?.length || 0
+                          } (حدنصاب: ${project.currentStepApprovalProgress.requiredCount})`
+                        : `تایید مرحله: ${project.currentStepApprovalProgress.approvedUserIds.length} از ${project.currentStepApprovalProgress.requiredCount} نفر لازم`}
                     </span>
                   )}
                 {!isCompletedOrRejected && !canManualApprove && (
@@ -871,6 +893,10 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                     <ArrowLeft className="w-3.5 h-3.5" />
                     <span>تایید و ارجاع گردش کار</span>
                   </button>
+                ) : !isCompletedOrRejected && isMyTurnInWorkflow && !canForwardWorkflow ? (
+                  <span className="text-[11px] font-bold text-amber-800 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-300">
+                    نوبت شماست (نیاز به دسترسی «تایید و ارجاع در مراحل گردش کار»)
+                  </span>
                 ) : !isCompletedOrRejected ? (
                   <span className="text-[11px] font-semibold text-slate-500 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
                     نوبت بررسی با سمت دیگری است

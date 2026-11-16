@@ -177,18 +177,28 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
             <div className="p-3 rounded-2xl bg-white border border-indigo-200 text-xs space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-bold text-slate-800">
-                  وضعیت حد نصاب تایید در این گام (
+                  وضعیت رای‌گیری در این گام (
                   {currentApprovalMode === 'MAJORITY' ? 'اکثریت اعضا' : 'تایید همه اعضا'}
                   ):
                 </span>
-                <span className="font-black text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-lg border border-indigo-200 tabular-nums">
-                  {stepProgress.approvedUserIds.length} از {stepProgress.requiredCount} تایید لازم (کل افراد گام: {stepProgress.totalAssignees} نفر)
-                </span>
+                <div className="flex flex-wrap items-center gap-1.5 tabular-nums">
+                  <span className="font-black text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200">
+                    موافق: {stepProgress.approvedUserIds.length} از {stepProgress.requiredCount}
+                  </span>
+                  {currentApprovalMode === 'MAJORITY' && (
+                    <span className="font-black text-rose-800 bg-rose-50 px-2.5 py-0.5 rounded-lg border border-rose-200">
+                      مخالف: {stepProgress.rejectedUserIds?.length || 0} از {stepProgress.rejectRequiredCount || stepProgress.requiredCount}
+                    </span>
+                  )}
+                  <span className="font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200">
+                    کل افراد: {stepProgress.totalAssignees} نفر
+                  </span>
+                </div>
               </div>
 
               {stepProgress.approvedUsers.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                  <span className="text-slate-500">تاییدکنندگان تاکنون:</span>
+                  <span className="text-slate-500">رای موافق تاکنون:</span>
                   {stepProgress.approvedUsers.map((au) => (
                     <span
                       key={au.userId}
@@ -201,9 +211,29 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
                 </div>
               )}
 
+              {stepProgress.rejectedUsers && stepProgress.rejectedUsers.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                  <span className="text-slate-500">رای مخالف تاکنون:</span>
+                  {stepProgress.rejectedUsers.map((ru) => (
+                    <span
+                      key={ru.userId}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-rose-50 text-rose-800 border border-rose-200 font-semibold"
+                    >
+                      <XCircle className="w-3 h-3 text-rose-600" />
+                      {ru.userName}
+                    </span>
+                  ))}
+                </div>
+              )}
+
               {stepProgress.hasCurrentUserApproved && (
                 <div className="text-[11px] font-bold text-emerald-700">
-                  شما پیش‌تر تایید خود را برای این مرحله ثبت کرده‌اید و پرونده در انتظار تکمیل حد نصاب سایر افراد است.
+                  شما رای موافق خود را در این مرحله ثبت کرده‌اید و پرونده در انتظار تکمیل حد نصاب سایر افراد است (در صورت نیاز می‌توانید رای خود را تغییر دهید).
+                </div>
+              )}
+              {stepProgress.hasCurrentUserRejected && (
+                <div className="text-[11px] font-bold text-rose-700">
+                  شما رای مخالف خود را در این مرحله ثبت کرده‌اید و پرونده در انتظار تکمیل آرای سایر افراد است (در صورت نیاز می‌توانید رای خود را تغییر دهید).
                 </div>
               )}
             </div>
@@ -263,7 +293,11 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
               >
                 <CheckCircle2 className="w-5 h-5 mb-1 text-emerald-600" />
                 <span className="text-xs font-bold">
-                  {showQuorumBar ? 'ثبت تایید من در این مرحله' : 'تایید و ارجاع به بعد'}
+                  {currentApprovalMode === 'MAJORITY'
+                    ? 'رای موافق (تایید در اکثریت)'
+                    : showQuorumBar
+                    ? 'ثبت تایید من در این مرحله'
+                    : 'تایید و ارجاع به بعد'}
                 </span>
                 <span className="text-[10px] text-slate-500 mt-0.5 truncate max-w-full">
                   {nextStep ? `به: ${nextStep.title}` : 'تصویب نهایی'}
@@ -296,9 +330,13 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
                 }`}
               >
                 <XCircle className="w-5 h-5 mb-1 text-rose-600" />
-                <span className="text-xs font-bold">رد در این مرحله</span>
+                <span className="text-xs font-bold">
+                  {currentApprovalMode === 'MAJORITY' ? 'رای مخالف (رد در اکثریت)' : 'رد در این مرحله'}
+                </span>
                 <span className="text-[10px] text-slate-500 mt-0.5">
-                  خروج از گردش کار
+                  {currentApprovalMode === 'MAJORITY'
+                    ? 'ثبت در آمار آرای مخالف'
+                    : 'خروج از گردش کار'}
                 </span>
               </button>
 

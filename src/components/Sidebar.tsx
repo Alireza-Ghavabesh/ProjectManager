@@ -23,6 +23,7 @@ interface SidebarProps {
   setActiveTab: (tab: 'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings' | 'smstest') => void;
   onLogout: () => void;
   pendingVotesCount?: number;
+  myTurnCount?: number;
   mobileOpen: boolean;
   setMobileOpen: (open: boolean) => void;
   collapsed: boolean;
@@ -40,6 +41,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setActiveTab,
   onLogout,
   pendingVotesCount = 0,
+  myTurnCount = 0,
   mobileOpen,
   setMobileOpen,
   collapsed,
@@ -68,9 +70,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           title: 'کارتابل و پروژه‌های شورا',
           shortTitle: 'کارتابل',
           icon: Layers,
-          badge: pendingVotesCount > 0 ? `${pendingVotesCount} در انتظار` : null,
-          badgeColor: 'bg-amber-500/20 text-amber-700 border-amber-300',
-          permission: ['projects.view', 'projects.create', 'projects.edit', 'projects.delete', 'voting.cast', 'voting.confidential.view_all'],
+          badge: myTurnCount > 0 ? `${myTurnCount} نوبت شما` : pendingVotesCount > 0 ? `${pendingVotesCount} در انتظار` : null,
+          badgeColor: myTurnCount > 0 ? 'bg-blue-500/15 text-blue-700 border-blue-300' : 'bg-amber-500/20 text-amber-700 border-amber-300',
+          permission: ['projects.view', 'projects.create', 'projects.edit', 'projects.delete', 'workflow.forward', 'voting.cast', 'voting.confidential.view_all'],
         },
       ],
     },
@@ -284,7 +286,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Navigation Menu List */}
         <div className="flex-1 overflow-y-auto py-3 px-2 sm:px-3 space-y-4">
           {menuGroups.map((group, groupIdx) => {
-            const visibleItems = group.items.filter((item) => hasAccess(item.permission));
+            const visibleItems = group.items.filter(
+              (item) => hasAccess(item.permission) || (item.id === 'projects' && myTurnCount > 0)
+            );
             if (visibleItems.length === 0) return null;
 
             return (

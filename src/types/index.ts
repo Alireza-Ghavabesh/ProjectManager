@@ -23,6 +23,7 @@ export interface Position {
   permissions?: string[];
   children?: Position[];
   users?: User[];
+  structures?: Array<{ id: string; title: string }>;
 }
 
 export interface StructurePositionNode {
@@ -126,6 +127,7 @@ export interface WorkflowStepConfig {
   conditionLabel?: string;
   customActionLabel?: string;
   color?: string;
+  userIds?: string[];
 }
 
 export interface WorkflowStepApprovalProgress {
@@ -137,9 +139,18 @@ export interface WorkflowStepApprovalProgress {
     positionTitle?: string;
     createdAt: string;
   }>;
+  rejectedUserIds?: string[];
+  rejectedUsers?: Array<{
+    userId: string;
+    userName: string;
+    positionTitle?: string;
+    createdAt: string;
+  }>;
   totalAssignees: number;
   requiredCount: number;
+  rejectRequiredCount?: number;
   hasCurrentUserApproved: boolean;
+  hasCurrentUserRejected?: boolean;
 }
 
 export interface WorkflowStep {

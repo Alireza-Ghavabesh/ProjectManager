@@ -512,12 +512,29 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                     </div>
 
                     {/* Permissions summary */}
-                    <div className="flex items-center justify-between text-[11px] px-3 py-1.5 rounded-xl bg-indigo-50/50 border border-indigo-100 text-indigo-900 mb-2.5">
+                    <div className="flex items-center justify-between text-[11px] px-3 py-1.5 rounded-xl bg-indigo-50/50 border border-indigo-100 text-indigo-900 mb-2">
                       <span className="flex items-center gap-1.5">
                         <Lock className="w-3.5 h-3.5 text-indigo-600" />
                         <span>مجوزهای پیش‌فرض سمت:</span>
                       </span>
                       <span className="font-bold">{posPermCount} مجوز</span>
+                    </div>
+
+                    {/* Structures usage (standalone position reusable across multiple structures) */}
+                    <div className="flex flex-wrap items-center gap-1 mb-2.5 text-[10px]">
+                      <span className="text-slate-500 font-semibold">ساختارها:</span>
+                      {p.structures && p.structures.length > 0 ? (
+                        p.structures.map((st) => (
+                          <span
+                            key={st.id}
+                            className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold"
+                          >
+                            {st.title}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-slate-400">مستقل (قابل استفاده در چندین ساختار)</span>
+                      )}
                     </div>
 
                     {p.description && (

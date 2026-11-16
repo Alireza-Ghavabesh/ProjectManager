@@ -748,10 +748,15 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                         item.currentStepApprovalProgress.mode === 'ALL') &&
                       !isFinished && (
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-slate-500 font-medium">نصاب تایید مرحله:</span>
+                          <span className="text-slate-500 font-medium">
+                            {item.currentStepApprovalProgress.mode === 'MAJORITY' ? 'آرای مرحله:' : 'نصاب تایید مرحله:'}
+                          </span>
                           <span className="font-bold text-violet-800 bg-violet-50 px-2 py-0.5 rounded-lg border border-violet-200 tabular-nums">
-                            {item.currentStepApprovalProgress.approvedUserIds.length} از{' '}
-                            {item.currentStepApprovalProgress.requiredCount} تایید لازم
+                            {item.currentStepApprovalProgress.mode === 'MAJORITY'
+                              ? `${item.currentStepApprovalProgress.approvedUserIds.length} موافق / ${
+                                  item.currentStepApprovalProgress.rejectedUserIds?.length || 0
+                                } مخالف (لازم: ${item.currentStepApprovalProgress.requiredCount})`
+                              : `${item.currentStepApprovalProgress.approvedUserIds.length} از ${item.currentStepApprovalProgress.requiredCount} تایید لازم`}
                           </span>
                         </div>
                       )}

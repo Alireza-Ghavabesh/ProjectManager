@@ -700,14 +700,13 @@ apiRouter.post('/users/:id/permissions/reset', (req: Request, res: Response) => 
 
 apiRouter.get('/positions', (_req: Request, res: Response) => {
   const positions = db.prepare(`
-    SELECT p.*, parent.title as parentTitle,
-           (SELECT COUNT(*) FROM users u WHERE u.positionId = p.id) as userCount
+    SELECT p.*, parent.title as parentTitle
     FROM positions p
     LEFT JOIN positions parent ON p.parentId = parent.id
     ORDER BY p.level ASC, p.orderIndex ASC, p.title ASC
   `).all() as any[];
 
-  // Attach users and permissions to each position
+  // Attach direct users, structure-assigned users, structures, and permissions to each position
   const allUsers = db.prepare(`
     SELECT id, name, username, role, positionId, avatar
     FROM users
@@ -717,13 +716,53 @@ apiRouter.get('/positions', (_req: Request, res: Response) => {
     SELECT positionId, permissionCode FROM position_permissions
   `).all() as any[];
 
+  const structLinks = db.prepare(`
+    SELECT sp.positionId, ps.id as structureId, ps.title as structureTitle
+    FROM structure_positions sp
+    JOIN project_structures ps ON sp.structureId = ps.id
+    ORDER BY ps.orderIndex ASC, ps.title ASC
+  `).all() as Array<{ positionId: string; structureId: string; structureTitle: string }>;
+
+  const structUsers = db.prepare(`
+    SELECT sp.positionId, u.id, u.name, u.username, u.role, u.positionId as userPositionId, u.avatar
+    FROM structure_position_users spu
+    JOIN structure_positions sp ON spu.structurePositionId = sp.id
+    JOIN users u ON spu.userId = u.id
+  `).all() as Array<{ positionId: string; id: string; name: string; username: string; role: string; userPositionId?: string; avatar?: string }>;
+
   const enriched = positions.map((pos) => {
-    const posUsers = allUsers.filter((u) => u.positionId === pos.id);
+    const userMap = new Map<string, any>();
+    for (const u of allUsers) {
+      if (u.positionId === pos.id) {
+        userMap.set(u.id, u);
+      }
+    }
+    for (const su of structUsers) {
+      if (su.positionId === pos.id && !userMap.has(su.id)) {
+        userMap.set(su.id, {
+          id: su.id,
+          name: su.name,
+          username: su.username,
+          role: su.role,
+          positionId: su.userPositionId,
+          avatar: su.avatar,
+        });
+      }
+    }
+    const posUsers = Array.from(userMap.values());
     const posPerms = allPerms.filter((p) => p.positionId === pos.id).map((p) => p.permissionCode);
+    const posStructsMap = new Map<string, { id: string; title: string }>();
+    for (const sl of structLinks) {
+      if (sl.positionId === pos.id && !posStructsMap.has(sl.structureId)) {
+        posStructsMap.set(sl.structureId, { id: sl.structureId, title: sl.structureTitle });
+      }
+    }
     return {
       ...pos,
+      userCount: posUsers.length,
       users: posUsers,
       permissions: posPerms,
+      structures: Array.from(posStructsMap.values()),
     };
   });
 
@@ -884,10 +923,12 @@ function resolveAssigneesForStepPositions(
   structureId: string | null | undefined,
   allUsers: any[],
   structAssignments: Array<{ userId: string; positionId: string; structureId: string; structureTitle?: string }>,
-  posMap?: Map<string, { id: string; title: string; color?: string }>
+  posMap?: Map<string, { id: string; title: string; color?: string }>,
+  explicitUserIds?: string[]
 ) {
-  if (!positionIds || positionIds.length === 0) return [];
-  const targetPosSet = new Set(positionIds);
+  const hasExplicitUsers = Array.isArray(explicitUserIds) && explicitUserIds.length > 0;
+  if ((!positionIds || positionIds.length === 0) && !hasExplicitUsers) return [];
+  const targetPosSet = new Set(positionIds || []);
   const map = new Map<string, {
     id: string;
     name: string;
@@ -943,6 +984,31 @@ function resolveAssigneesForStepPositions(
     }
   }
 
+  // Explicit per-step users (if configured in step.config.userIds)
+  if (hasExplicitUsers) {
+    for (const uid of explicitUserIds!) {
+      const u = allUsers.find((usr) => usr.id === uid);
+      if (!u) continue;
+      const existing = map.get(u.id);
+      if (existing) {
+        if (!existing.sources.includes('انتخاب مستقیم در مرحله')) {
+          existing.sources.push('انتخاب مستقیم در مرحله');
+        }
+      } else {
+        map.set(u.id, {
+          id: u.id,
+          name: u.name,
+          username: u.username,
+          avatar: u.avatar,
+          phone: u.phone,
+          role: u.role,
+          positionTitle: u.positionTitle,
+          sources: ['انتخاب مستقیم در مرحله'],
+        });
+      }
+    }
+  }
+
   return Array.from(map.values());
 }
 
@@ -962,22 +1028,34 @@ function buildStepApprovalProgress(
 ) {
   const mode = (approvalMode || 'SINGLE') as 'SINGLE' | 'MAJORITY' | 'ALL' | 'NOTIFY_ONLY';
   const rows = db.prepare(`
-    SELECT wsa.userId, wsa.createdAt, u.name as userName, p.title as positionTitle
+    SELECT wsa.userId, wsa.createdAt, COALESCE(wsa.decision, 'APPROVE') as decision, u.name as userName, p.title as positionTitle
     FROM workflow_step_approvals wsa
     JOIN users u ON wsa.userId = u.id
     LEFT JOIN positions p ON u.positionId = p.id
     WHERE wsa.projectId = ? AND wsa.stepOrder = ?
     ORDER BY wsa.createdAt ASC
-  `).all(projectId, stepOrder) as Array<{ userId: string; userName: string; positionTitle?: string; createdAt: string }>;
+  `).all(projectId, stepOrder) as Array<{ userId: string; userName: string; positionTitle?: string; decision: string; createdAt: string }>;
+
+  const approvedRows = rows.filter((r) => r.decision !== 'REJECT');
+  const rejectedRows = rows.filter((r) => r.decision === 'REJECT');
 
   const requiredCount = getRequiredApprovalsForMode(mode, assignees.length);
+  const rejectRequiredCount =
+    mode === 'MAJORITY'
+      ? Math.max(1, Math.max(1, assignees.length) - requiredCount + 1)
+      : 1;
+
   return {
     mode,
-    approvedUserIds: rows.map((r) => r.userId),
-    approvedUsers: rows,
+    approvedUserIds: approvedRows.map((r) => r.userId),
+    approvedUsers: approvedRows,
+    rejectedUserIds: rejectedRows.map((r) => r.userId),
+    rejectedUsers: rejectedRows,
     totalAssignees: assignees.length,
     requiredCount,
-    hasCurrentUserApproved: Boolean(viewerUserId && rows.some((r) => r.userId === viewerUserId)),
+    rejectRequiredCount,
+    hasCurrentUserApproved: Boolean(viewerUserId && approvedRows.some((r) => r.userId === viewerUserId)),
+    hasCurrentUserRejected: Boolean(viewerUserId && rejectedRows.some((r) => r.userId === viewerUserId)),
   };
 }
 
@@ -1074,11 +1152,17 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
   `).all() as Array<{ userId: string; positionId: string; structureId: string; structureTitle?: string }>;
 
   let items = projects.map((prj) => {
-    const effectiveWfId = prj.workflowId || 'wf-standard';
-    const prjStepsRaw = allSteps.filter((s) => s.workflowId === effectiveWfId);
+    const prjStepsRaw = prj.workflowId ? allSteps.filter((s) => s.workflowId === prj.workflowId) : [];
     const steps = prjStepsRaw.map((st) => ({
       ...st,
-      assignees: resolveAssigneesForStepPositions(st.positionIds, st.structureId, allUsers, structAssignments, posMap),
+      assignees: resolveAssigneesForStepPositions(
+        st.positionIds,
+        st.structureId,
+        allUsers,
+        structAssignments,
+        posMap,
+        st.config?.userIds
+      ),
     }));
     const currentStep = steps.find((s) => s.stepOrder === (prj.currentStepOrder || 1)) || null;
     const currentPositionIds: string[] = currentStep
@@ -1093,7 +1177,14 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
     const isCompletedOrRejected = prj.status === 'APPROVED' || prj.status === 'REJECTED';
     const currentAssignees = isCompletedOrRejected
       ? []
-      : resolveAssigneesForStepPositions(currentPositionIds, currentStep?.structureId || null, allUsers, structAssignments, posMap);
+      : resolveAssigneesForStepPositions(
+          currentPositionIds,
+          currentStep?.structureId || null,
+          allUsers,
+          structAssignments,
+          posMap,
+          currentStep?.config?.userIds
+        );
 
     const currentStepApprovalProgress = isCompletedOrRejected
       ? null
@@ -1120,8 +1211,8 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
       isDeadlineExpired: expired,
       status: prj.status,
       majorityResult: prj.majorityResult,
-      workflowId: prj.workflowId || effectiveWfId,
-      workflowTitle: prj.workflowTitle || 'گردش کار پیش‌فرض',
+      workflowId: prj.workflowId || null,
+      workflowTitle: prj.workflowId ? (prj.workflowTitle || 'گردش کار') : 'بدون گردش کار',
       currentStepOrder: prj.currentStepOrder || 1,
       totalSteps: steps.length,
       currentStepTitle: currentStep?.title || '',
@@ -1418,7 +1509,9 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
     currentPosIds,
     currentStep?.structureId || null,
     allUsers,
-    structAssignments
+    structAssignments,
+    undefined,
+    currentConfig.userIds
   );
 
   const isAssignee = stepAssignees.some((a) => a.id === currentUser.id);
@@ -1438,14 +1531,15 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
     }
   }
 
-  if (action === 'FORWARD' || action === 'APPROVED') {
-    const approvalMode = currentConfig.approvalMode || 'SINGLE';
+  const approvalMode = currentConfig.approvalMode || 'SINGLE';
 
+  if (action === 'FORWARD' || action === 'APPROVED') {
     if (approvalMode === 'MAJORITY' || approvalMode === 'ALL') {
       db.prepare(`
-        INSERT INTO workflow_step_approvals (id, projectId, stepOrder, userId, positionId, comment, createdAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO workflow_step_approvals (id, projectId, stepOrder, userId, positionId, decision, comment, createdAt)
+        VALUES (?, ?, ?, ?, ?, 'APPROVE', ?, ?)
         ON CONFLICT(projectId, stepOrder, userId) DO UPDATE SET
+          decision = 'APPROVE',
           comment = excluded.comment,
           createdAt = excluded.createdAt
       `).run(
@@ -1458,10 +1552,13 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
         now
       );
 
-      const currentApprovals = db.prepare(`
-        SELECT userId FROM workflow_step_approvals
+      const currentVotes = db.prepare(`
+        SELECT userId, COALESCE(decision, 'APPROVE') as decision FROM workflow_step_approvals
         WHERE projectId = ? AND stepOrder = ?
-      `).all(projectId, project.currentStepOrder || 1) as Array<{ userId: string }>;
+      `).all(projectId, project.currentStepOrder || 1) as Array<{ userId: string; decision: string }>;
+
+      const currentApprovals = currentVotes.filter((v) => v.decision !== 'REJECT');
+      const currentRejections = currentVotes.filter((v) => v.decision === 'REJECT');
 
       const assigneeSet = new Set(stepAssignees.map((a) => a.id));
       const matchedApprovalCount =
@@ -1474,10 +1571,18 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
             ? Math.max(matchedApprovalCount, currentApprovals.length)
             : matchedApprovalCount
           : currentApprovals.length;
+      const matchedRejectCount =
+        stepAssignees.length > 0
+          ? currentRejections.filter((a) => assigneeSet.has(a.userId)).length
+          : currentRejections.length;
       const requiredCount = getRequiredApprovalsForMode(approvalMode, stepAssignees.length);
+      const rejectRequiredCount =
+        approvalMode === 'MAJORITY'
+          ? Math.max(1, Math.max(1, stepAssignees.length) - requiredCount + 1)
+          : 1;
 
       if (effectiveApprovedCount < requiredCount) {
-        const stepNote = `تایید در مرحله «${currentStep?.title || `گام ${project.currentStepOrder}`}» ثبت شد (${effectiveApprovedCount} از ${requiredCount} تایید لازم)${comment ? ` — ${comment}` : ''}`;
+        const stepNote = `تایید در مرحله «${currentStep?.title || `گام ${project.currentStepOrder}`}» ثبت شد (${effectiveApprovedCount} از ${requiredCount} رای موافق لازم)${comment ? ` — ${comment}` : ''}`;
         db.prepare(`
           INSERT INTO workflow_logs (id, projectId, stepOrder, fromUserId, toPositionId, action, comment, createdAt)
           VALUES (?, ?, ?, ?, ?, 'STEP_APPROVED', ?, ?)
@@ -1497,7 +1602,9 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
           success: true,
           advanced: false,
           approvedCount: effectiveApprovedCount,
+          rejectedCount: matchedRejectCount,
           requiredCount,
+          rejectRequiredCount,
           totalAssignees: stepAssignees.length,
           currentStepOrder: project.currentStepOrder || 1,
           currentPositionId: project.currentPositionId,
@@ -1555,6 +1662,74 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
     db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ? AND stepOrder >= ?')
       .run(projectId, targetStepOrder);
   } else if (action === 'REJECTED') {
+    if (approvalMode === 'MAJORITY' && stepAssignees.length > 1) {
+      db.prepare(`
+        INSERT INTO workflow_step_approvals (id, projectId, stepOrder, userId, positionId, decision, comment, createdAt)
+        VALUES (?, ?, ?, ?, ?, 'REJECT', ?, ?)
+        ON CONFLICT(projectId, stepOrder, userId) DO UPDATE SET
+          decision = 'REJECT',
+          comment = excluded.comment,
+          createdAt = excluded.createdAt
+      `).run(
+        `wsa-${randomUUID().substring(0, 8)}`,
+        projectId,
+        project.currentStepOrder || 1,
+        currentUser.id,
+        currentUser.positionId || currentPosIds[0] || null,
+        comment || '',
+        now
+      );
+
+      const currentVotes = db.prepare(`
+        SELECT userId, COALESCE(decision, 'APPROVE') as decision FROM workflow_step_approvals
+        WHERE projectId = ? AND stepOrder = ?
+      `).all(projectId, project.currentStepOrder || 1) as Array<{ userId: string; decision: string }>;
+
+      const currentApprovals = currentVotes.filter((v) => v.decision !== 'REJECT');
+      const currentRejections = currentVotes.filter((v) => v.decision === 'REJECT');
+
+      const assigneeSet = new Set(stepAssignees.map((a) => a.id));
+      const matchedApproveCount = currentApprovals.filter((a) => assigneeSet.has(a.userId)).length;
+      const matchedRejectCount = currentRejections.filter((a) => assigneeSet.has(a.userId)).length;
+      const effectiveRejectedCount = adminOverride
+        ? Math.max(matchedRejectCount, currentRejections.length)
+        : matchedRejectCount;
+
+      const requiredCount = getRequiredApprovalsForMode('MAJORITY', stepAssignees.length);
+      const rejectRequiredCount = Math.max(1, Math.max(1, stepAssignees.length) - requiredCount + 1);
+
+      if (effectiveRejectedCount < rejectRequiredCount) {
+        const stepNote = `مخالفت در مرحله «${currentStep?.title || `گام ${project.currentStepOrder}`}» ثبت شد (${effectiveRejectedCount} از ${rejectRequiredCount} رای مخالف لازم)${comment ? ` — ${comment}` : ''}`;
+        db.prepare(`
+          INSERT INTO workflow_logs (id, projectId, stepOrder, fromUserId, toPositionId, action, comment, createdAt)
+          VALUES (?, ?, ?, ?, ?, 'STEP_REJECTED', ?, ?)
+        `).run(
+          logId,
+          projectId,
+          project.currentStepOrder || 1,
+          currentUser.id,
+          currentPosIds[0] || project.currentPositionId || null,
+          stepNote,
+          now
+        );
+
+        db.prepare('UPDATE projects SET updatedAt = ? WHERE id = ?').run(now, projectId);
+
+        return res.json({
+          success: true,
+          advanced: false,
+          approvedCount: matchedApproveCount,
+          rejectedCount: effectiveRejectedCount,
+          requiredCount,
+          rejectRequiredCount,
+          totalAssignees: stepAssignees.length,
+          currentStepOrder: project.currentStepOrder || 1,
+          currentPositionId: project.currentPositionId,
+          status: project.status,
+        });
+      }
+    }
+
     db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ?').run(projectId);
     newStatus = 'REJECTED';
   }
@@ -2483,9 +2658,7 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
     return res.status(401).json({ error: 'احراز هویت نشده است.' });
   }
 
-  if (!hasPermission(currentUser, 'projects.view')) {
-    return res.json({ projects: [], restrictedView: true });
-  }
+  const canViewAllProjects = hasPermission(currentUser, 'projects.view');
 
   const projects = db.prepare(`
     SELECT p.*, u.name as creatorName, w.title as workflowTitle,
@@ -2557,6 +2730,7 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
   const WORKFLOW_PARTICIPATION_ACTIONS = new Set([
     'FORWARD',
     'STEP_APPROVED',
+    'STEP_REJECTED',
     'APPROVED',
     'FINAL_APPROVED',
     'MANUAL_APPROVED',
@@ -2601,7 +2775,8 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
           currentStepObj?.structureId || null,
           allUsers,
           allStructAssignments,
-          posMap
+          posMap,
+          currentStepObj?.config?.userIds
         );
 
     const currentStepApprovalProgress = isCompletedOrRejected
@@ -2628,9 +2803,14 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
           (!currentStepObj?.structureId || a.structureId === currentStepObj.structureId)
       )
     );
-    const isMyWorkflowTurn = hasWorkflow && (isDirectPosMatch || isStructPosMatch);
+    const isExplicitUserMatch = Boolean(
+      !isCompletedOrRejected &&
+      Array.isArray(currentStepObj?.config?.userIds) &&
+      currentStepObj.config.userIds.includes(currentUser.id)
+    );
+    const isMyWorkflowTurn = hasWorkflow && (isDirectPosMatch || isStructPosMatch || isExplicitUserMatch);
 
-    // Accurate deduplicated participant count across ALL positions in all workflow steps
+    // Accurate deduplicated participant count across ALL positions + explicit users in all workflow steps
     const workflowParticipantIds = new Set<string>();
     for (const st of prjSteps) {
       const stAssignees = resolveAssigneesForStepPositions(
@@ -2638,7 +2818,8 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
         st.structureId || null,
         allUsers,
         allStructAssignments,
-        posMap
+        posMap,
+        st.config?.userIds
       );
       for (const a of stAssignees) {
         workflowParticipantIds.add(a.id);
@@ -2742,6 +2923,15 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
       };
     }
   });
+
+  if (!canViewAllProjects) {
+    const cartableOnly = result.filter((p) => Boolean(p.isMyWorkflowTurn));
+    return res.json({
+      projects: cartableOnly,
+      restrictedView: cartableOnly.length === 0,
+      scopedWorkflowCartable: cartableOnly.length > 0,
+    });
+  }
 
   res.json({ projects: result });
 });
