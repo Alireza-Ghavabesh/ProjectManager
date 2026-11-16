@@ -66,6 +66,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
 
   // Structure Tree & Positions State
   const [treeLoading, setTreeLoading] = useState(false);
+  const [treeSyncing, setTreeSyncing] = useState(false);
   const [structureTreeData, setStructureTreeData] = useState<StructurePositionNode[]>([]);
   const [structureRawPositions, setStructureRawPositions] = useState<StructurePositionNode[]>([]);
   const [currentStructureDetail, setCurrentStructureDetail] = useState<ProjectStructure | null>(null);
@@ -119,10 +120,47 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
   // Extract unique categories
   const categories = Array.from(new Set(structures.map((s) => s.category || 'سازمانی و اداری')));
 
+  // Build nested tree from flat structureRawPositions for instant optimistic updates
+  const buildLocalStructureTree = (flatNodes: StructurePositionNode[]): StructurePositionNode[] => {
+    const map = new Map<string, StructurePositionNode>();
+    flatNodes.forEach((n) => {
+      map.set(n.id, { ...n, children: [] });
+    });
+    const roots: StructurePositionNode[] = [];
+    const sorted = [...flatNodes].sort(
+      (a, b) => (a.orderIndex || 0) - (b.orderIndex || 0) || a.title.localeCompare(b.title, 'fa')
+    );
+    for (const item of sorted) {
+      const node = map.get(item.id)!;
+      if (item.parentId && map.has(item.parentId)) {
+        map.get(item.parentId)!.children!.push(node);
+      } else {
+        roots.push(node);
+      }
+    }
+    return roots;
+  };
+
+  const updateLocalNodeUsers = (nodeId: string, transformUsers: (prevUsers: User[]) => User[]) => {
+    setStructureRawPositions((prevRaw) => {
+      const nextRaw = prevRaw.map((n) =>
+        n.id === nodeId ? { ...n, users: transformUsers(n.users || []) } : n
+      );
+      setStructureTreeData(buildLocalStructureTree(nextRaw));
+      return nextRaw;
+    });
+  };
+
   // Load structure positions when tree view is active or structure changes
-  const loadStructureTree = async (structId: string) => {
+  const loadStructureTree = async (structId: string, options?: { silent?: boolean }) => {
     if (!structId) return;
-    setTreeLoading(true);
+    const isSameStructLoaded = currentStructureDetail?.id === structId && structureRawPositions.length > 0;
+    const silent = Boolean(options?.silent || isSameStructLoaded);
+    if (silent) {
+      setTreeSyncing(true);
+    } else {
+      setTreeLoading(true);
+    }
     try {
       const data = await api.getStructurePositions(structId);
       setCurrentStructureDetail(data.structure);
@@ -132,6 +170,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
       console.error('Error loading structure positions tree:', err);
     } finally {
       setTreeLoading(false);
+      setTreeSyncing(false);
     }
   };
 
@@ -306,7 +345,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
       }
 
       setPositionModalOpen(false);
-      await loadStructureTree(selectedStructureId);
+      await loadStructureTree(selectedStructureId, { silent: true });
       onRefresh();
     } catch (err: any) {
       setError(err.message || 'خطا در ثبت سمت در ساختار');
@@ -319,7 +358,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
     if (!confirm(`آیا از حذف سمت «${node.title}» از ساختار اطمینان دارید؟ (در صورت وجود زیرمجموعه، به سمت والد منتقل خواهند شد)`)) return;
     try {
       await api.deleteStructurePosition(selectedStructureId, node.id);
-      await loadStructureTree(selectedStructureId);
+      await loadStructureTree(selectedStructureId, { silent: true });
       onRefresh();
     } catch (err: any) {
       alert(err.message || 'خطا در حذف سمت از ساختار');
@@ -338,12 +377,24 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
 
   const handleConfirmAssignUser = async () => {
     if (!assignTargetNode || !selectedUserToAssign) return;
+    const targetNodeId = assignTargetNode.id;
+    const userId = selectedUserToAssign;
+    const assignedUser = users.find((u) => u.id === userId);
+
+    // Close modal immediately and apply instant optimistic update (zero flicker)
+    setAssignUserModalOpen(false);
+    if (assignedUser) {
+      updateLocalNodeUsers(targetNodeId, (prev) =>
+        prev.some((u) => u.id === userId) ? prev : [...prev, assignedUser]
+      );
+    }
+
     try {
-      await api.assignUserToStructurePosition(selectedStructureId, assignTargetNode.id, selectedUserToAssign);
-      setAssignUserModalOpen(false);
-      await loadStructureTree(selectedStructureId);
+      await api.assignUserToStructurePosition(selectedStructureId, targetNodeId, userId);
+      loadStructureTree(selectedStructureId, { silent: true });
       onRefresh();
     } catch (err: any) {
+      await loadStructureTree(selectedStructureId, { silent: true });
       alert(err.message || 'خطا در انتصاب کاربر به این سمت');
     }
   };
@@ -401,12 +452,25 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
       orderIndex: idx,
     }));
 
+    // Optimistically update local tree immediately so drag-drop feels instantaneous
+    const orderMap = new Map<string, { parentId: string | null; orderIndex: number }>();
+    itemsPayload.forEach((it) => orderMap.set(it.id, { parentId: it.parentId, orderIndex: it.orderIndex }));
+    setStructureRawPositions((prevRaw) => {
+      const nextRaw = prevRaw.map((n) => {
+        const upd = orderMap.get(n.id);
+        return upd ? { ...n, parentId: upd.parentId, orderIndex: upd.orderIndex } : n;
+      });
+      setStructureTreeData(buildLocalStructureTree(nextRaw));
+      return nextRaw;
+    });
+
     try {
       await api.reorderStructurePositions(selectedStructureId, itemsPayload);
-      await loadStructureTree(selectedStructureId);
+      loadStructureTree(selectedStructureId, { silent: true });
       onRefresh();
       showToast('success', `جایگاه «${draggedNode.title}» با موفقیت به‌روزرسانی شد.`);
     } catch (err: any) {
+      await loadStructureTree(selectedStructureId, { silent: true });
       showToast('error', err.message || 'خطا در تغییر جایگاه سمت');
     }
   };
@@ -430,7 +494,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
           positionId: payload.positionId,
           parentId: targetNodeId,
         });
-        await loadStructureTree(selectedStructureId);
+        await loadStructureTree(selectedStructureId, { silent: true });
         onRefresh();
         showToast('success', 'سمت جدید به عنوان زیرمجموعه در چارت اضافه شد.');
       } catch (err: any) {
@@ -438,12 +502,19 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
       }
     } else if (payload.kind === 'palette-user') {
       if (!canAssignUsers) return;
+      const draggedUser = users.find((u) => u.id === payload.userId);
+      if (draggedUser) {
+        updateLocalNodeUsers(targetNodeId, (prev) =>
+          prev.some((u) => u.id === payload.userId) ? prev : [...prev, draggedUser]
+        );
+      }
       try {
         await api.assignUserToStructurePosition(selectedStructureId, targetNodeId, payload.userId);
-        await loadStructureTree(selectedStructureId);
+        loadStructureTree(selectedStructureId, { silent: true });
         onRefresh();
         showToast('success', 'کاربر با موفقیت به سمت منتصب شد.');
       } catch (err: any) {
+        await loadStructureTree(selectedStructureId, { silent: true });
         showToast('error', err.message || 'خطا در انتصاب کاربر');
       }
     }
@@ -468,7 +539,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
           positionId: payload.positionId,
           parentId: null,
         });
-        await loadStructureTree(selectedStructureId);
+        await loadStructureTree(selectedStructureId, { silent: true });
         onRefresh();
         showToast('success', 'سمت جدید در سطح ریشه ساختار اضافه شد.');
       } catch (err: any) {
@@ -496,7 +567,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
           positionId: payload.positionId,
           parentId,
         });
-        await loadStructureTree(selectedStructureId);
+        await loadStructureTree(selectedStructureId, { silent: true });
         onRefresh();
         showToast('success', 'سمت جدید در موقعیت انتخاب‌شده اضافه شد.');
       } catch (err: any) {
@@ -515,7 +586,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
         parentId: null,
       });
       setQuickPosTitle('');
-      await loadStructureTree(selectedStructureId);
+      await loadStructureTree(selectedStructureId, { silent: true });
       onRefresh();
       showToast('success', 'سمت جدید ایجاد و به ریشه ساختار اضافه شد.');
     } catch (err: any) {
@@ -527,11 +598,13 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
 
   const handleRemoveUserFromNode = async (node: StructurePositionNode, user: User) => {
     if (!confirm(`آیا از لغو انتصاب کاربر «${user.name}» از سمت «${node.title}» در این ساختار اطمینان دارید؟`)) return;
+    updateLocalNodeUsers(node.id, (prev) => prev.filter((u) => u.id !== user.id));
     try {
       await api.removeUserFromStructurePosition(selectedStructureId, node.id, user.id);
-      await loadStructureTree(selectedStructureId);
+      loadStructureTree(selectedStructureId, { silent: true });
       onRefresh();
     } catch (err: any) {
+      await loadStructureTree(selectedStructureId, { silent: true });
       showToast('error', err.message || 'خطا در لغو انتصاب');
     }
   };
@@ -866,11 +939,11 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
               </button>
 
               <button
-                onClick={() => loadStructureTree(selectedStructureId)}
+                onClick={() => loadStructureTree(selectedStructureId, { silent: true })}
                 className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition cursor-pointer"
                 title="بروزرسانی درخت سمت‌ها"
               >
-                <RefreshCw className={`w-4 h-4 ${treeLoading ? 'animate-spin text-indigo-600' : ''}`} />
+                <RefreshCw className={`w-4 h-4 ${treeLoading || treeSyncing ? 'animate-spin text-indigo-600' : ''}`} />
               </button>
 
               {canAddPosNode && (
@@ -1224,7 +1297,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
                                 onClick={async () => {
                                   try {
                                     await api.addStructurePosition(selectedStructureId, { positionId: pos.id, parentId: null });
-                                    await loadStructureTree(selectedStructureId);
+                                    await loadStructureTree(selectedStructureId, { silent: true });
                                     onRefresh();
                                     showToast('success', `سمت «${pos.title}» به ریشه چارت اضافه شد.`);
                                   } catch (err: any) {
@@ -1772,7 +1845,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
           user={selectedUserForPerms}
           onClose={() => setSelectedUserForPerms(null)}
           onSuccess={() => {
-            loadStructureTree(selectedStructureId);
+            loadStructureTree(selectedStructureId, { silent: true });
             onRefresh();
           }}
         />
@@ -1783,7 +1856,7 @@ export const ProjectStructuresManager: React.FC<ProjectStructuresManagerProps> =
           position={selectedPosForPerms}
           onClose={() => setSelectedPosForPerms(null)}
           onSuccess={() => {
-            loadStructureTree(selectedStructureId);
+            loadStructureTree(selectedStructureId, { silent: true });
             onRefresh();
           }}
         />

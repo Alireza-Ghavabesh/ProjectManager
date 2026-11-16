@@ -159,6 +159,75 @@ export default function App() {
     };
   }, []);
 
+  // Targeted lightweight refreshes to keep assignments/edits instantaneous without reloading all 9 endpoints
+  const refreshStructuresData = async () => {
+    if (!currentUser) return;
+    try {
+      const [structs, pos] = await Promise.all([
+        api.getProjectStructures().catch(() => null),
+        api.getPositions().catch(() => null),
+      ]);
+      if (structs) setProjectStructures(structs);
+      if (pos) setPositions(pos);
+    } catch (err) {
+      console.error('Error refreshing structures:', err);
+    }
+  };
+
+  const refreshOrgAndUsersData = async () => {
+    if (!currentUser) return;
+    try {
+      const [usrs, pos, structs, me] = await Promise.all([
+        api.getUsers().catch(() => null),
+        api.getPositions().catch(() => null),
+        api.getProjectStructures().catch(() => null),
+        api.getMe().catch(() => null),
+      ]);
+      if (usrs) setUsers(usrs);
+      if (pos) setPositions(pos);
+      if (structs) setProjectStructures(structs);
+      if (me) {
+        const oldPerms = JSON.stringify(currentUser.permissions || []);
+        const newPerms = JSON.stringify(me.permissions || []);
+        if (
+          me.id !== currentUser.id ||
+          me.role !== currentUser.role ||
+          me.name !== currentUser.name ||
+          me.positionId !== currentUser.positionId ||
+          oldPerms !== newPerms
+        ) {
+          setCurrentUser(me);
+        }
+      }
+    } catch (err) {
+      console.error('Error refreshing org/users:', err);
+    }
+  };
+
+  const refreshWorkflowsData = async () => {
+    if (!currentUser) return;
+    try {
+      const [wfs, prjs] = await Promise.all([
+        api.getWorkflows().catch(() => null),
+        api.getProjects().catch(() => null),
+      ]);
+      if (wfs) setWorkflows(wfs);
+      if (prjs) setProjects(prjs);
+    } catch (err) {
+      console.error('Error refreshing workflows:', err);
+    }
+  };
+
+  const refreshDynamicFieldsData = async () => {
+    if (!currentUser) return;
+    try {
+      const flds = await api.getDynamicFields().catch(() => null);
+      if (flds) setDynamicFields(flds);
+    } catch (err) {
+      console.error('Error refreshing dynamic fields:', err);
+    }
+  };
+
   // Fetch all council data
   const refreshData = async () => {
     if (!currentUser) return;
@@ -697,7 +766,7 @@ export default function App() {
               positions={positions}
               users={users}
               currentUser={currentUser}
-              onRefresh={refreshData}
+              onRefresh={refreshOrgAndUsersData}
             />
           )}
 
@@ -708,7 +777,7 @@ export default function App() {
               positions={positions}
               users={users}
               currentUser={currentUser}
-              onRefresh={refreshData}
+              onRefresh={refreshStructuresData}
             />
           )}
 
@@ -720,7 +789,7 @@ export default function App() {
               structures={projectStructures}
               users={users}
               currentUser={currentUser}
-              onRefresh={refreshData}
+              onRefresh={refreshWorkflowsData}
               onOpenWorkflowModalByProjectId={(projectId) => {
                 const target = projects.find((pr) => pr.id === projectId);
                 if (target) setWorkflowProject(target);
@@ -733,7 +802,7 @@ export default function App() {
             <DynamicFieldsManager
               fields={dynamicFields}
               currentUser={currentUser}
-              onRefresh={refreshData}
+              onRefresh={refreshDynamicFieldsData}
             />
           )}
 
@@ -743,7 +812,7 @@ export default function App() {
               users={users}
               positions={positions}
               currentUser={currentUser}
-              onRefresh={refreshData}
+              onRefresh={refreshOrgAndUsersData}
             />
           )}
 

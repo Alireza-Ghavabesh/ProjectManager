@@ -637,7 +637,7 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
       )}
 
       {/* Results List */}
-      {loading ? (
+      {loading && items.length === 0 ? (
         <div className="p-12 text-center rounded-3xl bg-white border border-slate-200 text-slate-500 text-xs">
           در حال بارگذاری وضعیت گردش کار پروژه‌ها...
         </div>

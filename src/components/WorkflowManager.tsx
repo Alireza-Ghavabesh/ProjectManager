@@ -158,9 +158,13 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
     }
   };
 
+  const structuresKey = structures
+    .map((s) => `${s.id}:${s.positionCount || 0}:${s.userCount || 0}`)
+    .join('|');
+
   useEffect(() => {
     loadAllStructurePositions();
-  }, [structures]);
+  }, [structuresKey]);
 
   const makeLocalKey = () => `step_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
@@ -279,7 +283,9 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
     setSelectedStepIdx(0);
     setError('');
     setModalOpen(true);
-    loadAllStructurePositions();
+    if (structures.length > 0 && Object.keys(structurePositionsMap).length === 0) {
+      loadAllStructurePositions();
+    }
   };
 
   const handleOpenEdit = (wf: Workflow) => {
@@ -324,7 +330,9 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
     setSelectedStepIdx(0);
     setError('');
     setModalOpen(true);
-    loadAllStructurePositions();
+    if (structures.length > 0 && Object.keys(structurePositionsMap).length === 0) {
+      loadAllStructurePositions();
+    }
   };
 
   const createDefaultStep = (overrides: Partial<EditableStep> = {}): EditableStep => {
