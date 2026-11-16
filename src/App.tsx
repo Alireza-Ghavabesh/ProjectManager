@@ -325,9 +325,9 @@ export default function App() {
   useEffect(() => {
     if (!currentUser || activeTab === 'smstest') return;
     const tabPermissions: Array<{ tab: typeof activeTab; perms: string[] }> = [
-      { tab: 'projects', perms: ['projects.view', 'projects.create', 'projects.edit', 'projects.delete', 'workflow.forward', 'voting.cast', 'voting.confidential.view_all'] },
+      { tab: 'projects', perms: ['projects.view', 'projects.cartable.view', 'projects.create', 'projects.edit', 'projects.delete', 'workflow.forward', 'voting.cast', 'voting.confidential.view_all'] },
       { tab: 'structures', perms: ['structures.view', 'structures.create', 'structures.edit', 'structures.delete'] },
-      { tab: 'workflows', perms: ['workflow.view', 'workflow.history.view', 'workflow.forward', 'workflow.create', 'workflow.edit', 'workflow.delete'] },
+      { tab: 'workflows', perms: ['workflow.view', 'workflow.history.view', 'workflow.create', 'workflow.edit', 'workflow.delete'] },
       { tab: 'users', perms: ['system.users.view', 'system.users.create', 'system.users.edit', 'system.users.delete', 'system.permissions.manage', 'org.positions.view', 'org.positions.create', 'org.positions.edit', 'org.positions.delete'] },
       { tab: 'fields', perms: ['projects.fields.view', 'projects.fields.create', 'projects.fields.edit', 'projects.fields.delete'] },
       { tab: 'settings', perms: ['settings.view', 'settings.edit', 'sms.rules.view', 'sms.rules.create', 'sms.rules.edit', 'sms.rules.delete'] },
@@ -395,6 +395,7 @@ export default function App() {
   });
 
   const canViewProjects = hasPerm(currentUser, 'projects.view');
+  const canViewOwnCartable = hasPerm(currentUser, ['projects.cartable.view', 'workflow.forward']);
   const canCreateProject = hasPerm(currentUser, 'projects.create');
   const canCastVote = hasPerm(currentUser, 'voting.cast');
   const canViewConfidentialVotes = hasPerm(currentUser, 'voting.confidential.view_all');
@@ -404,7 +405,7 @@ export default function App() {
   const pendingVotesCount =
     canViewProjects && canCastVote ? projects.filter((p) => !isWorkflowProject(p) && !p.hasVoted).length : 0;
   const myTurnCount = projects.filter((p) => Boolean(p.isMyWorkflowTurn)).length;
-  const canSeeCartableList = canViewProjects || projects.length > 0;
+  const canSeeCartableList = canViewProjects || canViewOwnCartable || projects.length > 0;
   const pendingResetRequests = resetRequests.filter((r) => r.status === 'PENDING');
 
   return (
@@ -560,11 +561,17 @@ export default function App() {
                 <div>
                   <h2 className="text-lg font-extrabold text-slate-900 flex items-center gap-2">
                     <Layers className="w-5 h-5 text-indigo-600" />
-                    {canViewConfidentialVotes ? 'مدیریت و کارتابل مصوبات پروژه‌ها' : 'کارتابل ارزیابی پروژه‌های شورا'}
+                    {canViewConfidentialVotes
+                      ? 'مدیریت و کارتابل مصوبات پروژه‌ها'
+                      : !canViewProjects && canViewOwnCartable
+                      ? 'کارتابل شخصی من'
+                      : 'کارتابل ارزیابی پروژه‌های شورا'}
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
                     {canViewConfidentialVotes
                       ? 'مشاهده وضعیت تجمیعی آرا، گردش کار سازمانی، ارجاعات و محاسبه خودکار اکثریت'
+                      : !canViewProjects && canViewOwnCartable
+                      ? 'مشاهده و اقدام روی پروژه‌هایی که هم‌اکنون در گردش کار به نوبت شما ارجاع شده است'
                       : 'مشاهده پروژه‌های ارجاع شده، ثبت رای محرمانه ۳ حالته (تایید، رد، اصلاح) و پیگیری گردش کار'}
                   </p>
                 </div>
@@ -610,25 +617,27 @@ export default function App() {
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
                   <button
                     onClick={() => setStatusFilter('ALL')}
-                    className={`px-3 py-1.5 rounded-xl font-semibold transition whitespace-nowrap cursor-pointer ${
+                    className={`px-3 py-1.5 rounded-xl font-semibold transition whitespace-nowrap cursor-pointer tabular-nums ${
                       statusFilter === 'ALL'
                         ? 'bg-slate-900 text-white shadow-xs'
                         : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                     }`}
                   >
-                    همه پروژه‌ها ({projects.length})
+                    {canViewProjects ? `همه پروژه‌ها (${projects.length})` : `کارتابل من (${projects.length})`}
                   </button>
 
-                  <button
-                    onClick={() => setStatusFilter('MY_TURN')}
-                    className={`px-3 py-1.5 rounded-xl font-semibold transition whitespace-nowrap cursor-pointer tabular-nums ${
-                      statusFilter === 'MY_TURN'
-                        ? 'bg-blue-600 text-white shadow-xs font-bold'
-                        : 'text-blue-700 bg-blue-50/70 hover:bg-blue-100 border border-blue-200/80'
-                    }`}
-                  >
-                    نوبت کارتابل من ({myTurnCount})
-                  </button>
+                  {canViewProjects && (
+                    <button
+                      onClick={() => setStatusFilter('MY_TURN')}
+                      className={`px-3 py-1.5 rounded-xl font-semibold transition whitespace-nowrap cursor-pointer tabular-nums ${
+                        statusFilter === 'MY_TURN'
+                          ? 'bg-blue-600 text-white shadow-xs font-bold'
+                          : 'text-blue-700 bg-blue-50/70 hover:bg-blue-100 border border-blue-200/80'
+                      }`}
+                    >
+                      نوبت کارتابل من ({myTurnCount})
+                    </button>
+                  )}
 
                   {canCastVote && hasNonWorkflowProjects && (
                     <button
@@ -643,16 +652,18 @@ export default function App() {
                     </button>
                   )}
 
-                  <button
-                    onClick={() => setStatusFilter('APPROVED')}
-                    className={`px-3 py-1.5 rounded-xl font-semibold transition whitespace-nowrap cursor-pointer ${
-                      statusFilter === 'APPROVED'
-                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold'
-                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                    }`}
-                  >
-                    تصویب نهایی
-                  </button>
+                  {canViewProjects && (
+                    <button
+                      onClick={() => setStatusFilter('APPROVED')}
+                      className={`px-3 py-1.5 rounded-xl font-semibold transition whitespace-nowrap cursor-pointer ${
+                        statusFilter === 'APPROVED'
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold'
+                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                      }`}
+                    >
+                      تصویب نهایی
+                    </button>
+                  )}
 
                   <button
                     onClick={() => setStatusFilter('NEEDS_REVISION')}
@@ -665,16 +676,18 @@ export default function App() {
                     نیازمند اصلاح
                   </button>
 
-                  <button
-                    onClick={() => setStatusFilter('REJECTED')}
-                    className={`px-3 py-1.5 rounded-xl font-semibold transition whitespace-nowrap cursor-pointer ${
-                      statusFilter === 'REJECTED'
-                        ? 'bg-rose-100 text-rose-800 border border-rose-300 font-bold'
-                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                    }`}
-                  >
-                    رد شده
-                  </button>
+                  {canViewProjects && (
+                    <button
+                      onClick={() => setStatusFilter('REJECTED')}
+                      className={`px-3 py-1.5 rounded-xl font-semibold transition whitespace-nowrap cursor-pointer ${
+                        statusFilter === 'REJECTED'
+                          ? 'bg-rose-100 text-rose-800 border border-rose-300 font-bold'
+                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                      }`}
+                    >
+                      رد شده
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -682,7 +695,7 @@ export default function App() {
               {!canViewProjects && projects.length > 0 && (
                 <div className="p-3.5 rounded-2xl bg-blue-50 border border-blue-200 text-blue-900 text-xs flex items-center justify-between gap-2">
                   <span>
-                    دسترسی «نمایش همه پروژه‌ها و کارتابل» برای شما فعال نیست؛ فقط پروژه‌هایی که هم‌اکنون در نوبت گردش کار شما هستند نمایش داده می‌شوند.
+                    حالت کارتابل شخصی: فقط پروژه‌هایی که هم‌اکنون در گردش کار به نوبت شما ارجاع شده‌اند نمایش داده می‌شوند.
                   </span>
                 </div>
               )}
@@ -692,13 +705,13 @@ export default function App() {
                   <Layers className="w-12 h-12 text-slate-300 mx-auto" />
                   <h3 className="text-base font-bold text-slate-800">
                     {canCreateProject
-                      ? 'دسترسی مشاهده لیست پروژه‌ها فعال نیست (فقط امکان ثبت جدید دارید)'
-                      : 'شما مجوز مشاهده همه پروژه‌های کارتابل را ندارید'}
+                      ? 'حساب کاربری شما برای ثبت پروژه جدید تنظیم شده است'
+                      : 'شما مجوز مشاهده پروژه‌های کارتابل را ندارید'}
                   </h3>
                   <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
                     {canCreateProject
-                      ? 'برای حساب کاربری شما دسترسی «ثبت پروژه جدید» فعال است. می‌توانید از دکمه زیر طرح جدید ثبت کنید و در صورت نیاز از مدیر سامانه دسترسی «نمایش پروژه‌ها و کارتابل» را نیز درخواست نمایید.'
-                      : 'جهت مشاهده همه پروژه‌ها، باید تیک «نمایش پروژه‌ها و کارتابل» در سطح دسترسی شما فعال شود (در غیر این صورت فقط پروژه‌هایی که در گردش کار به نوبت شما برسند نمایش داده می‌شوند).'}
+                      ? 'می‌توانید از دکمه زیر طرح جدید ثبت کنید تا وارد گردش کار شود. اگر لازم است سایر پروژه‌ها نیز نمایش داده شوند، دسترسی «نمایش فقط پروژه‌های کارتابل من» یا «تایید و ارجاع در مراحل گردش کار» را فعال نمایید.'
+                      : 'برای مشاهده پروژه‌های ارجاع‌شده به خودتان، دسترسی «نمایش فقط پروژه‌های کارتابل من» یا «تایید و ارجاع در مراحل گردش کار» کافی است.'}
                   </p>
                   {canCreateProject && (
                     <div className="pt-1">
@@ -718,10 +731,30 @@ export default function App() {
               ) : filteredProjects.length === 0 ? (
                 <div className="p-12 text-center rounded-3xl bg-white border border-slate-200 text-slate-500 space-y-3 shadow-xs">
                   <Layers className="w-12 h-12 text-slate-300 mx-auto" />
-                  <h3 className="text-base font-bold text-slate-800">پروژه‌ای با این مشخصات یافت نشد</h3>
-                  <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                    می‌توانید فیلترهای جستجو را تغییر دهید{canCreateProject ? ' یا پروژه جدیدی ثبت فرمایید.' : '.'}
+                  <h3 className="text-base font-bold text-slate-800">
+                    {!canViewProjects && projects.length === 0
+                      ? 'در حال حاضر پروژه‌ای در کارتابل شما نیست'
+                      : 'پروژه‌ای با این مشخصات یافت نشد'}
+                  </h3>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                    {!canViewProjects && projects.length === 0
+                      ? 'در حالت کارتابل شخصی، هر پروژه‌ای که در گردش کار به سمت یا نام شما ارجاع شود به‌صورت خودکار در اینجا نمایش داده خواهد شد.'
+                      : `می‌توانید فیلترهای جستجو را تغییر دهید${canCreateProject ? ' یا پروژه جدیدی ثبت فرمایید.' : '.'}`}
                   </p>
+                  {!canViewProjects && projects.length === 0 && canCreateProject && (
+                    <div className="pt-1">
+                      <button
+                        onClick={() => {
+                          setEditingProject(null);
+                          setShowCreateModal(true);
+                        }}
+                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>ثبت پروژه جدید</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-2.5">

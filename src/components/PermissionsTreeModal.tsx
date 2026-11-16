@@ -36,7 +36,13 @@ const CRUD_META = [
 ] as const;
 
 function getCrudSlot(code: string): 'view' | 'create' | 'edit' | 'delete' | null {
-  if (code === 'workflow.history.view' || code === 'voting.confidential.view_all') return null;
+  if (
+    code === 'workflow.history.view' ||
+    code === 'voting.confidential.view_all' ||
+    code === 'projects.cartable.view'
+  ) {
+    return null;
+  }
   if (code.endsWith('.view')) return 'view';
   if (code.endsWith('.create')) return 'create';
   if (code.endsWith('.edit')) return 'edit';
@@ -499,7 +505,9 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
                               >
                                 <span className="flex items-center gap-1.5 min-w-0">
                                   <IconComp className={`w-3.5 h-3.5 shrink-0 ${checked ? meta.iconCls : 'text-slate-400'}`} />
-                                  <span className="text-xs font-bold truncate">{meta.label}</span>
+                                  <span className="text-xs font-bold truncate">
+                                    {perm.code === 'projects.view' ? 'نمایش همه' : meta.label}
+                                  </span>
                                 </span>
                                 {checked ? (
                                   <CheckSquare className={`w-4 h-4 shrink-0 ${meta.iconCls}`} />

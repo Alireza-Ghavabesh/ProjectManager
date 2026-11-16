@@ -72,7 +72,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: Layers,
           badge: myTurnCount > 0 ? `${myTurnCount} نوبت شما` : pendingVotesCount > 0 ? `${pendingVotesCount} در انتظار` : null,
           badgeColor: myTurnCount > 0 ? 'bg-blue-500/15 text-blue-700 border-blue-300' : 'bg-amber-500/20 text-amber-700 border-amber-300',
-          permission: ['projects.view', 'projects.create', 'projects.edit', 'projects.delete', 'workflow.forward', 'voting.cast', 'voting.confidential.view_all'],
+          permission: ['projects.view', 'projects.cartable.view', 'projects.create', 'projects.edit', 'projects.delete', 'workflow.forward', 'voting.cast', 'voting.confidential.view_all'],
         },
       ],
     },
@@ -95,7 +95,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: GitBranch,
           badge: null,
           badgeColor: '',
-          permission: ['workflow.view', 'workflow.history.view', 'workflow.forward', 'workflow.create', 'workflow.edit', 'workflow.delete'],
+          permission: ['workflow.view', 'workflow.history.view', 'workflow.create', 'workflow.edit', 'workflow.delete'],
         },
         {
           id: 'users' as const,

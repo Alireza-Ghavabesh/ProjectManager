@@ -248,6 +248,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
     (project.isMyWorkflowTurn ??
       Boolean(currentUser.positionId && currentPosIds.includes(currentUser.positionId)));
   const hasCurrentUserApproved = Boolean(project.currentStepApprovalProgress?.hasCurrentUserApproved);
+  const hasCurrentUserRejected = Boolean(project.currentStepApprovalProgress?.hasCurrentUserRejected);
   const isExpired = project.isDeadlineExpired ?? isDeadlineExpired(project.deadline);
 
   const participatedCount = project.workflowParticipatedCount ?? 0;
@@ -440,8 +441,21 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               </button>
             )}
 
+            {hasWorkflow && !hasCurrentUserApproved && hasCurrentUserRejected && !isCompletedOrRejected && (
+              <button
+                type="button"
+                onClick={() => onOpenWorkflowModal && onOpenWorkflowModal(project)}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[11px] font-bold transition cursor-pointer whitespace-nowrap shrink-0"
+                title="رای مخالف شما در این گام ثبت شده است"
+              >
+                <XCircle className="w-3.5 h-3.5 text-rose-600" />
+                <span>رای مخالف ثبت شد</span>
+              </button>
+            )}
+
             {hasWorkflow &&
               !hasCurrentUserApproved &&
+              !hasCurrentUserRejected &&
               canForwardWorkflow &&
               !isCompletedOrRejected &&
               (isMyTurnInWorkflow || currentUser.role === 'ADMIN') &&
@@ -459,6 +473,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
 
             {hasWorkflow &&
               !hasCurrentUserApproved &&
+              !hasCurrentUserRejected &&
               !canForwardWorkflow &&
               !isCompletedOrRejected &&
               isMyTurnInWorkflow && (
@@ -600,6 +615,11 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                     <span className="text-emerald-700 font-bold flex items-center gap-1">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                       تایید شما در این گام ثبت شده است
+                    </span>
+                  ) : hasCurrentUserRejected && !isCompletedOrRejected ? (
+                    <span className="text-rose-700 font-bold flex items-center gap-1">
+                      <XCircle className="w-3.5 h-3.5 text-rose-600" />
+                      رای مخالف شما در این گام ثبت شده است
                     </span>
                   ) : isCompletedOrRejected ? (
                     <span className={`font-bold ${primaryStatusMeta.textClass}`}>

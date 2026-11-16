@@ -1096,12 +1096,12 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
       'workflow.create',
       'workflow.edit',
       'workflow.delete',
-      'workflow.forward',
       'projects.view',
     ])
   ) {
     return res.status(403).json({ error: 'شما مجوز مشاهده و رهگیری گردش کارها را ندارید.' });
   }
+  const canViewAllProjects = hasPermission(currentUser, 'projects.view');
 
   const projects = db.prepare(`
     SELECT p.*, u.name as creatorName, u.username as creatorUsername,
@@ -1199,6 +1199,10 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
     const logs = allLogs.filter((l) => l.projectId === prj.id);
     const expired = isDeadlineExpired(prj.deadline);
 
+    const isMyWorkflowTurn =
+      Boolean(prj.workflowId && steps.length > 0 && !isCompletedOrRejected) &&
+      currentAssignees.some((a) => a.id === currentUser.id);
+
     return {
       projectId: prj.id,
       projectTitle: prj.title,
@@ -1229,6 +1233,7 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
       currentPositionColor: prj.currentPositionColor || currentStep?.positionColor || 'indigo',
       currentAssignees,
       currentStepApprovalProgress,
+      isMyWorkflowTurn,
       creatorId: prj.createdById || null,
       creatorName: prj.creatorName || 'نامشخص',
       creatorUsername: prj.creatorUsername || '',
@@ -1239,6 +1244,10 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
       logs,
     };
   });
+
+  if (!canViewAllProjects) {
+    items = items.filter((it) => Boolean(it.isMyWorkflowTurn));
+  }
 
   // Apply optional query filters
   const qSearch = typeof req.query.search === 'string' ? req.query.search.trim().toLowerCase() : '';
@@ -2926,10 +2935,11 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
 
   if (!canViewAllProjects) {
     const cartableOnly = result.filter((p) => Boolean(p.isMyWorkflowTurn));
+    const hasScopedCartableAccess = hasPermission(currentUser, ['projects.cartable.view', 'workflow.forward']);
     return res.json({
       projects: cartableOnly,
-      restrictedView: cartableOnly.length === 0,
-      scopedWorkflowCartable: cartableOnly.length > 0,
+      restrictedView: cartableOnly.length === 0 && !hasScopedCartableAccess,
+      scopedWorkflowCartable: hasScopedCartableAccess || cartableOnly.length > 0,
     });
   }
 
