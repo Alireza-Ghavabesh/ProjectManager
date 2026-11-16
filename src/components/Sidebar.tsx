@@ -89,12 +89,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
         },
         {
           id: 'workflows' as const,
-          title: 'طراحی گردش کار پروژه‌ها',
+          title: 'مدیریت و رهگیری گردش کار',
           shortTitle: 'گردش کار',
           icon: GitBranch,
           badge: null,
           badgeColor: '',
-          permission: ['workflow.view', 'workflow.create', 'workflow.edit', 'workflow.delete'],
+          permission: ['workflow.view', 'workflow.history.view', 'workflow.forward', 'workflow.create', 'workflow.edit', 'workflow.delete'],
         },
         {
           id: 'users' as const,

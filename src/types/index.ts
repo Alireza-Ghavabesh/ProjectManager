@@ -153,6 +153,55 @@ export interface WorkflowLog {
   createdAt: string;
 }
 
+export interface WorkflowTrackingAssignee {
+  id: string;
+  name: string;
+  username: string;
+  avatar?: string;
+  phone?: string;
+  role: string;
+  positionTitle?: string;
+  sources: string[];
+}
+
+export interface WorkflowTrackingStep extends WorkflowStep {
+  assignees: WorkflowTrackingAssignee[];
+}
+
+export interface WorkflowTrackingItem {
+  projectId: string;
+  projectTitle: string;
+  projectCode: string;
+  workflowTrackingCode: string;
+  productionType?: string;
+  budgetEstimated?: string;
+  deadline?: string;
+  deliveryDate?: string;
+  isDeadlineExpired?: boolean;
+  status: 'IN_REVIEW' | 'APPROVED' | 'REJECTED' | 'NEEDS_REVISION';
+  majorityResult: string;
+  workflowId: string;
+  workflowTitle: string;
+  currentStepOrder: number;
+  totalSteps: number;
+  currentStepTitle?: string;
+  currentStepActionType?: string;
+  currentStructureId?: string | null;
+  currentStructureTitle?: string | null;
+  currentPositionId?: string | null;
+  currentPositionTitle?: string | null;
+  currentPositionColor?: string;
+  currentAssignees: WorkflowTrackingAssignee[];
+  creatorId?: string | null;
+  creatorName?: string;
+  creatorUsername?: string;
+  creatorPositionTitle?: string;
+  createdAt: string;
+  updatedAt: string;
+  steps: WorkflowTrackingStep[];
+  logs: WorkflowLog[];
+}
+
 export interface ProjectAttachment {
   id: string;
   projectId: string;
@@ -187,6 +236,7 @@ export interface Project {
   currentPositionId?: string;
   currentPositionTitle?: string;
   currentPositionColor?: string;
+  workflowTrackingCode?: string;
   isMyWorkflowTurn?: boolean;
   createdAt: string;
   updatedAt: string;

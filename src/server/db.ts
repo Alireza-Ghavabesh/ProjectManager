@@ -185,6 +185,7 @@ export function initDatabase() {
       workflowId TEXT REFERENCES workflows(id) ON DELETE SET NULL,
       currentStepOrder INTEGER DEFAULT 1,
       currentPositionId TEXT REFERENCES positions(id) ON DELETE SET NULL,
+      workflowTrackingCode TEXT,
       createdAt TEXT NOT NULL,
       updatedAt TEXT NOT NULL
     );
@@ -365,6 +366,12 @@ export function initDatabase() {
   } catch (e) {}
   try {
     db.prepare("ALTER TABLE workflow_steps ADD COLUMN configJson TEXT DEFAULT '{}'").run();
+  } catch (e) {}
+  try {
+    db.prepare('ALTER TABLE projects ADD COLUMN workflowTrackingCode TEXT').run();
+  } catch (e) {}
+  try {
+    rawDb.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_wf_tracking_code ON projects(workflowTrackingCode) WHERE workflowTrackingCode IS NOT NULL;');
   } catch (e) {}
 
   try {
@@ -763,6 +770,15 @@ function seedInitialData() {
     insertVote.run('vot-6', 'prj-102', 'usr-moradi', 'REJECTED', 'همپوشانی موضوعی با برنامه قبلی دارد.', now);
   }
 
+  // Backfill unique workflow tracking code for all existing projects missing one
+  try {
+    const missingCodeProjects = db.prepare("SELECT id FROM projects WHERE workflowTrackingCode IS NULL OR workflowTrackingCode = '' ORDER BY createdAt ASC").all() as { id: string }[];
+    for (const mp of missingCodeProjects) {
+      const code = generateUniqueWorkflowTrackingCode();
+      db.prepare('UPDATE projects SET workflowTrackingCode = ? WHERE id = ?').run(code, mp.id);
+    }
+  } catch (e) {}
+
   // 8. Seed Structure Positions and User Assignments per Structure
   const spCount = (db.prepare('SELECT count(*) as count FROM structure_positions').get() as any).count;
   if (spCount === 0) {
@@ -961,6 +977,24 @@ function seedInitialData() {
       );
     }
   } catch (e) {}
+}
+
+export function generateUniqueWorkflowTrackingCode(): string {
+  const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  for (let attempt = 0; attempt < 30; attempt++) {
+    let suffix = '';
+    for (let i = 0; i < 6; i++) {
+      suffix += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+    }
+    const candidate = `WFL-${suffix}`;
+    try {
+      const exists = db.prepare('SELECT 1 FROM projects WHERE workflowTrackingCode = ?').get(candidate);
+      if (!exists) return candidate;
+    } catch {
+      return candidate;
+    }
+  }
+  return `WFL-${Date.now().toString(36).toUpperCase().slice(-6)}`;
 }
 
 export { db };

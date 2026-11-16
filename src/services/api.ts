@@ -1,4 +1,4 @@
-import { Position, User, DynamicField, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowLog, ProjectStructure, StructurePositionNode, ProjectAttachment, SystemSetting, PasswordResetRequest, SmsRule, SmsLog, PublicSettings, UploadProgressInfo } from '../types';
+import { Position, User, DynamicField, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowLog, WorkflowTrackingItem, ProjectStructure, StructurePositionNode, ProjectAttachment, SystemSetting, PasswordResetRequest, SmsRule, SmsLog, PublicSettings, UploadProgressInfo } from '../types';
 
 class ApiService {
   getToken(): string | null {
@@ -479,6 +479,18 @@ class ApiService {
     });
     const data = await res.json();
     return data.logs || [];
+  }
+
+  async getWorkflowTracking(params?: Record<string, string>): Promise<WorkflowTrackingItem[]> {
+    const qs = params
+      ? '?' + new URLSearchParams(Object.entries(params).filter(([, v]) => Boolean(v))).toString()
+      : '';
+    const res = await fetch(`/api/workflows/tracking${qs === '?' ? '' : qs}`, {
+      headers: this.getAuthHeader(),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'خطا در دریافت اطلاعات رهگیری گردش کار');
+    return data.items || [];
   }
 
   // Dynamic Fields

@@ -18,7 +18,10 @@ import {
   ArrowLeft,
   Briefcase,
   Lock,
-  PackageCheck
+  PackageCheck,
+  Copy,
+  Check,
+  Hash
 } from 'lucide-react';
 
 import { ProjectAttachments } from './ProjectAttachments';
@@ -48,6 +51,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
 }) => {
   const [showAdminVotes, setShowAdminVotes] = useState(false);
   const [showAttachments, setShowAttachments] = useState(false);
+  const [copiedTrackingCode, setCopiedTrackingCode] = useState(false);
   const canEditProject = hasPerm(currentUser, 'projects.edit');
   const canDeleteProject = hasPerm(currentUser, 'projects.delete');
   const canCreateProject = hasPerm(currentUser, 'projects.create');
@@ -171,6 +175,26 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           <span className="font-mono text-xs font-black px-2.5 py-1 rounded-xl bg-slate-100 text-indigo-700 border border-slate-200">
             {project.code}
           </span>
+          {project.workflowTrackingCode && (
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard?.writeText(project.workflowTrackingCode || '').catch(() => {});
+                setCopiedTrackingCode(true);
+                setTimeout(() => setCopiedTrackingCode(false), 1800);
+              }}
+              className="inline-flex items-center gap-1 font-mono text-[11px] font-bold px-2.5 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-2xs transition cursor-pointer"
+              title="کد یونیک رهگیری گردش کار (کلیک برای کپی)"
+            >
+              <Hash className="w-3 h-3 text-indigo-200" />
+              <span>گردش: <span dir="ltr">{project.workflowTrackingCode}</span></span>
+              {copiedTrackingCode ? (
+                <Check className="w-3 h-3 text-emerald-300" />
+              ) : (
+                <Copy className="w-3 h-3 text-indigo-200" />
+              )}
+            </button>
+          )}
           <span className="text-xs px-2.5 py-1 rounded-xl bg-slate-100 text-slate-700 border border-slate-200 font-medium">
             {project.productionType || 'تولید محتوا'}
           </span>

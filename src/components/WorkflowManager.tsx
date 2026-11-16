@@ -9,6 +9,7 @@ import {
 } from '../types';
 import { api } from '../services/api';
 import { hasPerm } from '../utils/permissions';
+import { WorkflowTrackingView } from './WorkflowTrackingView';
 import {
   GitBranch,
   Plus,
@@ -33,6 +34,7 @@ import {
   CornerDownLeft,
   Move,
   Wand2,
+  Search,
 } from 'lucide-react';
 
 interface WorkflowManagerProps {
@@ -42,6 +44,7 @@ interface WorkflowManagerProps {
   users?: User[];
   currentUser: User;
   onRefresh: () => void;
+  onOpenWorkflowModalByProjectId?: (projectId: string) => void;
 }
 
 interface EditableStep {
@@ -87,7 +90,10 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
   users = [],
   currentUser,
   onRefresh,
+  onOpenWorkflowModalByProjectId,
 }) => {
+  const canViewWfDefs = hasPerm(currentUser, ['workflow.view', 'workflow.create', 'workflow.edit', 'workflow.delete']);
+  const [subTab, setSubTab] = useState<'definitions' | 'tracking'>(canViewWfDefs ? 'definitions' : 'tracking');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingWorkflow, setEditingWorkflow] = useState<Workflow | null>(null);
   const [title, setTitle] = useState('');
@@ -491,7 +497,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={loadAllStructurePositions}
             className="p-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer"
@@ -500,7 +506,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
             <RefreshCw className={`w-4 h-4 ${loadingStructureMap ? 'animate-spin text-indigo-600' : ''}`} />
           </button>
 
-          {canCreateWf && (
+          {subTab === 'definitions' && canCreateWf && (
             <button
               onClick={handleOpenCreate}
               className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
@@ -512,16 +518,57 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
         </div>
       </div>
 
-      {/* Info notice */}
-      <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200/80 text-amber-900 text-xs flex items-center gap-3">
-        <Building2 className="w-5 h-5 text-amber-600 shrink-0" />
-        <p className="leading-relaxed">
-          <strong>استودیوی بصری گردش کار:</strong> می‌توانید هر گام را به سمت‌های یک ساختار اختصاصی متصل کنید، نوع اقدام سفارشی بنویسید، شرط اجرا بگذارید و تعیین کنید در صورت عدم تایید، طرح به کدام مرحله برگردد.
-        </p>
+      {/* Sub-Tabs: Tracking by Workflow Code & Filters vs Workflow Definitions */}
+      <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs w-fit">
+        <button
+          type="button"
+          onClick={() => setSubTab('tracking')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+            subTab === 'tracking'
+              ? 'bg-indigo-600 text-white shadow-sm'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <Search className="w-4 h-4" />
+          <span>رهگیری با کد گردش کار و کارتابل اشخاص</span>
+        </button>
+
+        {canViewWfDefs && (
+          <button
+            type="button"
+            onClick={() => setSubTab('definitions')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+              subTab === 'definitions'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <GitBranch className="w-4 h-4" />
+            <span>تعاریف و طراحی گردش کارها ({workflows.length})</span>
+          </button>
+        )}
       </div>
 
-      {/* Workflows List */}
-      <div className="space-y-4">
+      {subTab === 'tracking' ? (
+        <WorkflowTrackingView
+          workflows={workflows}
+          positions={positions}
+          users={users}
+          currentUser={currentUser}
+          onOpenWorkflowModalByProjectId={onOpenWorkflowModalByProjectId}
+        />
+      ) : (
+        <>
+          {/* Info notice */}
+          <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200/80 text-amber-900 text-xs flex items-center gap-3">
+            <Building2 className="w-5 h-5 text-amber-600 shrink-0" />
+            <p className="leading-relaxed">
+              <strong>استودیوی بصری گردش کار:</strong> می‌توانید هر گام را به سمت‌های یک ساختار اختصاصی متصل کنید، نوع اقدام سفارشی بنویسید، شرط اجرا بگذارید و تعیین کنید در صورت عدم تایید، طرح به کدام مرحله برگردد.
+            </p>
+          </div>
+
+          {/* Workflows List */}
+          <div className="space-y-4">
         {workflows.length === 0 ? (
           <div className="p-12 text-center rounded-3xl bg-white border border-slate-200 text-slate-500 space-y-3">
             <Layers className="w-12 h-12 text-slate-300 mx-auto" />
@@ -702,7 +749,9 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
             </div>
           ))
         )}
-      </div>
+          </div>
+        </>
+      )}
 
       {/* ===================== VISUAL DRAG & DROP WORKFLOW STUDIO MODAL ===================== */}
       {modalOpen && (

@@ -250,7 +250,7 @@ export default function App() {
     const tabPermissions: Array<{ tab: typeof activeTab; perms: string[] }> = [
       { tab: 'projects', perms: ['projects.view', 'projects.create', 'projects.edit', 'projects.delete', 'voting.cast', 'voting.confidential.view_all'] },
       { tab: 'structures', perms: ['structures.view', 'structures.create', 'structures.edit', 'structures.delete'] },
-      { tab: 'workflows', perms: ['workflow.view', 'workflow.create', 'workflow.edit', 'workflow.delete'] },
+      { tab: 'workflows', perms: ['workflow.view', 'workflow.history.view', 'workflow.forward', 'workflow.create', 'workflow.edit', 'workflow.delete'] },
       { tab: 'users', perms: ['system.users.view', 'system.users.create', 'system.users.edit', 'system.users.delete', 'system.permissions.manage', 'org.positions.view', 'org.positions.create', 'org.positions.edit', 'org.positions.delete'] },
       { tab: 'fields', perms: ['projects.fields.view', 'projects.fields.create', 'projects.fields.edit', 'projects.fields.delete'] },
       { tab: 'settings', perms: ['settings.view', 'settings.edit', 'sms.rules.view', 'sms.rules.create', 'sms.rules.edit', 'sms.rules.delete'] },
@@ -296,6 +296,7 @@ export default function App() {
       !searchQuery ||
       p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       p.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (p.workflowTrackingCode && p.workflowTrackingCode.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (p.productionType && p.productionType.toLowerCase().includes(searchQuery.toLowerCase()));
 
     if (!matchesSearch) return false;
@@ -655,7 +656,7 @@ export default function App() {
             />
           )}
 
-          {/* ===================== TAB: WORKFLOWS (طراحی و مدیریت گردش کار پروژه‌ها) ===================== */}
+          {/* ===================== TAB: WORKFLOWS (طراحی و رهگیری گردش کار پروژه‌ها) ===================== */}
           {activeTab === 'workflows' && (
             <WorkflowManager
               workflows={workflows}
@@ -664,6 +665,10 @@ export default function App() {
               users={users}
               currentUser={currentUser}
               onRefresh={refreshData}
+              onOpenWorkflowModalByProjectId={(projectId) => {
+                const target = projects.find((pr) => pr.id === projectId);
+                if (target) setWorkflowProject(target);
+              }}
             />
           )}
 

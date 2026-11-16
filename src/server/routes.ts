@@ -1,5 +1,5 @@
 import express, { Request, Response } from 'express';
-import { db, generateOfflineAvatarSvg } from './db.js';
+import { db, generateOfflineAvatarSvg, generateUniqueWorkflowTrackingCode } from './db.js';
 import { randomUUID } from 'crypto';
 import { createJwtToken, verifyJwtToken } from './jwt.js';
 import { isDeadlineExpired } from '../utils/formatters.js';
@@ -797,6 +797,245 @@ apiRouter.get('/workflows', (_req: Request, res: Response) => {
   });
 
   res.json({ workflows: result });
+});
+
+apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) {
+    return res.status(401).json({ error: 'کاربر احراز هویت نشده است.' });
+  }
+  if (
+    !hasPermission(currentUser, [
+      'workflow.view',
+      'workflow.history.view',
+      'workflow.create',
+      'workflow.edit',
+      'workflow.delete',
+      'workflow.forward',
+      'projects.view',
+    ])
+  ) {
+    return res.status(403).json({ error: 'شما مجوز مشاهده و رهگیری گردش کارها را ندارید.' });
+  }
+
+  const projects = db.prepare(`
+    SELECT p.*, u.name as creatorName, u.username as creatorUsername,
+           uPos.title as creatorPositionTitle,
+           w.title as workflowTitle,
+           pos.title as currentPositionTitle, pos.color as currentPositionColor
+    FROM projects p
+    LEFT JOIN users u ON p.createdById = u.id
+    LEFT JOIN positions uPos ON u.positionId = uPos.id
+    LEFT JOIN workflows w ON p.workflowId = w.id
+    LEFT JOIN positions pos ON p.currentPositionId = pos.id
+    ORDER BY p.createdAt DESC
+  `).all() as any[];
+
+  const allStepsRaw = db.prepare(`
+    SELECT s.*, p.title as positionTitle, p.color as positionColor, ps.title as structureTitle
+    FROM workflow_steps s
+    JOIN positions p ON s.positionId = p.id
+    LEFT JOIN project_structures ps ON s.structureId = ps.id
+    ORDER BY s.stepOrder ASC
+  `).all() as any[];
+
+  const allSteps = allStepsRaw.map((s) => ({
+    ...s,
+    config: parseStepConfig(s.configJson),
+  }));
+
+  const allLogs = db.prepare(`
+    SELECT l.*, u.name as fromUserName, pos.title as toPositionTitle, uPos.title as fromUserPosition
+    FROM workflow_logs l
+    JOIN users u ON l.fromUserId = u.id
+    LEFT JOIN positions uPos ON u.positionId = uPos.id
+    LEFT JOIN positions pos ON l.toPositionId = pos.id
+    ORDER BY l.createdAt ASC
+  `).all() as any[];
+
+  const allUsers = db.prepare(`
+    SELECT u.id, u.username, u.name, u.role, u.positionId, u.avatar, u.phone,
+           p.title as positionTitle, p.color as positionColor
+    FROM users u
+    LEFT JOIN positions p ON u.positionId = p.id
+  `).all() as any[];
+
+  const structAssignments = db.prepare(`
+    SELECT spu.userId, sp.positionId, sp.structureId, ps.title as structureTitle
+    FROM structure_position_users spu
+    JOIN structure_positions sp ON spu.structurePositionId = sp.id
+    LEFT JOIN project_structures ps ON sp.structureId = ps.id
+  `).all() as Array<{ userId: string; positionId: string; structureId: string; structureTitle?: string }>;
+
+  const resolveAssigneesForPosition = (positionId?: string | null, structureId?: string | null) => {
+    if (!positionId) return [];
+    const map = new Map<string, {
+      id: string;
+      name: string;
+      username: string;
+      avatar?: string;
+      phone?: string;
+      role: string;
+      positionTitle?: string;
+      sources: string[];
+    }>();
+
+    // Direct primary position holders
+    for (const u of allUsers) {
+      if (u.positionId === positionId) {
+        map.set(u.id, {
+          id: u.id,
+          name: u.name,
+          username: u.username,
+          avatar: u.avatar,
+          phone: u.phone,
+          role: u.role,
+          positionTitle: u.positionTitle,
+          sources: ['سمت سازمانی اصلی'],
+        });
+      }
+    }
+
+    // Structure-specific position holders
+    for (const sa of structAssignments) {
+      if (sa.positionId === positionId && (!structureId || sa.structureId === structureId)) {
+        const u = allUsers.find((usr) => usr.id === sa.userId);
+        if (!u) continue;
+        const srcLabel = sa.structureTitle ? `ساختار: ${sa.structureTitle}` : 'ساختار سازمانی';
+        const existing = map.get(u.id);
+        if (existing) {
+          if (!existing.sources.includes(srcLabel)) existing.sources.push(srcLabel);
+        } else {
+          map.set(u.id, {
+            id: u.id,
+            name: u.name,
+            username: u.username,
+            avatar: u.avatar,
+            phone: u.phone,
+            role: u.role,
+            positionTitle: u.positionTitle,
+            sources: [srcLabel],
+          });
+        }
+      }
+    }
+
+    return Array.from(map.values());
+  };
+
+  let items = projects.map((prj) => {
+    const effectiveWfId = prj.workflowId || 'wf-standard';
+    const prjStepsRaw = allSteps.filter((s) => s.workflowId === effectiveWfId);
+    const steps = prjStepsRaw.map((st) => ({
+      ...st,
+      assignees: resolveAssigneesForPosition(st.positionId, st.structureId),
+    }));
+    const currentStep = steps.find((s) => s.stepOrder === (prj.currentStepOrder || 1)) || null;
+    const isCompletedOrRejected = prj.status === 'APPROVED' || prj.status === 'REJECTED';
+    const currentAssignees = isCompletedOrRejected
+      ? []
+      : resolveAssigneesForPosition(prj.currentPositionId, currentStep?.structureId || null);
+
+    const logs = allLogs.filter((l) => l.projectId === prj.id);
+    const expired = isDeadlineExpired(prj.deadline);
+
+    return {
+      projectId: prj.id,
+      projectTitle: prj.title,
+      projectCode: prj.code,
+      workflowTrackingCode: prj.workflowTrackingCode || '',
+      productionType: prj.productionType || '',
+      budgetEstimated: prj.budgetEstimated || '',
+      deadline: prj.deadline || '',
+      deliveryDate: prj.deliveryDate || '',
+      isDeadlineExpired: expired,
+      status: prj.status,
+      majorityResult: prj.majorityResult,
+      workflowId: prj.workflowId || effectiveWfId,
+      workflowTitle: prj.workflowTitle || 'گردش کار پیش‌فرض',
+      currentStepOrder: prj.currentStepOrder || 1,
+      totalSteps: steps.length,
+      currentStepTitle: currentStep?.title || '',
+      currentStepActionType: currentStep?.actionType || '',
+      currentStructureId: currentStep?.structureId || null,
+      currentStructureTitle: currentStep?.structureTitle || null,
+      currentPositionId: prj.currentPositionId || null,
+      currentPositionTitle: prj.currentPositionTitle || currentStep?.positionTitle || null,
+      currentPositionColor: prj.currentPositionColor || currentStep?.positionColor || 'indigo',
+      currentAssignees,
+      creatorId: prj.createdById || null,
+      creatorName: prj.creatorName || 'نامشخص',
+      creatorUsername: prj.creatorUsername || '',
+      creatorPositionTitle: prj.creatorPositionTitle || '',
+      createdAt: prj.createdAt,
+      updatedAt: prj.updatedAt,
+      steps,
+      logs,
+    };
+  });
+
+  // Apply optional query filters
+  const qSearch = typeof req.query.search === 'string' ? req.query.search.trim().toLowerCase() : '';
+  const qCode = typeof req.query.code === 'string' ? req.query.code.trim().toLowerCase() : '';
+  const effectiveSearch = qCode || qSearch;
+  const qPersonId = typeof req.query.personId === 'string' ? req.query.personId.trim() : '';
+  const qPersonRole = typeof req.query.personRole === 'string' ? req.query.personRole.trim() : 'CURRENT_ASSIGNEE';
+  const qWorkflowId = typeof req.query.workflowId === 'string' ? req.query.workflowId.trim() : '';
+  const qPositionId = typeof req.query.positionId === 'string' ? req.query.positionId.trim() : '';
+  const qStatus = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+  const qDateFrom = typeof req.query.dateFrom === 'string' ? req.query.dateFrom.trim() : '';
+  const qDateTo = typeof req.query.dateTo === 'string' ? req.query.dateTo.trim() : '';
+  const qDeadlineState = typeof req.query.deadlineState === 'string' ? req.query.deadlineState.trim() : '';
+
+  if (effectiveSearch) {
+    items = items.filter(
+      (it) =>
+        it.workflowTrackingCode.toLowerCase().includes(effectiveSearch) ||
+        it.projectCode.toLowerCase().includes(effectiveSearch) ||
+        it.projectTitle.toLowerCase().includes(effectiveSearch) ||
+        it.workflowTitle.toLowerCase().includes(effectiveSearch) ||
+        it.currentAssignees.some(
+          (a) =>
+            a.name.toLowerCase().includes(effectiveSearch) ||
+            a.username.toLowerCase().includes(effectiveSearch)
+        )
+    );
+  }
+  if (qPersonId) {
+    items = items.filter((it) => {
+      if (qPersonRole === 'CREATOR') return it.creatorId === qPersonId;
+      if (qPersonRole === 'ANY') {
+        return (
+          it.creatorId === qPersonId ||
+          it.currentAssignees.some((a) => a.id === qPersonId) ||
+          it.logs.some((l) => l.fromUserId === qPersonId)
+        );
+      }
+      return it.currentAssignees.some((a) => a.id === qPersonId);
+    });
+  }
+  if (qWorkflowId) {
+    items = items.filter((it) => it.workflowId === qWorkflowId);
+  }
+  if (qPositionId) {
+    items = items.filter((it) => it.currentPositionId === qPositionId);
+  }
+  if (qStatus) {
+    items = items.filter((it) => it.status === qStatus);
+  }
+  if (qDateFrom) {
+    items = items.filter((it) => (it.createdAt || '').slice(0, 10) >= qDateFrom);
+  }
+  if (qDateTo) {
+    items = items.filter((it) => (it.createdAt || '').slice(0, 10) <= qDateTo);
+  }
+  if (qDeadlineState === 'EXPIRED') {
+    items = items.filter((it) => it.isDeadlineExpired);
+  } else if (qDeadlineState === 'ACTIVE') {
+    items = items.filter((it) => !it.isDeadlineExpired);
+  }
+
+  res.json({ items });
 });
 
 apiRouter.post('/workflows', (req: Request, res: Response) => {
@@ -1881,6 +2120,7 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
 
   const id = `prj-${Date.now()}`;
   const prjCode = code && code.trim() ? code.trim() : `PRJ-${Math.floor(1000 + Math.random() * 9000)}`;
+  const workflowTrackingCode = generateUniqueWorkflowTrackingCode();
   const now = new Date().toISOString();
 
   // Resolve target workflow: specified or default workflow in database
@@ -1898,9 +2138,9 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
     db.prepare(`
       INSERT INTO projects (
         id, title, code, description, productionType, location, deadline, deliveryDate, budgetEstimated,
-        status, majorityResult, requirementsJson, createdById, workflowId, currentStepOrder, currentPositionId, createdAt, updatedAt
+        status, majorityResult, requirementsJson, createdById, workflowId, currentStepOrder, currentPositionId, workflowTrackingCode, createdAt, updatedAt
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'IN_REVIEW', 'PENDING', ?, ?, ?, 1, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'IN_REVIEW', 'PENDING', ?, ?, ?, 1, ?, ?, ?, ?)
     `).run(
       id,
       title.trim(),
@@ -1915,6 +2155,7 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
       currentUser.id,
       targetWorkflowId,
       initialPositionId,
+      workflowTrackingCode,
       now,
       now
     );
@@ -1926,7 +2167,7 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
     `).run(
       `msg-${randomUUID().substring(0, 8)}`,
       currentUser.id,
-      `طرح جدید «${title.trim()}» با کد ${prjCode} ثبت شد و در کارتابل ارزیابی تمامی اعضای شورا قرار گرفت.`,
+      `طرح جدید «${title.trim()}» با کد پروژه ${prjCode} و کد رهگیری گردش کار ${workflowTrackingCode} ثبت شد و در کارتابل ارزیابی قرار گرفت.`,
       id,
       now
     );
@@ -1948,7 +2189,7 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
       actor: currentUser,
     }).catch(console.error);
 
-    res.json({ success: true, projectId: id });
+    res.json({ success: true, projectId: id, workflowTrackingCode });
   } catch (err: any) {
     if (err.message && err.message.includes('UNIQUE')) {
       return res.status(400).json({ error: 'کد پروژه تکراری است.' });
