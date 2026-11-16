@@ -91,6 +91,20 @@ export interface DynamicField {
   createdAt: string;
 }
 
+export interface ProjectType {
+  id: string;
+  title: string;
+  description?: string;
+  defaultWorkflowId?: string | null;
+  defaultWorkflowTitle?: string | null;
+  orderIndex: number;
+  isActive: number | boolean;
+  createdAt: string;
+  fieldIds: string[];
+  fieldCount?: number;
+  projectCount?: number;
+}
+
 export interface Vote {
   id: string;
   projectId: string;
@@ -240,6 +254,8 @@ export interface Project {
   code: string;
   description?: string;
   productionType?: string;
+  projectTypeId?: string | null;
+  projectTypeTitle?: string | null;
   location?: string;
   deadline?: string;
   deliveryDate?: string;
@@ -252,6 +268,7 @@ export interface Project {
   creatorName?: string;
   workflowId?: string;
   workflowTitle?: string;
+  hasWorkflow?: boolean;
   currentStepOrder?: number;
   currentPositionId?: string;
   currentPositionIds?: string[];
@@ -261,6 +278,8 @@ export interface Project {
   currentAssignees?: WorkflowTrackingAssignee[];
   currentStepApprovalProgress?: WorkflowStepApprovalProgress | null;
   workflowTrackingCode?: string;
+  workflowParticipatedCount?: number;
+  workflowTotalParticipants?: number;
   isMyWorkflowTurn?: boolean;
   createdAt: string;
   updatedAt: string;

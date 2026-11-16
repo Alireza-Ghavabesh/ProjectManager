@@ -887,16 +887,19 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                     )}
                   </button>
 
-                  {canForwardWorkflow && onOpenWorkflowModalByProjectId && (
-                    <button
-                      type="button"
-                      onClick={() => onOpenWorkflowModalByProjectId(item.projectId)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-2xs transition cursor-pointer"
-                    >
-                      <ArrowLeft className="w-3.5 h-3.5" />
-                      <span>تایید و ارجاع مرحله</span>
-                    </button>
-                  )}
+                  {!isFinished &&
+                    canForwardWorkflow &&
+                    onOpenWorkflowModalByProjectId &&
+                    (item.currentAssignees.some((a) => a.id === currentUser.id) || currentUser.role === 'ADMIN') && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenWorkflowModalByProjectId(item.projectId)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-2xs transition cursor-pointer"
+                      >
+                        <ArrowLeft className="w-3.5 h-3.5" />
+                        <span>تایید و ارجاع مرحله</span>
+                      </button>
+                    )}
                 </div>
 
                 {/* Expanded Roadmap & Transition Logs */}

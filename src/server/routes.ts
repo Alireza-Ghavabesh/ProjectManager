@@ -1375,11 +1375,14 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
   }
 
   const { id: projectId } = req.params;
-  const { action, comment, nextStepOrder, nextPositionId } = req.body;
+  const { action, comment, nextStepOrder, nextPositionId, adminOverride } = req.body;
 
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) as any;
   if (!project) {
     return res.status(404).json({ error: 'پروژه یافت نشد.' });
+  }
+  if (project.status === 'APPROVED' || project.status === 'REJECTED') {
+    return res.status(400).json({ error: 'این پروژه قبلاً در گردش کار نهایی و مختومه شده است.' });
   }
 
   const now = new Date().toISOString();
@@ -1399,7 +1402,7 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
   const currentConfig = parseStepConfig(currentStep?.configJson);
   const currentPosIds = parseStepPositionIds(currentStep);
 
-  // Resolve current step assignees for approval quorum checks (MAJORITY / ALL)
+  // Resolve current step assignees for turn guard & approval quorum checks (MAJORITY / ALL)
   const allUsers = db.prepare(`
     SELECT u.id, u.username, u.name, u.role, u.positionId, p.title as positionTitle
     FROM users u
@@ -1417,6 +1420,23 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
     allUsers,
     structAssignments
   );
+
+  const isAssignee = stepAssignees.some((a) => a.id === currentUser.id);
+  if (!isAssignee) {
+    if (currentUser.role !== 'ADMIN') {
+      const holderNames = stepAssignees.map((a) => a.name).join('، ');
+      return res.status(403).json({
+        error: holderNames
+          ? `نوبت بررسی این مرحله در کارتابل شما نیست. متصدی(ان) فعلی: ${holderNames}`
+          : 'نوبت بررسی این مرحله در کارتابل شما نیست.',
+      });
+    }
+    if (!adminOverride) {
+      return res.status(400).json({
+        error: 'این مرحله در نوبت کارتابل سمت دیگری است؛ برای اقدام مدیریتی خارج از نوبت، گزینه مربوطه را در فرم تایید کنید.',
+      });
+    }
+  }
 
   if (action === 'FORWARD' || action === 'APPROVED') {
     const approvalMode = currentConfig.approvalMode || 'SINGLE';
@@ -1448,7 +1468,12 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
         stepAssignees.length > 0
           ? currentApprovals.filter((a) => assigneeSet.has(a.userId)).length
           : currentApprovals.length;
-      const effectiveApprovedCount = Math.max(matchedApprovalCount, currentApprovals.length);
+      const effectiveApprovedCount =
+        stepAssignees.length > 0
+          ? adminOverride
+            ? Math.max(matchedApprovalCount, currentApprovals.length)
+            : matchedApprovalCount
+          : currentApprovals.length;
       const requiredCount = getRequiredApprovalsForMode(approvalMode, stepAssignees.length);
 
       if (effectiveApprovedCount < requiredCount) {
@@ -2256,6 +2281,199 @@ apiRouter.delete('/dynamic-fields/:id', (req: Request, res: Response) => {
 });
 
 // --------------------------------------------------------------------------
+// 5.5. PROJECT TYPES & LINKED DYNAMIC FIELDS (انواع پروژه و اتصال فیلدها)
+// --------------------------------------------------------------------------
+
+function getProjectTypeWithFields(typeRow: any, allLinks: Array<{ projectTypeId: string; fieldId: string }>) {
+  const fieldIds = allLinks
+    .filter((l) => l.projectTypeId === typeRow.id)
+    .map((l) => l.fieldId);
+  return {
+    ...typeRow,
+    fieldIds,
+    fieldCount: fieldIds.length,
+  };
+}
+
+apiRouter.get('/project-types', (_req: Request, res: Response) => {
+  const rows = db.prepare(`
+    SELECT pt.*, w.title as defaultWorkflowTitle,
+           (SELECT COUNT(*) FROM projects p WHERE p.projectTypeId = pt.id) as projectCount
+    FROM project_types pt
+    LEFT JOIN workflows w ON pt.defaultWorkflowId = w.id
+    ORDER BY pt.orderIndex ASC, pt.title ASC
+  `).all() as any[];
+
+  const links = db.prepare(`
+    SELECT ptf.projectTypeId, ptf.fieldId
+    FROM project_type_fields ptf
+    JOIN dynamic_fields df ON ptf.fieldId = df.id
+    WHERE df.isActive = 1
+    ORDER BY ptf.orderIndex ASC
+  `).all() as Array<{ projectTypeId: string; fieldId: string }>;
+
+  const projectTypes = rows.map((r) => getProjectTypeWithFields(r, links));
+  res.json({ projectTypes });
+});
+
+apiRouter.post('/project-types', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || !hasPermission(currentUser, 'projects.fields.create')) {
+    return res.status(403).json({ error: 'عدم دسترسی: شما مجوز تعریف نوع پروژه جدید را ندارید.' });
+  }
+
+  const { title, description, defaultWorkflowId, isActive, fieldIds } = req.body;
+  if (!title || !String(title).trim()) {
+    return res.status(400).json({ error: 'عنوان نوع پروژه الزامی است.' });
+  }
+
+  const cleanFieldIds = Array.isArray(fieldIds)
+    ? Array.from(new Set(fieldIds.filter((id: any) => typeof id === 'string' && id.trim())))
+    : [];
+
+  const id = `ptype-${randomUUID().substring(0, 8)}`;
+  const now = new Date().toISOString();
+  const maxOrder = (db.prepare('SELECT MAX(orderIndex) as maxO FROM project_types').get() as any)?.maxO || 0;
+
+  try {
+    const tx = db.transaction(() => {
+      db.prepare(`
+        INSERT INTO project_types (id, title, description, defaultWorkflowId, orderIndex, isActive, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        String(title).trim(),
+        description ? String(description).trim() : '',
+        defaultWorkflowId || null,
+        maxOrder + 1,
+        isActive === false || isActive === 0 ? 0 : 1,
+        now
+      );
+
+      const insertLink = db.prepare(`
+        INSERT OR IGNORE INTO project_type_fields (projectTypeId, fieldId, orderIndex)
+        VALUES (?, ?, ?)
+      `);
+      cleanFieldIds.forEach((fid, idx) => {
+        insertLink.run(id, fid, idx);
+      });
+    });
+    tx();
+
+    const createdRow = db.prepare(`
+      SELECT pt.*, w.title as defaultWorkflowTitle, 0 as projectCount
+      FROM project_types pt
+      LEFT JOIN workflows w ON pt.defaultWorkflowId = w.id
+      WHERE pt.id = ?
+    `).get(id) as any;
+
+    res.json({
+      success: true,
+      projectType: {
+        ...createdRow,
+        fieldIds: cleanFieldIds,
+        fieldCount: cleanFieldIds.length,
+      },
+    });
+  } catch (err: any) {
+    if (err.message && err.message.includes('UNIQUE')) {
+      return res.status(400).json({ error: 'این عنوان نوع پروژه قبلاً ثبت شده است.' });
+    }
+    res.status(500).json({ error: 'خطا در ثبت نوع پروژه.' });
+  }
+});
+
+apiRouter.put('/project-types/:id', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || !hasPermission(currentUser, 'projects.fields.edit')) {
+    return res.status(403).json({ error: 'عدم دسترسی: شما مجوز ویرایش نوع پروژه را ندارید.' });
+  }
+
+  const { id } = req.params;
+  const existing = db.prepare('SELECT * FROM project_types WHERE id = ?').get(id) as any;
+  if (!existing) {
+    return res.status(404).json({ error: 'نوع پروژه یافت نشد.' });
+  }
+
+  const { title, description, defaultWorkflowId, isActive, fieldIds } = req.body;
+  if (title !== undefined && !String(title).trim()) {
+    return res.status(400).json({ error: 'عنوان نوع پروژه نمی‌تواند خالی باشد.' });
+  }
+
+  try {
+    const tx = db.transaction(() => {
+      db.prepare(`
+        UPDATE project_types
+        SET title = ?, description = ?, defaultWorkflowId = ?, isActive = ?
+        WHERE id = ?
+      `).run(
+        title !== undefined ? String(title).trim() : existing.title,
+        description !== undefined ? String(description).trim() : existing.description,
+        defaultWorkflowId !== undefined ? (defaultWorkflowId || null) : existing.defaultWorkflowId,
+        isActive !== undefined ? (isActive === false || isActive === 0 ? 0 : 1) : existing.isActive,
+        id
+      );
+
+      if (Array.isArray(fieldIds)) {
+        const cleanFieldIds = Array.from(
+          new Set(fieldIds.filter((fid: any) => typeof fid === 'string' && fid.trim()))
+        );
+        db.prepare('DELETE FROM project_type_fields WHERE projectTypeId = ?').run(id);
+        const insertLink = db.prepare(`
+          INSERT OR IGNORE INTO project_type_fields (projectTypeId, fieldId, orderIndex)
+          VALUES (?, ?, ?)
+        `);
+        cleanFieldIds.forEach((fid, idx) => {
+          insertLink.run(id, fid, idx);
+        });
+      }
+    });
+    tx();
+
+    const updatedRow = db.prepare(`
+      SELECT pt.*, w.title as defaultWorkflowTitle,
+             (SELECT COUNT(*) FROM projects p WHERE p.projectTypeId = pt.id) as projectCount
+      FROM project_types pt
+      LEFT JOIN workflows w ON pt.defaultWorkflowId = w.id
+      WHERE pt.id = ?
+    `).get(id) as any;
+
+    const links = db.prepare(`
+      SELECT projectTypeId, fieldId
+      FROM project_type_fields
+      WHERE projectTypeId = ?
+      ORDER BY orderIndex ASC
+    `).all(id) as Array<{ projectTypeId: string; fieldId: string }>;
+
+    res.json({
+      success: true,
+      projectType: getProjectTypeWithFields(updatedRow, links),
+    });
+  } catch (err: any) {
+    if (err.message && err.message.includes('UNIQUE')) {
+      return res.status(400).json({ error: 'این عنوان نوع پروژه قبلاً ثبت شده است.' });
+    }
+    res.status(500).json({ error: 'خطا در ویرایش نوع پروژه.' });
+  }
+});
+
+apiRouter.delete('/project-types/:id', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || !hasPermission(currentUser, 'projects.fields.delete')) {
+    return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به حذف نوع پروژه نیستید.' });
+  }
+
+  const { id } = req.params;
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE projects SET projectTypeId = NULL WHERE projectTypeId = ?').run(id);
+    db.prepare('DELETE FROM project_type_fields WHERE projectTypeId = ?').run(id);
+    db.prepare('DELETE FROM project_types WHERE id = ?').run(id);
+  });
+  tx();
+  res.json({ success: true });
+});
+
+// --------------------------------------------------------------------------
 // 6. PROJECTS & CARTABLE (پروژه‌ها و کارتابل با پشتیبانی از گردش کار و محرمانگی)
 // --------------------------------------------------------------------------
 
@@ -2271,11 +2489,13 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
 
   const projects = db.prepare(`
     SELECT p.*, u.name as creatorName, w.title as workflowTitle,
-           pos.title as currentPositionTitle, pos.color as currentPositionColor
+           pos.title as currentPositionTitle, pos.color as currentPositionColor,
+           COALESCE(pt.title, p.productionType) as projectTypeTitle
     FROM projects p
     LEFT JOIN users u ON p.createdById = u.id
     LEFT JOIN workflows w ON p.workflowId = w.id
     LEFT JOIN positions pos ON p.currentPositionId = pos.id
+    LEFT JOIN project_types pt ON p.projectTypeId = pt.id
     ORDER BY p.createdAt DESC
   `).all() as any[];
 
@@ -2290,7 +2510,7 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
     ORDER BY a.createdAt DESC
   `).all() as any[];
 
-  // Pre-fetch workflow steps and logs
+  // Pre-fetch workflow steps, approvals, and logs
   const allStepsRaw = db.prepare(`
     SELECT s.*, p.title as positionTitle, p.color as positionColor, ps.title as structureTitle
     FROM workflow_steps s
@@ -2298,6 +2518,10 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
     LEFT JOIN project_structures ps ON s.structureId = ps.id
     ORDER BY s.stepOrder ASC
   `).all() as any[];
+
+  const allStepApprovals = db.prepare(`
+    SELECT projectId, stepOrder, userId FROM workflow_step_approvals
+  `).all() as Array<{ projectId: string; stepOrder: number; userId: string }>;
 
   const posMap = getPositionsLookupMap();
   const allSteps = allStepsRaw.map((s) => enrichStepObject(s, posMap));
@@ -2330,6 +2554,15 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
   `).all() as Array<{ userId: string; positionId: string; structureId: string; structureTitle?: string }>;
 
   const userStructureAssignments = allStructAssignments.filter((sa) => sa.userId === currentUser.id);
+  const WORKFLOW_PARTICIPATION_ACTIONS = new Set([
+    'FORWARD',
+    'STEP_APPROVED',
+    'APPROVED',
+    'FINAL_APPROVED',
+    'MANUAL_APPROVED',
+    'NEEDS_REVISION',
+    'REJECTED',
+  ]);
 
   const result = projects.map((prj) => {
     let requirements = {};
@@ -2340,7 +2573,8 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
     }
 
     const majorityInfo = calculateMajorityForProject(prj.id);
-    const prjSteps = allSteps.filter((s) => s.workflowId === (prj.workflowId || 'wf-standard'));
+    const prjSteps = prj.workflowId ? allSteps.filter((s) => s.workflowId === prj.workflowId) : [];
+    const hasWorkflow = Boolean(prj.workflowId && prjSteps.length > 0);
     const prjLogs = allLogs.filter((l) => l.projectId === prj.id);
     const prjAttachments = allAttachments.filter((a) => a.projectId === prj.id);
 
@@ -2394,11 +2628,41 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
           (!currentStepObj?.structureId || a.structureId === currentStepObj.structureId)
       )
     );
-    const isMyWorkflowTurn = isDirectPosMatch || isStructPosMatch;
+    const isMyWorkflowTurn = hasWorkflow && (isDirectPosMatch || isStructPosMatch);
 
-    // Dynamic expected voters: count of positions/steps in this project's specific workflow
-    const workflowStepCount = prjSteps.length;
-    const projectExpectedVoters = workflowStepCount > 0 ? workflowStepCount : (totalCouncilCount || 4);
+    // Accurate deduplicated participant count across ALL positions in all workflow steps
+    const workflowParticipantIds = new Set<string>();
+    for (const st of prjSteps) {
+      const stAssignees = resolveAssigneesForStepPositions(
+        st.positionIds || [],
+        st.structureId || null,
+        allUsers,
+        allStructAssignments,
+        posMap
+      );
+      for (const a of stAssignees) {
+        workflowParticipantIds.add(a.id);
+      }
+    }
+    const workflowTotalParticipants = workflowParticipantIds.size;
+
+    // Count unique users who have actually performed a workflow action on this project
+    const participatedUserIds = new Set<string>();
+    for (const l of prjLogs) {
+      if (WORKFLOW_PARTICIPATION_ACTIONS.has(l.action) && l.fromUserId) {
+        participatedUserIds.add(l.fromUserId);
+      }
+    }
+    for (const sa of allStepApprovals) {
+      if (sa.projectId === prj.id && sa.userId) {
+        participatedUserIds.add(sa.userId);
+      }
+    }
+    const workflowParticipatedCount = participatedUserIds.size;
+
+    const projectExpectedVoters = hasWorkflow
+      ? workflowTotalParticipants
+      : (totalCouncilCount || 4);
     const expired = isDeadlineExpired(prj.deadline);
 
     // Always include currentUser's own vote so anyone with voting.cast (including senior admins) can vote & edit
@@ -2423,6 +2687,11 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
 
       return {
         ...prj,
+        hasWorkflow,
+        projectTypeId: prj.projectTypeId || null,
+        projectTypeTitle: prj.projectTypeTitle || prj.productionType || '',
+        workflowParticipatedCount,
+        workflowTotalParticipants,
         currentPositionIds,
         currentPositions,
         currentPositionTitle,
@@ -2447,6 +2716,11 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
       // Standard Council Member (CONFIDENTIALITY ENFORCED)
       return {
         ...prj,
+        hasWorkflow,
+        projectTypeId: prj.projectTypeId || null,
+        projectTypeTitle: prj.projectTypeTitle || prj.productionType || '',
+        workflowParticipatedCount,
+        workflowTotalParticipants,
         currentPositionIds,
         currentPositions,
         currentPositionTitle,
@@ -2478,10 +2752,22 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
     return res.status(403).json({ error: 'شما مجاز به ایجاد پروژه جدید نیستید.' });
   }
 
-  const { title, code, description, productionType, location, deadline, deliveryDate, budgetEstimated, requirements, workflowId, status: requestedStatus } = req.body;
+  const { title, code, description, productionType, projectTypeId, location, deadline, deliveryDate, budgetEstimated, requirements, workflowId, status: requestedStatus } = req.body;
   if (!title || !title.trim()) {
     return res.status(400).json({ error: 'نام پروژه الزامی است.' });
   }
+
+  let resolvedProductionType = productionType ? String(productionType).trim() : '';
+  let resolvedProjectTypeId: string | null = projectTypeId || null;
+  if (resolvedProjectTypeId) {
+    const ptRow = db.prepare('SELECT id, title FROM project_types WHERE id = ?').get(resolvedProjectTypeId) as any;
+    if (ptRow) {
+      if (!resolvedProductionType) resolvedProductionType = ptRow.title;
+    } else {
+      resolvedProjectTypeId = null;
+    }
+  }
+  if (!resolvedProductionType) resolvedProductionType = 'طرح عمومی شورا';
 
   const id = `prj-${Date.now()}`;
   const prjCode = code && code.trim() ? code.trim() : `PRJ-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -2510,16 +2796,17 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
   try {
     db.prepare(`
       INSERT INTO projects (
-        id, title, code, description, productionType, location, deadline, deliveryDate, budgetEstimated,
+        id, title, code, description, productionType, projectTypeId, location, deadline, deliveryDate, budgetEstimated,
         status, majorityResult, requirementsJson, createdById, workflowId, currentStepOrder, currentPositionId, workflowTrackingCode, createdAt, updatedAt
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, 1, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, 1, ?, ?, ?, ?)
     `).run(
       id,
       title.trim(),
       prjCode,
       description || '',
-      productionType || 'طرح عمومی شورا',
+      resolvedProductionType,
+      resolvedProjectTypeId,
       location || '',
       deadline || '',
       deliveryDate || '',
@@ -2590,8 +2877,8 @@ apiRouter.put('/projects/:id', (req: Request, res: Response) => {
   }
 
   const { id } = req.params;
-  const prevProject = db.prepare('SELECT id, title, status, deadline, workflowId, currentStepOrder, currentPositionId FROM projects WHERE id = ?').get(id) as any;
-  const { title, code, description, productionType, location, deadline, deliveryDate, budgetEstimated, requirements, status, workflowId } = req.body;
+  const prevProject = db.prepare('SELECT id, title, status, deadline, workflowId, currentStepOrder, currentPositionId, projectTypeId FROM projects WHERE id = ?').get(id) as any;
+  const { title, code, description, productionType, projectTypeId, location, deadline, deliveryDate, budgetEstimated, requirements, status, workflowId } = req.body;
 
   // Guard: Manual final approval of workflow projects requires explicit projects.manual_approve permission (even for ADMIN)
   if (status === 'APPROVED' && prevProject?.status !== 'APPROVED') {
@@ -2604,19 +2891,42 @@ apiRouter.put('/projects/:id', (req: Request, res: Response) => {
     }
   }
 
+  let resolvedProjectTypeId = projectTypeId !== undefined ? (projectTypeId || null) : prevProject?.projectTypeId || null;
+  let resolvedProductionType = productionType !== undefined ? String(productionType || '') : undefined;
+  if (resolvedProjectTypeId) {
+    const ptRow = db.prepare('SELECT id, title FROM project_types WHERE id = ?').get(resolvedProjectTypeId) as any;
+    if (ptRow) {
+      if (!resolvedProductionType) resolvedProductionType = ptRow.title;
+    } else {
+      resolvedProjectTypeId = null;
+    }
+  }
+
   const now = new Date().toISOString();
+  const isWorkflowChanged = Boolean(workflowId && prevProject && workflowId !== prevProject.workflowId);
+
+  let nextStepOrder = prevProject?.currentStepOrder || 1;
+  let nextPositionId = prevProject?.currentPositionId || null;
+  if (isWorkflowChanged) {
+    nextStepOrder = 1;
+    const firstStep = db.prepare('SELECT positionId, positionIdsJson FROM workflow_steps WHERE workflowId = ? ORDER BY stepOrder ASC LIMIT 1').get(workflowId) as any;
+    const firstPosIds = parseStepPositionIds(firstStep);
+    nextPositionId = firstPosIds[0] || firstStep?.positionId || null;
+    db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ?').run(id);
+  }
 
   db.prepare(`
     UPDATE projects
-    SET title = ?, code = ?, description = ?, productionType = ?, location = ?,
+    SET title = ?, code = ?, description = ?, productionType = COALESCE(?, productionType), projectTypeId = ?, location = ?,
         deadline = ?, deliveryDate = ?, budgetEstimated = ?, requirementsJson = ?, status = COALESCE(?, status),
-        workflowId = COALESCE(?, workflowId), updatedAt = ?
+        workflowId = COALESCE(?, workflowId), currentStepOrder = ?, currentPositionId = ?, updatedAt = ?
     WHERE id = ?
   `).run(
     title,
     code,
     description || '',
-    productionType || '',
+    resolvedProductionType !== undefined ? resolvedProductionType : null,
+    resolvedProjectTypeId,
     location || '',
     deadline || '',
     deliveryDate || '',
@@ -2624,6 +2934,8 @@ apiRouter.put('/projects/:id', (req: Request, res: Response) => {
     JSON.stringify(requirements || {}),
     status || null,
     workflowId || null,
+    nextStepOrder,
+    nextPositionId,
     now,
     id
   );
@@ -2644,17 +2956,17 @@ apiRouter.put('/projects/:id', (req: Request, res: Response) => {
     if ((deadline || '') !== (prevProject.deadline || '')) {
       changes.push(`بروزرسانی مهلت ارزیابی به «${deadline || 'بدون مهلت'}»`);
     }
-    if (workflowId && workflowId !== prevProject.workflowId) {
-      changes.push('تغییر فرآیند گردش کار');
+    if (isWorkflowChanged) {
+      changes.push('تغییر فرآیند گردش کار و بازگشت به گام اول');
     }
     if (title && title !== prevProject.title) {
       changes.push(`تغییر عنوان به «${title}»`);
     }
     recordProjectHistory({
       projectId: id,
-      stepOrder: prevProject.currentStepOrder || 1,
+      stepOrder: nextStepOrder,
       fromUserId: currentUser.id,
-      toPositionId: prevProject.currentPositionId || null,
+      toPositionId: nextPositionId,
       action: isStatusChanged ? 'STATUS_CHANGED' : 'PROJECT_EDITED',
       comment: changes.length > 0 ? changes.join(' • ') : `ویرایش مشخصات پروژه «${title || prevProject.title}»`,
       createdAt: now,
@@ -3126,9 +3438,19 @@ apiRouter.post('/projects/:id/vote', (req: Request, res: Response) => {
     });
   }
 
-  const project = db.prepare('SELECT id, title, deadline FROM projects WHERE id = ?').get(projectId) as any;
+  const project = db.prepare('SELECT id, title, deadline, workflowId FROM projects WHERE id = ?').get(projectId) as any;
   if (!project) {
     return res.status(404).json({ error: 'پروژه مورد نظر یافت نشد.' });
+  }
+
+  // Enforce: Workflow-governed projects must be reviewed via workflow transitions, NOT separate council voting
+  const wfStepsCount = project.workflowId
+    ? ((db.prepare('SELECT count(*) as count FROM workflow_steps WHERE workflowId = ?').get(project.workflowId) as any)?.count || 0)
+    : 0;
+  if (wfStepsCount > 0) {
+    return res.status(400).json({
+      error: 'این پروژه دارای گردش کار است و تمام اقدامات و تاییدها باید صرفاً از طریق مراحل گردش کار ثبت شود.',
+    });
   }
 
   // Enforce evaluation deadline check based on system settings

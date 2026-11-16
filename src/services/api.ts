@@ -1,4 +1,4 @@
-import { Position, User, DynamicField, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowLog, WorkflowTrackingItem, ProjectStructure, StructurePositionNode, ProjectAttachment, SystemSetting, PasswordResetRequest, SmsRule, SmsLog, PublicSettings, UploadProgressInfo } from '../types';
+import { Position, User, DynamicField, ProjectType, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowLog, WorkflowTrackingItem, ProjectStructure, StructurePositionNode, ProjectAttachment, SystemSetting, PasswordResetRequest, SmsRule, SmsLog, PublicSettings, UploadProgressInfo } from '../types';
 
 class ApiService {
   getToken(): string | null {
@@ -462,7 +462,7 @@ class ApiService {
     }
   }
 
-  async transitionWorkflow(projectId: string, payload: { action: string; comment?: string; nextStepOrder?: number; nextPositionId?: string }) {
+  async transitionWorkflow(projectId: string, payload: { action: string; comment?: string; nextStepOrder?: number; nextPositionId?: string; adminOverride?: boolean }) {
     const res = await fetch(`/api/projects/${projectId}/workflow-transition`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
@@ -544,6 +544,49 @@ class ApiService {
     if (!res.ok) {
       const data = await res.json();
       throw new Error(data.error || 'خطا در حذف فیلد');
+    }
+  }
+
+  // Project Types & Field Linking
+  async getProjectTypes(): Promise<ProjectType[]> {
+    const res = await fetch('/api/project-types', {
+      headers: this.getAuthHeader(),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.projectTypes || [];
+  }
+
+  async createProjectType(payload: { title: string; description?: string; defaultWorkflowId?: string | null; isActive?: boolean; fieldIds: string[] }): Promise<ProjectType> {
+    const res = await fetch('/api/project-types', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'خطا در ثبت نوع پروژه');
+    return data.projectType;
+  }
+
+  async updateProjectType(id: string, payload: { title?: string; description?: string; defaultWorkflowId?: string | null; isActive?: boolean; fieldIds?: string[] }): Promise<ProjectType> {
+    const res = await fetch(`/api/project-types/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'خطا در ویرایش نوع پروژه');
+    return data.projectType;
+  }
+
+  async deleteProjectType(id: string): Promise<void> {
+    const res = await fetch(`/api/project-types/${id}`, {
+      method: 'DELETE',
+      headers: this.getAuthHeader(),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'خطا در حذف نوع پروژه');
     }
   }
 

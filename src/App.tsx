@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User, Project, DynamicField, Position, DashboardStats, ProjectStructure, Workflow, PasswordResetRequest, PublicSettings } from './types';
+import { User, Project, DynamicField, ProjectType, Position, DashboardStats, ProjectStructure, Workflow, PasswordResetRequest, PublicSettings } from './types';
 import { api } from './services/api';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -48,6 +48,7 @@ export default function App() {
   // App Data
   const [projects, setProjects] = useState<Project[]>([]);
   const [dynamicFields, setDynamicFields] = useState<DynamicField[]>([]);
+  const [projectTypes, setProjectTypes] = useState<ProjectType[]>([]);
   const [projectStructures, setProjectStructures] = useState<ProjectStructure[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -221,8 +222,12 @@ export default function App() {
   const refreshDynamicFieldsData = async () => {
     if (!currentUser) return;
     try {
-      const flds = await api.getDynamicFields().catch(() => null);
+      const [flds, pTypes] = await Promise.all([
+        api.getDynamicFields().catch(() => null),
+        api.getProjectTypes().catch(() => null),
+      ]);
       if (flds) setDynamicFields(flds);
+      if (pTypes) setProjectTypes(pTypes);
     } catch (err) {
       console.error('Error refreshing dynamic fields:', err);
     }
@@ -238,9 +243,10 @@ export default function App() {
         ? api.getPasswordResetRequests().catch(() => [])
         : Promise.resolve([]);
 
-      const [prjs, flds, structs, usrs, pos, st, wfs, me, resets] = await Promise.all([
+      const [prjs, flds, pTypes, structs, usrs, pos, st, wfs, me, resets] = await Promise.all([
         api.getProjects().catch(() => []),
         api.getDynamicFields().catch(() => []),
+        api.getProjectTypes().catch(() => []),
         api.getProjectStructures().catch(() => []),
         api.getUsers().catch(() => []),
         api.getPositions().catch(() => []),
@@ -251,6 +257,7 @@ export default function App() {
       ]);
       setProjects(prjs);
       setDynamicFields(flds);
+      setProjectTypes(pTypes);
       setProjectStructures(structs);
       setUsers(usrs);
       setPositions(pos);
@@ -318,7 +325,7 @@ export default function App() {
   useEffect(() => {
     if (!currentUser || activeTab === 'smstest') return;
     const tabPermissions: Array<{ tab: typeof activeTab; perms: string[] }> = [
-      { tab: 'projects', perms: ['projects.view', 'projects.create', 'projects.edit', 'projects.delete', 'voting.cast', 'voting.confidential.view_all'] },
+      { tab: 'projects', perms: ['projects.view', 'projects.create', 'projects.edit', 'projects.delete', 'workflow.forward', 'voting.cast', 'voting.confidential.view_all'] },
       { tab: 'structures', perms: ['structures.view', 'structures.create', 'structures.edit', 'structures.delete'] },
       { tab: 'workflows', perms: ['workflow.view', 'workflow.history.view', 'workflow.forward', 'workflow.create', 'workflow.edit', 'workflow.delete'] },
       { tab: 'users', perms: ['system.users.view', 'system.users.create', 'system.users.edit', 'system.users.delete', 'system.permissions.manage', 'org.positions.view', 'org.positions.create', 'org.positions.edit', 'org.positions.delete'] },
@@ -360,6 +367,9 @@ export default function App() {
     return <LoginModal onSuccess={(user) => setCurrentUser(user)} />;
   }
 
+  const isWorkflowProject = (p: Project) =>
+    Boolean(p.hasWorkflow || p.workflowId || (p.workflowSteps && p.workflowSteps.length > 0));
+
   // Filtered projects
   const filteredProjects = projects.filter((p) => {
     const matchesSearch =
@@ -367,13 +377,20 @@ export default function App() {
       p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       p.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (p.workflowTrackingCode && p.workflowTrackingCode.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (p.projectTypeTitle && p.projectTypeTitle.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (p.productionType && p.productionType.toLowerCase().includes(searchQuery.toLowerCase()));
 
     if (!matchesSearch) return false;
 
     if (statusFilter === 'ALL') return true;
     if (statusFilter === 'MY_TURN') return Boolean(p.isMyWorkflowTurn);
-    if (statusFilter === 'PENDING_MY_VOTE') return !p.hasVoted;
+    if (statusFilter === 'PENDING_MY_VOTE') return !isWorkflowProject(p) && !p.hasVoted;
+    if (statusFilter === 'APPROVED' || statusFilter === 'NEEDS_REVISION' || statusFilter === 'REJECTED') {
+      if (isWorkflowProject(p)) {
+        return p.status === statusFilter;
+      }
+      return p.majorityResult === statusFilter;
+    }
     return p.majorityResult === statusFilter;
   });
 
@@ -383,7 +400,9 @@ export default function App() {
   const canViewConfidentialVotes = hasPerm(currentUser, 'voting.confidential.view_all');
   const canManagePasswordResets = hasPerm(currentUser, 'system.users.edit');
 
-  const pendingVotesCount = canViewProjects && canCastVote ? projects.filter((p) => !p.hasVoted).length : 0;
+  const hasNonWorkflowProjects = projects.some((p) => !isWorkflowProject(p));
+  const pendingVotesCount =
+    canViewProjects && canCastVote ? projects.filter((p) => !isWorkflowProject(p) && !p.hasVoted).length : 0;
   const myTurnCount = canViewProjects ? projects.filter((p) => Boolean(p.isMyWorkflowTurn)).length : 0;
   const pendingResetRequests = resetRequests.filter((r) => r.status === 'PENDING');
 
@@ -609,7 +628,7 @@ export default function App() {
                     نوبت کارتابل من ({myTurnCount})
                   </button>
 
-                  {canCastVote && (
+                  {canCastVote && hasNonWorkflowProjects && (
                     <button
                       onClick={() => setStatusFilter('PENDING_MY_VOTE')}
                       className={`px-3 py-1.5 rounded-xl font-semibold transition whitespace-nowrap cursor-pointer ${
@@ -630,7 +649,7 @@ export default function App() {
                         : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                     }`}
                   >
-                    اکثریت موافق (تایید)
+                    تصویب نهایی
                   </button>
 
                   <button
@@ -641,7 +660,7 @@ export default function App() {
                         : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                     }`}
                   >
-                    اکثریت نیازمند اصلاح
+                    نیازمند اصلاح
                   </button>
 
                   <button
@@ -652,7 +671,7 @@ export default function App() {
                         : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                     }`}
                   >
-                    اکثریت مخالف (رد)
+                    رد شده
                   </button>
                 </div>
               </div>
@@ -724,7 +743,7 @@ export default function App() {
                   <div className="hidden lg:grid lg:grid-cols-12 gap-3 px-4 py-2 rounded-xl bg-slate-100/80 border border-slate-200/80 text-[11px] font-bold text-slate-600">
                     <div className="lg:col-span-5">عنوان و کد پروژه</div>
                     <div className="lg:col-span-2">مرحله گردش کار</div>
-                    <div className="lg:col-span-2">وضعیت اکثریت و آرا</div>
+                    <div className="lg:col-span-2">وضعیت و مشارکت</div>
                     <div className="lg:col-span-1">مهلت و برآورد</div>
                     <div className="lg:col-span-2 text-left">اقدام سریع</div>
                   </div>
@@ -797,10 +816,12 @@ export default function App() {
             />
           )}
 
-          {/* ===================== TAB: DYNAMIC FIELDS BUILDER ===================== */}
+          {/* ===================== TAB: DYNAMIC FIELDS BUILDER & PROJECT TYPES ===================== */}
           {activeTab === 'fields' && (
             <DynamicFieldsManager
               fields={dynamicFields}
+              projectTypes={projectTypes}
+              workflows={workflows}
               currentUser={currentUser}
               onRefresh={refreshDynamicFieldsData}
             />
@@ -872,6 +893,7 @@ export default function App() {
       {showCreateModal && (
         <CreateProjectModal
           dynamicFields={dynamicFields}
+          projectTypes={projectTypes}
           currentUser={currentUser}
           onClose={() => {
             setShowCreateModal(false);

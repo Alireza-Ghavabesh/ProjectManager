@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { DynamicField, User } from '../types';
+import { DynamicField, ProjectType, User, Workflow } from '../types';
 import { api } from '../services/api';
 import { formatBudgetDisplay, formatCurrencyInput } from '../utils/formatters';
 import { hasPerm } from '../utils/permissions';
@@ -21,10 +21,17 @@ import {
   Coins,
   Type,
   ListChecks,
+  FolderKanban,
+  GitBranch,
+  Link2,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
 
 interface DynamicFieldsManagerProps {
   fields: DynamicField[];
+  projectTypes?: ProjectType[];
+  workflows?: Workflow[];
   currentUser: User;
   onRefresh: () => void;
 }
@@ -57,10 +64,14 @@ const FIELD_TYPE_META: Record<
 
 export const DynamicFieldsManager: React.FC<DynamicFieldsManagerProps> = ({
   fields,
+  projectTypes = [],
+  workflows = [],
   currentUser,
   onRefresh,
 }) => {
-  // Add / Edit Modal State
+  const [activeSubTab, setActiveSubTab] = useState<'fields' | 'types'>('fields');
+
+  // Add / Edit Dynamic Field Modal State
   const [modalOpen, setModalOpen] = useState(false);
   const [editingField, setEditingField] = useState<DynamicField | null>(null);
   const [name, setName] = useState('');
@@ -73,6 +84,17 @@ export const DynamicFieldsManager: React.FC<DynamicFieldsManagerProps> = ({
   const [required, setRequired] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Project Type Modal State
+  const [typeModalOpen, setTypeModalOpen] = useState(false);
+  const [editingType, setEditingType] = useState<ProjectType | null>(null);
+  const [typeTitle, setTypeTitle] = useState('');
+  const [typeDescription, setTypeDescription] = useState('');
+  const [typeDefaultWorkflowId, setTypeDefaultWorkflowId] = useState<string>('');
+  const [typeIsActive, setTypeIsActive] = useState(true);
+  const [selectedFieldIds, setSelectedFieldIds] = useState<string[]>([]);
+  const [typeSaving, setTypeSaving] = useState(false);
+  const [typeError, setTypeError] = useState('');
 
   // Preview Toggle
   const [showPreview, setShowPreview] = useState(false);
@@ -123,6 +145,17 @@ export const DynamicFieldsManager: React.FC<DynamicFieldsManagerProps> = ({
     }
     return false;
   };
+
+  const collectDescendantIds = (fieldId: string): string[] => {
+    const result: string[] = [fieldId];
+    const children = fields.filter((f) => f.parentId === fieldId);
+    for (const ch of children) {
+      result.push(...collectDescendantIds(ch.id));
+    }
+    return result;
+  };
+
+  // ==================== FIELD CRUD HANDLERS ====================
 
   const handleOpenAdd = (initialParentId: string | null = null) => {
     setEditingField(null);
@@ -237,6 +270,85 @@ export const DynamicFieldsManager: React.FC<DynamicFieldsManagerProps> = ({
       onRefresh();
     } catch (err: any) {
       showToast('error', err.message || 'خطا در حذف فیلد');
+    }
+  };
+
+  // ==================== PROJECT TYPE CRUD HANDLERS ====================
+
+  const handleOpenAddType = () => {
+    setEditingType(null);
+    setTypeTitle('');
+    setTypeDescription('');
+    setTypeDefaultWorkflowId('');
+    setTypeIsActive(true);
+    setSelectedFieldIds([]);
+    setTypeError('');
+    setTypeModalOpen(true);
+  };
+
+  const handleOpenEditType = (pt: ProjectType) => {
+    setEditingType(pt);
+    setTypeTitle(pt.title);
+    setTypeDescription(pt.description || '');
+    setTypeDefaultWorkflowId(pt.defaultWorkflowId || '');
+    setTypeIsActive(pt.isActive !== 0 && pt.isActive !== false);
+    setSelectedFieldIds(Array.isArray(pt.fieldIds) ? [...pt.fieldIds] : []);
+    setTypeError('');
+    setTypeModalOpen(true);
+  };
+
+  const toggleTypeFieldSelection = (field: DynamicField) => {
+    const isCurrentlySelected = selectedFieldIds.includes(field.id);
+    const branchIds = collectDescendantIds(field.id);
+    if (isCurrentlySelected) {
+      const removeSet = new Set(branchIds);
+      setSelectedFieldIds((prev) => prev.filter((id) => !removeSet.has(id)));
+    } else {
+      setSelectedFieldIds((prev) => Array.from(new Set([...prev, ...branchIds])));
+    }
+  };
+
+  const handleSaveProjectType = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!typeTitle.trim()) {
+      setTypeError('عنوان نوع پروژه الزامی است.');
+      return;
+    }
+
+    setTypeSaving(true);
+    setTypeError('');
+    try {
+      const payload = {
+        title: typeTitle.trim(),
+        description: typeDescription.trim(),
+        defaultWorkflowId: typeDefaultWorkflowId || null,
+        isActive: typeIsActive,
+        fieldIds: selectedFieldIds,
+      };
+      if (editingType) {
+        await api.updateProjectType(editingType.id, payload);
+        showToast('success', `نوع پروژه «${typeTitle.trim()}» و فیلدهای متصل ذخیره شد.`);
+      } else {
+        await api.createProjectType(payload);
+        showToast('success', `نوع پروژه «${typeTitle.trim()}» ایجاد شد.`);
+      }
+      setTypeModalOpen(false);
+      onRefresh();
+    } catch (err: any) {
+      setTypeError(err.message || 'خطا در ذخیره نوع پروژه');
+    } finally {
+      setTypeSaving(false);
+    }
+  };
+
+  const handleDeleteProjectType = async (pt: ProjectType) => {
+    if (!confirm(`آیا از حذف نوع پروژه «${pt.title}» اطمینان دارید؟`)) return;
+    try {
+      await api.deleteProjectType(pt.id);
+      showToast('success', `نوع پروژه «${pt.title}» حذف شد.`);
+      onRefresh();
+    } catch (err: any) {
+      showToast('error', err.message || 'خطا در حذف نوع پروژه');
     }
   };
 
@@ -545,48 +657,141 @@ export const DynamicFieldsManager: React.FC<DynamicFieldsManagerProps> = ({
     </div>
   );
 
+  // Recursive Checkbox Tree Renderer for Project Type Linking
+  const renderFieldChecklistNode = (fld: DynamicField, depth: number = 0) => {
+    const checked = selectedFieldIds.includes(fld.id);
+    const typeMeta = FIELD_TYPE_META[fld.fieldType] || FIELD_TYPE_META.number;
+    return (
+      <div key={fld.id} className="space-y-1.5">
+        <label
+          style={{ marginRight: `${depth * 20}px` }}
+          className={`flex items-center justify-between gap-2 p-2.5 rounded-xl border cursor-pointer transition ${
+            checked
+              ? 'bg-indigo-50/80 border-indigo-400 text-indigo-950'
+              : 'bg-white border-slate-200 hover:border-slate-300 text-slate-700'
+          }`}
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={() => toggleTypeFieldSelection(fld)}
+              className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 shrink-0"
+            />
+            <span className="text-xs font-bold truncate">{fld.name}</span>
+            {fld.unit && (
+              <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">
+                {fld.unit}
+              </span>
+            )}
+          </div>
+          <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded border shrink-0 ${typeMeta.badgeClass}`}>
+            {typeMeta.icon}
+            {typeMeta.label}
+          </span>
+        </label>
+
+        {fld.children && fld.children.length > 0 && (
+          <div className="space-y-1.5 pr-3 border-r-2 border-indigo-200">
+            {fld.children.map((ch) => renderFieldChecklistNode(ch, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
-      {/* Top Banner */}
-      <div className="p-5 sm:p-6 rounded-3xl bg-indigo-50/70 border border-indigo-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 mb-1.5">
-            <span className="p-1.5 rounded-xl bg-indigo-100 text-indigo-700">
-              <Sliders className="w-5 h-5" />
-            </span>
-            <h2 className="text-lg font-bold text-slate-900">
-              مدیریت و ساختار درختی فیلدهای پویای پروژه
-            </h2>
+      {/* Top Banner + Sub-tabs */}
+      <div className="p-5 sm:p-6 rounded-3xl bg-indigo-50/70 border border-indigo-100 space-y-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="p-1.5 rounded-xl bg-indigo-100 text-indigo-700">
+                {activeSubTab === 'fields' ? <Sliders className="w-5 h-5" /> : <FolderKanban className="w-5 h-5" />}
+              </span>
+              <h2 className="text-lg font-bold text-slate-900">
+                {activeSubTab === 'fields'
+                  ? 'مدیریت و ساختار درختی فیلدهای پویای پروژه'
+                  : 'تعریف انواع پروژه و اتصال فیلدهای اختصاصی'}
+              </h2>
+            </div>
+            <p className="text-xs text-slate-600 max-w-2xl leading-relaxed">
+              {activeSubTab === 'fields'
+                ? 'هر فیلد را بسازید و با کشیدن و رها کردن (درگ‌اند‌دراپ) مشخص کنید چه فیلدهایی زیرمجموعه یا ویژگی یک فیلد دیگر باشند.'
+                : 'انواع مختلف پروژه (مثلاً مستند، برنامه استودیویی، طرح عمرانی...) را تعریف کنید و مشخص نمایید هنگام ثبت هر نوع پروژه دقیقاً کدام فیلدها نمایش داده شوند.'}
+            </p>
           </div>
-          <p className="text-xs text-slate-600 max-w-2xl leading-relaxed">
-            هر فیلد را بسازید و با <strong>کشیدن و رها کردن (درگ‌اند‌دراپ)</strong> مشخص کنید چه فیلدهایی زیرمجموعه یا ویژگی یک فیلد دیگر باشند (مثلاً «هزینه دستمزد» و «ساعات کار» زیرمجموعه «تعداد تصویربردار»).
-          </p>
+
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            {activeSubTab === 'fields' ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowPreview(!showPreview)}
+                  className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl border text-xs font-bold transition cursor-pointer ${
+                    showPreview
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <Eye className="w-4 h-4" />
+                  <span>{showPreview ? 'بستن پیش‌نمایش فرم' : 'پیش‌نمایش فرم پروژه'}</span>
+                </button>
+
+                {canCreateField && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenAdd(null)}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>تعریف فیلد جدید</span>
+                  </button>
+                )}
+              </>
+            ) : (
+              canCreateField && (
+                <button
+                  type="button"
+                  onClick={handleOpenAddType}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>تعریف نوع پروژه جدید</span>
+                </button>
+              )
+            )}
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+        {/* Sub-Tabs Navigation */}
+        <div className="flex items-center gap-2 pt-2 border-t border-indigo-200/60 flex-wrap">
           <button
             type="button"
-            onClick={() => setShowPreview(!showPreview)}
-            className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl border text-xs font-bold transition cursor-pointer ${
-              showPreview
-                ? 'bg-emerald-600 text-white border-emerald-600'
-                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+            onClick={() => setActiveSubTab('fields')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-xs font-bold transition cursor-pointer ${
+              activeSubTab === 'fields'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
             }`}
           >
-            <Eye className="w-4 h-4" />
-            <span>{showPreview ? 'بستن پیش‌نمایش فرم' : 'پیش‌نمایش فرم پروژه'}</span>
+            <Sliders className="w-4 h-4" />
+            <span>فیلدهای پویا ({fields.length})</span>
           </button>
 
-          {canCreateField && (
-            <button
-              type="button"
-              onClick={() => handleOpenAdd(null)}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>تعریف فیلد جدید</span>
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('types')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-xs font-bold transition cursor-pointer ${
+              activeSubTab === 'types'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+            }`}
+          >
+            <FolderKanban className="w-4 h-4" />
+            <span>انواع پروژه و اتصال فیلدها ({projectTypes.length})</span>
+          </button>
         </div>
       </div>
 
@@ -605,84 +810,225 @@ export const DynamicFieldsManager: React.FC<DynamicFieldsManagerProps> = ({
         </div>
       )}
 
-      {/* Optional Live Preview Panel */}
-      {showPreview && (
-        <div className="p-5 rounded-3xl bg-white border-2 border-emerald-200 shadow-sm space-y-3">
-          <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-              <Eye className="w-4 h-4 text-emerald-600" />
-              <span>پیش‌نمایش نحوه نمایش فیلدهای سلسله‌مراتبی هنگام ثبت پروژه</span>
-            </h3>
-            <span className="text-[11px] text-slate-500">{fields.length} فیلد فعال</span>
+      {/* ===================== SUB-TAB 1: DYNAMIC FIELDS TREE ===================== */}
+      {activeSubTab === 'fields' && (
+        <>
+          {showPreview && (
+            <div className="p-5 rounded-3xl bg-white border-2 border-emerald-200 shadow-sm space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Eye className="w-4 h-4 text-emerald-600" />
+                  <span>پیش‌نمایش نحوه نمایش فیلدهای سلسله‌مراتبی هنگام ثبت پروژه</span>
+                </h3>
+                <span className="text-[11px] text-slate-500">{fields.length} فیلد فعال</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {fieldTree.map((fld) => renderPreviewNode(fld, 0))}
+              </div>
+            </div>
+          )}
+
+          <div className="p-4 sm:p-6 rounded-3xl bg-white border border-slate-200 shadow-xs space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-indigo-600" />
+                <h3 className="text-sm font-bold text-slate-900">
+                  بوم چیدمان سلسله‌مراتب و ویژگی‌های فیلدها
+                </h3>
+              </div>
+              {canEditField && (
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-xl bg-slate-100 text-slate-600">
+                  <Move className="w-3.5 h-3.5 text-indigo-600" />
+                  هر فیلد را روی فیلد دیگری رها کنید تا ویژگیِ آن شود
+                </span>
+              )}
+            </div>
+
+            {canEditField && (
+              <div
+                onDragOver={(e) => {
+                  if (!draggedFieldId) return;
+                  e.preventDefault();
+                  setDropTargetKey('root-zone');
+                }}
+                onDragLeave={() => {
+                  if (dropTargetKey === 'root-zone') setDropTargetKey(null);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDropTargetKey(null);
+                  const movingId = draggedFieldId;
+                  setDraggedFieldId(null);
+                  if (movingId) moveFieldNode(movingId, null);
+                }}
+                className={`p-3 rounded-2xl border-2 border-dashed text-center text-xs transition ${
+                  dropTargetKey === 'root-zone'
+                    ? 'border-indigo-600 bg-indigo-50 text-indigo-800 font-bold'
+                    : draggedFieldId
+                    ? 'border-indigo-300 bg-indigo-50/30 text-indigo-700 font-semibold'
+                    : 'border-slate-200 bg-slate-50/70 text-slate-500'
+                }`}
+              >
+                سطح اصلی (فیلد مستقل) — فیلدهای زیرمجموعه را اینجا رها کنید تا به سطح اصلی برگردند
+              </div>
+            )}
+
+            {fieldTree.length === 0 ? (
+              <div className="p-8 text-center rounded-2xl bg-slate-50 border border-dashed border-slate-300 space-y-2">
+                <p className="text-sm font-bold text-slate-700">هنوز فیلد پویایی تعریف نشده است</p>
+                <p className="text-xs text-slate-500">
+                  با زدن دکمه «تعریف فیلد جدید» می‌توانید فیلدهای نیاز پروژه و ویژگی‌های زیرمجموعه آن‌ها را بسازید.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {fieldTree.map((fld, idx) => renderFieldNode(fld, 0, idx))}
+              </div>
+            )}
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {fieldTree.map((fld) => renderPreviewNode(fld, 0))}
-          </div>
+        </>
+      )}
+
+      {/* ===================== SUB-TAB 2: PROJECT TYPES & LINKED FIELDS ===================== */}
+      {activeSubTab === 'types' && (
+        <div className="space-y-4">
+          {projectTypes.length === 0 ? (
+            <div className="p-10 text-center rounded-3xl bg-white border border-slate-200 space-y-3 shadow-xs">
+              <FolderKanban className="w-12 h-12 text-slate-300 mx-auto" />
+              <h3 className="text-sm font-bold text-slate-800">هنوز نوع پروژه‌ای تعریف نشده است</h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                با تعریف نوع پروژه (مثلاً «مستند»، «برنامه استودیویی»، «پویش رسانه‌ای»...) می‌توانید مشخص کنید هنگام ثبت هر نوع پروژه کدام فیلدهای پویا نمایش داده شوند و گردش کار پیش‌فرض آن چه باشد.
+              </p>
+              {canCreateField && (
+                <button
+                  type="button"
+                  onClick={handleOpenAddType}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-sm transition cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>ایجاد اولین نوع پروژه</span>
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {projectTypes.map((pt) => {
+                const linkedFields = fields.filter((f) => (pt.fieldIds || []).includes(f.id));
+                const active = pt.isActive !== 0 && pt.isActive !== false;
+
+                return (
+                  <div
+                    key={pt.id}
+                    className={`p-5 rounded-3xl bg-white border shadow-xs flex flex-col justify-between gap-4 transition ${
+                      active ? 'border-slate-200 hover:border-indigo-300' : 'border-slate-200 opacity-70 bg-slate-50'
+                    }`}
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="text-base font-extrabold text-slate-900">{pt.title}</h3>
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                active
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                  : 'bg-slate-100 text-slate-500 border-slate-200'
+                              }`}
+                            >
+                              {active ? 'فعال' : 'غیرفعال'}
+                            </span>
+                          </div>
+                          {pt.description && (
+                            <p className="text-xs text-slate-500 mt-1 leading-relaxed">{pt.description}</p>
+                          )}
+                        </div>
+
+                        {(canEditField || canDeleteField) && (
+                          <div className="flex items-center gap-1 shrink-0">
+                            {canEditField && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditType(pt)}
+                                className="p-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 transition cursor-pointer"
+                                title="ویرایش نوع پروژه و فیلدهای متصل"
+                              >
+                                <Edit3 className="w-4 h-4" />
+                              </button>
+                            )}
+                            {canDeleteField && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteProjectType(pt)}
+                                className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 transition cursor-pointer"
+                                title="حذف نوع پروژه"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-indigo-50 text-indigo-800 border border-indigo-200 font-bold tabular-nums">
+                          <Link2 className="w-3.5 h-3.5" />
+                          {linkedFields.length} فیلد متصل
+                        </span>
+                        {pt.defaultWorkflowTitle && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-blue-50 text-blue-800 border border-blue-200 font-semibold">
+                            <GitBranch className="w-3.5 h-3.5" />
+                            گردش پیش‌فرض: {pt.defaultWorkflowTitle}
+                          </span>
+                        )}
+                        <span className="px-2.5 py-1 rounded-xl bg-slate-100 text-slate-600 font-semibold tabular-nums">
+                          {pt.projectCount || 0} پروژه ثبت‌شده
+                        </span>
+                      </div>
+
+                      {/* Linked fields summary tags */}
+                      <div className="pt-2 border-t border-slate-100">
+                        <div className="text-[11px] font-bold text-slate-600 mb-2">
+                          فیلدهای متصل به این نوع پروژه:
+                        </div>
+                        {linkedFields.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {linkedFields.map((lf) => (
+                              <span
+                                key={lf.id}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-800"
+                              >
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                <span>{lf.name}</span>
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                            هیچ فیلدی به این نوع پروژه متصل نشده است.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {canEditField && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditType(pt)}
+                        className="w-full py-2 rounded-xl border border-indigo-200 bg-indigo-50/50 hover:bg-indigo-100/70 text-indigo-700 text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <Link2 className="w-3.5 h-3.5" />
+                        <span>مدیریت و اتصال فیلدها</span>
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
-      {/* Visual Drag & Drop Hierarchy Builder */}
-      <div className="p-4 sm:p-6 rounded-3xl bg-white border border-slate-200 shadow-xs space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
-          <div className="flex items-center gap-2">
-            <Layers className="w-4 h-4 text-indigo-600" />
-            <h3 className="text-sm font-bold text-slate-900">
-              بوم چیدمان سلسله‌مراتب و ویژگی‌های فیلدها
-            </h3>
-          </div>
-          {canEditField && (
-            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-xl bg-slate-100 text-slate-600">
-              <Move className="w-3.5 h-3.5 text-indigo-600" />
-              هر فیلد را روی فیلد دیگری رها کنید تا ویژگیِ آن شود
-            </span>
-          )}
-        </div>
-
-        {/* Root Drop Zone */}
-        {canEditField && (
-          <div
-            onDragOver={(e) => {
-              if (!draggedFieldId) return;
-              e.preventDefault();
-              setDropTargetKey('root-zone');
-            }}
-            onDragLeave={() => {
-              if (dropTargetKey === 'root-zone') setDropTargetKey(null);
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDropTargetKey(null);
-              const movingId = draggedFieldId;
-              setDraggedFieldId(null);
-              if (movingId) moveFieldNode(movingId, null);
-            }}
-            className={`p-3 rounded-2xl border-2 border-dashed text-center text-xs transition ${
-              dropTargetKey === 'root-zone'
-                ? 'border-indigo-600 bg-indigo-50 text-indigo-800 font-bold'
-                : draggedFieldId
-                ? 'border-indigo-300 bg-indigo-50/30 text-indigo-700 font-semibold'
-                : 'border-slate-200 bg-slate-50/70 text-slate-500'
-            }`}
-          >
-            سطح اصلی (فیلد مستقل) — فیلدهای زیرمجموعه را اینجا رها کنید تا به سطح اصلی برگردند
-          </div>
-        )}
-
-        {fieldTree.length === 0 ? (
-          <div className="p-8 text-center rounded-2xl bg-slate-50 border border-dashed border-slate-300 space-y-2">
-            <p className="text-sm font-bold text-slate-700">هنوز فیلد پویایی تعریف نشده است</p>
-            <p className="text-xs text-slate-500">
-              با زدن دکمه «تعریف فیلد جدید» می‌توانید فیلدهای نیاز پروژه و ویژگی‌های زیرمجموعه آن‌ها را بسازید.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {fieldTree.map((fld, idx) => renderFieldNode(fld, 0, idx))}
-          </div>
-        )}
-      </div>
-
-      {/* Modal: Create / Edit Dynamic Field */}
+      {/* ===================== MODAL: CREATE / EDIT DYNAMIC FIELD ===================== */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs overflow-y-auto">
           <div className="w-full max-w-lg rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-slate-800 my-6">
@@ -720,7 +1066,6 @@ export const DynamicFieldsManager: React.FC<DynamicFieldsManagerProps> = ({
                 />
               </div>
 
-              {/* Parent Selector */}
               <div>
                 <label className="block text-xs font-bold text-slate-800 mb-1.5">
                   جایگاه در ساختار (زیرمجموعه کدام فیلد باشد؟)
@@ -745,7 +1090,6 @@ export const DynamicFieldsManager: React.FC<DynamicFieldsManagerProps> = ({
                 </select>
               </div>
 
-              {/* Field Type */}
               <div>
                 <label className="block text-xs font-bold text-slate-800 mb-1.5">
                   نوع مقدار فیلد
@@ -866,6 +1210,158 @@ export const DynamicFieldsManager: React.FC<DynamicFieldsManagerProps> = ({
                     : editingField
                     ? 'ذخیره تغییرات فیلد'
                     : 'افزودن به ساختار فیلدها'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ===================== MODAL: CREATE / EDIT PROJECT TYPE & LINK FIELDS ===================== */}
+      {typeModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/45 backdrop-blur-xs overflow-y-auto">
+          <div className="w-full max-w-2xl rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-slate-800 my-6">
+            <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/80">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <FolderKanban className="w-5 h-5 text-indigo-600" />
+                {editingType ? `ویرایش نوع پروژه «${editingType.title}»` : 'تعریف نوع پروژه و اتصال فیلدها'}
+              </h3>
+              <button
+                onClick={() => setTypeModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {typeError && (
+              <div className="m-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs">
+                {typeError}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveProjectType} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1.5">
+                    عنوان نوع پروژه *
+                  </label>
+                  <input
+                    type="text"
+                    value={typeTitle}
+                    onChange={(e) => setTypeTitle(e.target.value)}
+                    placeholder="مثال: مستند، برنامه استودیویی، تولید نمایشی..."
+                    className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-indigo-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1.5">
+                    گردش کار پیش‌فرض (اختیاری)
+                  </label>
+                  <select
+                    value={typeDefaultWorkflowId}
+                    onChange={(e) => setTypeDefaultWorkflowId(e.target.value)}
+                    className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="">انتخاب خودکار پیش‌فرض سامانه</option>
+                    {workflows.map((wf) => (
+                      <option key={wf.id} value={wf.id}>
+                        {wf.title} ({wf.steps.length} مرحله)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-slate-800 mb-1.5">
+                    توضیحات (اختیاری)
+                  </label>
+                  <input
+                    type="text"
+                    value={typeDescription}
+                    onChange={(e) => setTypeDescription(e.target.value)}
+                    placeholder="توضیح مختصر درباره این نوع پروژه..."
+                    className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <label className="flex items-center gap-2 h-10 px-3 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer sm:mt-5">
+                  <input
+                    type="checkbox"
+                    checked={typeIsActive}
+                    onChange={(e) => setTypeIsActive(e.target.checked)}
+                    className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span className="text-xs font-bold text-slate-700">فعال در فرم ثبت پروژه</span>
+                </label>
+              </div>
+
+              {/* Field Tree Picker */}
+              <div className="pt-3 border-t border-slate-200 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Link2 className="w-4 h-4 text-indigo-600" />
+                    <span className="text-xs font-extrabold text-slate-900">
+                      انتخاب فیلدهای پویای متصل به این نوع پروژه:
+                    </span>
+                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 tabular-nums">
+                      {selectedFieldIds.length} فیلد انتخاب شده
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedFieldIds(fields.map((f) => f.id))}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 text-[11px] font-bold cursor-pointer transition"
+                    >
+                      <CheckSquare className="w-3.5 h-3.5" />
+                      <span>انتخاب همه</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedFieldIds([])}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 text-[11px] font-bold cursor-pointer transition"
+                    >
+                      <Square className="w-3.5 h-3.5" />
+                      <span>پاک کردن</span>
+                    </button>
+                  </div>
+                </div>
+
+                {fieldTree.length === 0 ? (
+                  <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
+                    هنوز فیلد پویایی تعریف نشده است. ابتدا در تب «فیلدهای پویا» فیلدها را تعریف کنید.
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-2xl bg-slate-50/70 border border-slate-200 max-h-64 overflow-y-auto space-y-2">
+                    {fieldTree.map((fld) => renderFieldChecklistNode(fld, 0))}
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-3 flex items-center justify-end gap-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setTypeModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-xs text-slate-700 bg-white hover:bg-slate-100 cursor-pointer"
+                >
+                  انصراف
+                </button>
+                <button
+                  type="submit"
+                  disabled={typeSaving}
+                  className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer disabled:opacity-50"
+                >
+                  {typeSaving
+                    ? 'در حال ذخیره...'
+                    : editingType
+                    ? 'ذخیره تغییرات نوع پروژه'
+                    : 'ثبت نوع پروژه و فیلدهای متصل'}
                 </button>
               </div>
             </form>

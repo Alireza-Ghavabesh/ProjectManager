@@ -137,6 +137,43 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
     }
   };
 
+  const getWorkflowStatusMeta = (status: string) => {
+    switch (status) {
+      case 'APPROVED':
+        return {
+          label: 'تصویب نهایی',
+          fullLabel: 'تصویب نهایی در گردش کار',
+          textClass: 'text-emerald-700',
+          bgClass: 'bg-emerald-50 border-emerald-200 text-emerald-800',
+          icon: <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />,
+        };
+      case 'REJECTED':
+        return {
+          label: 'رد در گردش کار',
+          fullLabel: 'رد شده در گردش کار',
+          textClass: 'text-rose-700',
+          bgClass: 'bg-rose-50 border-rose-200 text-rose-800',
+          icon: <XCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />,
+        };
+      case 'NEEDS_REVISION':
+        return {
+          label: 'نیازمند اصلاح',
+          fullLabel: 'عودت جهت اصلاح در گردش کار',
+          textClass: 'text-amber-800',
+          bgClass: 'bg-amber-50 border-amber-300 text-amber-900',
+          icon: <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />,
+        };
+      default:
+        return {
+          label: 'در حال گردش کار',
+          fullLabel: 'در حال بررسی و ارجاع در گردش کار',
+          textClass: 'text-blue-700',
+          bgClass: 'bg-blue-50 border-blue-200 text-blue-800',
+          icon: <Clock className="w-3.5 h-3.5 text-blue-600 shrink-0" />,
+        };
+    }
+  };
+
   const getVoteStatusBadge = (status: string) => {
     switch (status) {
       case 'APPROVED':
@@ -196,6 +233,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   const totalRequirementCount = Object.keys(reqObj).length;
 
   const steps = project.workflowSteps || [];
+  const hasWorkflow = Boolean(project.hasWorkflow || project.workflowId || steps.length > 0);
   const currentStep = steps.find((s) => s.stepOrder === project.currentStepOrder);
   const isCompletedOrRejected = project.status === 'APPROVED' || project.status === 'REJECTED';
   const currentPosIds =
@@ -205,16 +243,26 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
       ? [project.currentPositionId]
       : [];
   const isMyTurnInWorkflow =
+    hasWorkflow &&
     !isCompletedOrRejected &&
     (project.isMyWorkflowTurn ??
       Boolean(currentUser.positionId && currentPosIds.includes(currentUser.positionId)));
+  const hasCurrentUserApproved = Boolean(project.currentStepApprovalProgress?.hasCurrentUserApproved);
   const isExpired = project.isDeadlineExpired ?? isDeadlineExpired(project.deadline);
+
+  const participatedCount = project.workflowParticipatedCount ?? 0;
+  const totalWfParticipants = project.workflowTotalParticipants ?? 0;
+  const wfProgressPct =
+    totalWfParticipants > 0
+      ? Math.min(100, Math.round((participatedCount / totalWfParticipants) * 100))
+      : 0;
 
   const totalVotesCount = project.voteCounts?.total ?? (project.allVotes?.length || (project.hasVoted ? 1 : 0));
   const totalCouncil = project.totalCouncilMembers && project.totalCouncilMembers > 0 ? project.totalCouncilMembers : 4;
   const voteProgressPct = Math.min(100, Math.round((totalVotesCount / Math.max(totalCouncil, 1)) * 100));
   const attachmentCount = project.attachments?.length || 0;
   const majorityMeta = getMajorityMeta(project.majorityResult);
+  const primaryStatusMeta = hasWorkflow ? getWorkflowStatusMeta(project.status) : majorityMeta;
 
   return (
     <div
@@ -293,7 +341,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   </>
                 )}
                 <span aria-hidden="true">·</span>
-                <span className="truncate">{project.productionType || 'تولید محتوا'}</span>
+                <span className="truncate">{project.projectTypeTitle || project.productionType || 'تولید محتوا'}</span>
                 {attachmentCount > 0 && (
                   <>
                     <span aria-hidden="true">·</span>
@@ -324,15 +372,22 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             )}
           </div>
 
-          {/* Column 3 (2 cols): Majority Status & Vote Count */}
+          {/* Column 3 (2 cols): Workflow/Majority Status & Participation */}
           <div className="lg:col-span-2 min-w-0 flex lg:flex-col items-center lg:items-start justify-between gap-1">
-            <span className={`inline-flex items-center gap-1.5 text-xs font-bold ${majorityMeta.textClass}`}>
-              {majorityMeta.icon}
-              <span>{majorityMeta.label}</span>
+            <span className={`inline-flex items-center gap-1.5 text-xs font-bold ${primaryStatusMeta.textClass}`}>
+              {primaryStatusMeta.icon}
+              <span>{primaryStatusMeta.label}</span>
             </span>
-            <span className="text-[11px] text-slate-500 tabular-nums">
-              {totalVotesCount} از {totalCouncil} رای ({voteProgressPct}٪)
-            </span>
+            {hasWorkflow ? (
+              <span className="text-[11px] text-slate-500 tabular-nums">
+                مشارکت: {participatedCount} نفر
+                {totalWfParticipants > 0 ? ` از ${totalWfParticipants}` : ''}
+              </span>
+            ) : (
+              <span className="text-[11px] text-slate-500 tabular-nums">
+                {totalVotesCount} از {totalCouncil} رای ({voteProgressPct}٪)
+              </span>
+            )}
           </div>
 
           {/* Column 4 (1 col / compact): Deadline & Budget */}
@@ -350,7 +405,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             className="lg:col-span-2 flex items-center justify-end gap-1.5 flex-wrap"
             onClick={(e) => e.stopPropagation()}
           >
-            {canCastVote && !project.hasVoted && !isExpired && (
+            {!hasWorkflow && canCastVote && !project.hasVoted && !isExpired && (
               <button
                 type="button"
                 onClick={() => onOpenVoteModal(project)}
@@ -361,7 +416,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               </button>
             )}
 
-            {canCastVote && project.hasVoted && (
+            {!hasWorkflow && canCastVote && project.hasVoted && (
               <button
                 type="button"
                 onClick={() => onOpenVoteModal(project)}
@@ -373,19 +428,36 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               </button>
             )}
 
-            {canForwardWorkflow && isMyTurnInWorkflow && onOpenWorkflowModal && (
+            {hasWorkflow && hasCurrentUserApproved && !isCompletedOrRejected && (
               <button
                 type="button"
-                onClick={() => onOpenWorkflowModal(project)}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold transition cursor-pointer whitespace-nowrap shrink-0"
-                title="تایید و ارجاع مرحله"
+                onClick={() => onOpenWorkflowModal && onOpenWorkflowModal(project)}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-[11px] font-bold transition cursor-pointer whitespace-nowrap shrink-0"
+                title="تایید شما در این گام ثبت شده است"
               >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                <span>ارجاع</span>
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                <span>تایید شما ثبت شد</span>
               </button>
             )}
 
-            {!isExpanded && isExpired && !project.hasVoted && (
+            {hasWorkflow &&
+              !hasCurrentUserApproved &&
+              canForwardWorkflow &&
+              !isCompletedOrRejected &&
+              (isMyTurnInWorkflow || currentUser.role === 'ADMIN') &&
+              onOpenWorkflowModal && (
+                <button
+                  type="button"
+                  onClick={() => onOpenWorkflowModal(project)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold transition cursor-pointer whitespace-nowrap shrink-0"
+                  title="تایید و ارجاع مرحله"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>ارجاع</span>
+                </button>
+              )}
+
+            {!hasWorkflow && !isExpanded && isExpired && !project.hasVoted && (
               <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-700 whitespace-nowrap">
                 <Lock className="w-3 h-3" />
                 منقضی
@@ -413,9 +485,9 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   مهلت ارزیابی پایان یافته
                 </span>
               )}
-              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border ${majorityMeta.bgClass}`}>
-                {majorityMeta.icon}
-                {majorityMeta.fullLabel}
+              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border ${primaryStatusMeta.bgClass}`}>
+                {primaryStatusMeta.icon}
+                {primaryStatusMeta.fullLabel}
               </span>
             </div>
 
@@ -456,72 +528,148 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             </p>
           )}
 
-          {/* Council Voting Tally and Participation Progress */}
-          <div className="p-3.5 rounded-2xl bg-indigo-50/50 border border-indigo-100 text-slate-800">
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-              <div className="flex items-center gap-2">
-                <Users className="w-4 h-4 text-indigo-700" />
-                <span className="text-xs font-bold text-slate-900">
-                  وضعیت مشارکت شورا:{' '}
-                  <strong className="text-indigo-700 font-black tabular-nums">
-                    {totalVotesCount} از {totalCouncil} نفر شورا رای داده‌اند
-                  </strong>
+          {/* Participation Progress (Workflow Participants vs Legacy Council Voting) */}
+          {hasWorkflow ? (
+            <div className="p-3.5 rounded-2xl bg-indigo-50/50 border border-indigo-100 text-slate-800">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2">
+                  <Users className="w-4 h-4 text-indigo-700" />
+                  <span className="text-xs font-bold text-slate-900">
+                    وضعیت مشارکت:{' '}
+                    <strong className="text-indigo-700 font-black tabular-nums">
+                      {participatedCount} نفر
+                    </strong>
+                  </span>
+                </div>
+
+                <span className="text-[11px] font-bold text-indigo-700 tabular-nums">
+                  {totalWfParticipants > 0
+                    ? participatedCount >= totalWfParticipants
+                      ? 'مشارکت کامل اعضای گردش کار'
+                      : `از مجموع ${totalWfParticipants} نفر عضو گردش کار (${wfProgressPct}٪)`
+                    : `${participatedCount} اقدام ثبت شده`}
                 </span>
               </div>
 
-              <span className="text-[11px] font-bold text-indigo-700 tabular-nums">
-                {totalVotesCount >= totalCouncil ? 'تکمیل تمامی آرا' : `${voteProgressPct}٪ مشارکت`}
-              </span>
-            </div>
-
-            <div className="w-full h-2 bg-slate-200/80 rounded-full overflow-hidden mb-2.5">
-              <div
-                className="h-full bg-indigo-600 rounded-full transition-all duration-300"
-                style={{ width: `${voteProgressPct}%` }}
-              />
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600 pt-1.5 border-t border-indigo-100">
-              <div className="flex items-center gap-4 tabular-nums">
-                {project.voteCounts && (
-                  <>
-                    <span className="text-emerald-700 font-semibold">
-                      موافق: {project.voteCounts.APPROVED || 0}
-                    </span>
-                    <span className="text-rose-700 font-semibold">
-                      مخالف: {project.voteCounts.REJECTED || 0}
-                    </span>
-                    <span className="text-amber-800 font-semibold">
-                      نیاز به اصلاح: {project.voteCounts.NEEDS_REVISION || 0}
-                    </span>
-                  </>
-                )}
+              <div className="w-full h-2 bg-slate-200/80 rounded-full overflow-hidden mb-2.5">
+                <div
+                  className="h-full bg-indigo-600 rounded-full transition-all duration-300"
+                  style={{ width: `${wfProgressPct}%` }}
+                />
               </div>
 
-              <div>
-                {project.hasVoted ? (
-                  <span className="text-emerald-700 font-bold flex items-center gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                    رای شما ثبت شده است
-                  </span>
-                ) : isExpired ? (
-                  <span className="text-rose-800 font-bold flex items-center gap-1 text-xs">
-                    <Lock className="w-3.5 h-3.5 text-rose-600" />
-                    مهلت رای‌گیری پایان یافته
-                  </span>
-                ) : canCastVote ? (
-                  <button
-                    type="button"
-                    onClick={() => onOpenVoteModal(project)}
-                    className="text-amber-800 font-bold hover:text-amber-900 bg-amber-100/80 hover:bg-amber-100 px-2.5 py-1 rounded-lg border border-amber-300 flex items-center gap-1 cursor-pointer transition"
-                  >
-                    <VoteIcon className="w-3 h-3 text-amber-700" />
-                    رای شما ثبت نشده (ثبت رای)
-                  </button>
-                ) : null}
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600 pt-1.5 border-t border-indigo-100">
+                <div className="flex items-center gap-2 flex-wrap tabular-nums">
+                  {!isCompletedOrRejected &&
+                  project.currentStepApprovalProgress &&
+                  (project.currentStepApprovalProgress.mode === 'MAJORITY' ||
+                    project.currentStepApprovalProgress.mode === 'ALL') ? (
+                    <span className="text-violet-800 font-semibold">
+                      تایید مرحله فعلی: {project.currentStepApprovalProgress.approvedUserIds.length} از{' '}
+                      {project.currentStepApprovalProgress.requiredCount} نفر لازم
+                    </span>
+                  ) : (
+                    <span>
+                      مرحله {project.currentStepOrder || 1} از {steps.length}
+                      {project.currentPositionTitle ? ` · ${project.currentPositionTitle}` : ''}
+                    </span>
+                  )}
+                </div>
+
+                <div>
+                  {hasCurrentUserApproved && !isCompletedOrRejected ? (
+                    <span className="text-emerald-700 font-bold flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      تایید شما در این گام ثبت شده است
+                    </span>
+                  ) : isCompletedOrRejected ? (
+                    <span className={`font-bold ${primaryStatusMeta.textClass}`}>
+                      {primaryStatusMeta.label}
+                    </span>
+                  ) : canForwardWorkflow && isMyTurnInWorkflow && onOpenWorkflowModal ? (
+                    <button
+                      type="button"
+                      onClick={() => onOpenWorkflowModal(project)}
+                      className="text-blue-800 font-bold hover:text-blue-900 bg-blue-100/80 hover:bg-blue-100 px-2.5 py-1 rounded-lg border border-blue-300 flex items-center gap-1 cursor-pointer transition"
+                    >
+                      <ArrowLeft className="w-3 h-3 text-blue-700" />
+                      ثبت اقدام گردش کار
+                    </button>
+                  ) : (
+                    <span className="text-slate-500 font-medium">
+                      در انتظار بررسی سمت‌های مرحله فعلی
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="p-3.5 rounded-2xl bg-indigo-50/50 border border-indigo-100 text-slate-800">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2">
+                  <Users className="w-4 h-4 text-indigo-700" />
+                  <span className="text-xs font-bold text-slate-900">
+                    وضعیت مشارکت:{' '}
+                    <strong className="text-indigo-700 font-black tabular-nums">
+                      {totalVotesCount} نفر از {totalCouncil} نفر رای داده‌اند
+                    </strong>
+                  </span>
+                </div>
+
+                <span className="text-[11px] font-bold text-indigo-700 tabular-nums">
+                  {totalVotesCount >= totalCouncil ? 'تکمیل تمامی آرا' : `${voteProgressPct}٪ مشارکت`}
+                </span>
+              </div>
+
+              <div className="w-full h-2 bg-slate-200/80 rounded-full overflow-hidden mb-2.5">
+                <div
+                  className="h-full bg-indigo-600 rounded-full transition-all duration-300"
+                  style={{ width: `${voteProgressPct}%` }}
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600 pt-1.5 border-t border-indigo-100">
+                <div className="flex items-center gap-4 tabular-nums">
+                  {project.voteCounts && (
+                    <>
+                      <span className="text-emerald-700 font-semibold">
+                        موافق: {project.voteCounts.APPROVED || 0}
+                      </span>
+                      <span className="text-rose-700 font-semibold">
+                        مخالف: {project.voteCounts.REJECTED || 0}
+                      </span>
+                      <span className="text-amber-800 font-semibold">
+                        نیاز به اصلاح: {project.voteCounts.NEEDS_REVISION || 0}
+                      </span>
+                    </>
+                  )}
+                </div>
+
+                <div>
+                  {project.hasVoted ? (
+                    <span className="text-emerald-700 font-bold flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      رای شما ثبت شده است
+                    </span>
+                  ) : isExpired ? (
+                    <span className="text-rose-800 font-bold flex items-center gap-1 text-xs">
+                      <Lock className="w-3.5 h-3.5 text-rose-600" />
+                      مهلت رای‌گیری پایان یافته
+                    </span>
+                  ) : canCastVote ? (
+                    <button
+                      type="button"
+                      onClick={() => onOpenVoteModal(project)}
+                      className="text-amber-800 font-bold hover:text-amber-900 bg-amber-100/80 hover:bg-amber-100 px-2.5 py-1 rounded-lg border border-amber-300 flex items-center gap-1 cursor-pointer transition"
+                    >
+                      <VoteIcon className="w-3 h-3 text-amber-700" />
+                      رای شما ثبت نشده (ثبت رای)
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Meta details: Deadline, Delivery Date, Budget */}
           {(project.deadline || project.deliveryDate || project.budgetEstimated) && (
@@ -714,7 +862,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   </button>
                 )}
 
-                {canForwardWorkflow && !isCompletedOrRejected && onOpenWorkflowModal && (
+                {canForwardWorkflow && !isCompletedOrRejected && (isMyTurnInWorkflow || currentUser.role === 'ADMIN') && onOpenWorkflowModal ? (
                   <button
                     type="button"
                     onClick={() => onOpenWorkflowModal(project)}
@@ -723,13 +871,17 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                     <ArrowLeft className="w-3.5 h-3.5" />
                     <span>تایید و ارجاع گردش کار</span>
                   </button>
-                )}
+                ) : !isCompletedOrRejected ? (
+                  <span className="text-[11px] font-semibold text-slate-500 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
+                    نوبت بررسی با سمت دیگری است
+                  </span>
+                ) : null}
               </div>
             </div>
           )}
 
-          {/* Personal Voting Action Section */}
-          {canCastVote && (
+          {/* Personal Voting Action Section (only for non-workflow projects) */}
+          {!hasWorkflow && canCastVote && (
             <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <span className="text-xs text-slate-500 font-medium">وضعیت رای شما در کارتابل:</span>
@@ -754,8 +906,8 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             </div>
           )}
 
-          {/* Confidential Inspection Section (for users with voting.confidential.view_all) */}
-          {canViewConfidential && (
+          {/* Confidential Inspection Section (hidden for workflow projects without historical votes) */}
+          {canViewConfidential && (!hasWorkflow || (project.allVotes && project.allVotes.length > 0)) && (
             <div className="pt-3 border-t border-slate-100">
               <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
                 <div className="flex items-center gap-2">

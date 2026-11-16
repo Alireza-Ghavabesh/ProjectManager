@@ -1,13 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { DynamicField, Project, ProjectAttachment, Workflow, UploadProgressInfo, User } from '../types';
-import { api, fileToBase64, formatFileSize } from '../services/api';
+import { DynamicField, ProjectType, Project, ProjectAttachment, Workflow, UploadProgressInfo, User } from '../types';
+import { api, formatFileSize } from '../services/api';
 import { ProjectAttachments } from './ProjectAttachments';
 import { PersianDatePicker } from './PersianDatePicker';
 import { formatCurrencyInput, formatBudgetDisplay } from '../utils/formatters';
 import { hasPerm } from '../utils/permissions';
 import { 
   X, 
-  Calendar, 
   Coins, 
   FileText, 
   Minus, 
@@ -15,17 +14,18 @@ import {
   Layers, 
   Users,
   CheckCircle2,
-  Sparkles,
   Paperclip,
   Upload,
   Trash2,
   File,
   GitBranch,
-  RefreshCw
+  RefreshCw,
+  FolderKanban
 } from 'lucide-react';
 
 interface CreateProjectModalProps {
   dynamicFields: DynamicField[];
+  projectTypes?: ProjectType[];
   currentUser?: User | null;
   onClose: () => void;
   onSuccess: () => void;
@@ -35,6 +35,7 @@ interface CreateProjectModalProps {
 
 export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   dynamicFields,
+  projectTypes = [],
   currentUser,
   onClose,
   onSuccess,
@@ -45,7 +46,22 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   const [code, setCode] = useState(
     editProject?.code || `PRJ-1403-${Math.floor(10 + Math.random() * 90)}`
   );
-  const [productionType, setProductionType] = useState(editProject?.productionType || 'طرح عمومی شورا');
+  const [availableProjectTypes, setAvailableProjectTypes] = useState<ProjectType[]>(projectTypes);
+  const activeProjectTypes = availableProjectTypes.filter((pt) => pt.isActive !== 0 && pt.isActive !== false);
+
+  const [selectedProjectTypeId, setSelectedProjectTypeId] = useState<string>(() => {
+    if (editProject?.projectTypeId) return editProject.projectTypeId;
+    if (editProject?.productionType) {
+      const matched = activeProjectTypes.find((pt) => pt.title === editProject.productionType);
+      return matched ? matched.id : '__CUSTOM__';
+    }
+    return activeProjectTypes[0]?.id || '__CUSTOM__';
+  });
+
+  const [productionType, setProductionType] = useState(() => {
+    if (editProject?.productionType) return editProject.productionType;
+    return activeProjectTypes[0]?.title || 'طرح عمومی شورا';
+  });
   const [deadline, setDeadline] = useState(editProject?.deadline || '۱۴۰۳/۰۹/۳۰');
   const [deliveryDate, setDeliveryDate] = useState(editProject?.deliveryDate || '');
   const [budgetEstimated, setBudgetEstimated] = useState(
@@ -61,9 +77,28 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   const [availableWorkflows, setAvailableWorkflows] = useState<Workflow[]>(workflows);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string>(() => {
     if (editProject?.workflowId) return editProject.workflowId;
+    if (activeProjectTypes[0]?.defaultWorkflowId) return activeProjectTypes[0].defaultWorkflowId;
     const def = workflows.find((w) => w.isDefault);
     return def?.id || (workflows[0]?.id) || '';
   });
+
+  useEffect(() => {
+    if (projectTypes.length === 0) {
+      api.getProjectTypes().then((pts) => {
+        setAvailableProjectTypes(pts);
+        const actives = pts.filter((pt) => pt.isActive !== 0 && pt.isActive !== false);
+        if (!editProject && actives.length > 0 && selectedProjectTypeId === '__CUSTOM__') {
+          setSelectedProjectTypeId(actives[0].id);
+          setProductionType(actives[0].title);
+          if (actives[0].defaultWorkflowId) {
+            setSelectedWorkflowId(actives[0].defaultWorkflowId);
+          }
+        }
+      }).catch(() => {});
+    } else {
+      setAvailableProjectTypes(projectTypes);
+    }
+  }, [projectTypes]);
 
   useEffect(() => {
     if (workflows.length === 0) {
@@ -82,6 +117,25 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       }
     }
   }, [workflows, editProject?.workflowId]);
+
+  const selectedProjectType = activeProjectTypes.find((pt) => pt.id === selectedProjectTypeId) || null;
+  const displayedDynamicFields = selectedProjectType
+    ? dynamicFields.filter((f) => (selectedProjectType.fieldIds || []).includes(f.id))
+    : dynamicFields;
+
+  const handleSelectProjectType = (nextTypeId: string) => {
+    setSelectedProjectTypeId(nextTypeId);
+    if (nextTypeId === '__CUSTOM__') {
+      return;
+    }
+    const found = activeProjectTypes.find((pt) => pt.id === nextTypeId);
+    if (found) {
+      setProductionType(found.title);
+      if (!editProject && found.defaultWorkflowId && availableWorkflows.some((w) => w.id === found.defaultWorkflowId)) {
+        setSelectedWorkflowId(found.defaultWorkflowId);
+      }
+    }
+  };
 
   // Initialize requirements from dynamic fields or existing project
   const [requirements, setRequirements] = useState<Record<string, any>>(() => {
@@ -200,16 +254,28 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     setActiveUploadProgress(null);
 
     try {
+      const visibleKeys = new Set(displayedDynamicFields.map((f) => f.key));
+      const allKnownKeys = new Set(dynamicFields.map((f) => f.key));
+      const filteredRequirements: Record<string, any> = {};
+      for (const [k, v] of Object.entries(requirements)) {
+        if (visibleKeys.has(k) || (editProject && !allKnownKeys.has(k))) {
+          filteredRequirements[k] = v;
+        }
+      }
+
       const payload: Partial<Project> = {
         title: title.trim(),
         code: code.trim(),
-        productionType: productionType.trim() || 'طرح عمومی شورا',
+        projectTypeId: selectedProjectType ? selectedProjectType.id : null,
+        productionType: selectedProjectType
+          ? selectedProjectType.title
+          : (productionType.trim() || 'طرح عمومی شورا'),
         location: editProject?.location || '',
         deadline: deadline.trim(),
         deliveryDate: deliveryDate.trim(),
         budgetEstimated: budgetEstimated.trim(),
         description: description.trim(),
-        requirements,
+        requirements: filteredRequirements,
         workflowId: selectedWorkflowId || undefined,
       };
 
@@ -326,18 +392,45 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                 />
               </div>
 
-              {/* Category / Subject */}
+              {/* Project Type Selector / Subject */}
               <div>
-                <label className="block text-xs font-bold text-slate-800 mb-1">
-                  موضوع / زمینه طرح
+                <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1.5">
+                  <FolderKanban className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>نوع پروژه *</span>
                 </label>
-                <input
-                  type="text"
-                  value={productionType}
-                  onChange={(e) => setProductionType(e.target.value)}
-                  placeholder="نوع تولید (مستند، استودیویی، داستانی...)"
-                  className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs"
-                />
+                {activeProjectTypes.length > 0 ? (
+                  <div className="space-y-2">
+                    <select
+                      value={selectedProjectTypeId}
+                      onChange={(e) => handleSelectProjectType(e.target.value)}
+                      className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs sm:text-sm font-bold text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs cursor-pointer"
+                    >
+                      {activeProjectTypes.map((pt) => (
+                        <option key={pt.id} value={pt.id}>
+                          {pt.title} ({(pt.fieldIds || []).length} فیلد متصل)
+                        </option>
+                      ))}
+                      <option value="__CUSTOM__">سایر / عنوان دلخواه (همه فیلدها)</option>
+                    </select>
+                    {selectedProjectTypeId === '__CUSTOM__' && (
+                      <input
+                        type="text"
+                        value={productionType}
+                        onChange={(e) => setProductionType(e.target.value)}
+                        placeholder="عنوان نوع یا زمینه طرح..."
+                        className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 transition shadow-2xs"
+                      />
+                    )}
+                  </div>
+                ) : (
+                  <input
+                    type="text"
+                    value={productionType}
+                    onChange={(e) => setProductionType(e.target.value)}
+                    placeholder="نوع تولید (مستند، استودیویی، داستانی...)"
+                    className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs"
+                  />
+                )}
               </div>
 
               {/* Deadline - Persian Jalali Date Picker */}
@@ -485,11 +578,11 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
             </div>
 
-            {/* Dynamic Requirements Fields Section (Hierarchical & Multi-Type) */}
+            {/* Dynamic Requirements Fields Section (Filtered by Selected Project Type) */}
             {dynamicFields.length > 0 && (() => {
-              const validFieldIds = new Set(dynamicFields.map((f) => f.id));
+              const validFieldIds = new Set(displayedDynamicFields.map((f) => f.id));
               const buildFieldTree = (pId: string | null): DynamicField[] =>
-                dynamicFields
+                displayedDynamicFields
                   .filter((f) => {
                     const effParent = f.parentId && validFieldIds.has(f.parentId) ? f.parentId : null;
                     return effParent === pId;
@@ -635,19 +728,29 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
               return (
                 <div className="pt-3 border-t border-slate-200">
-                  <div className="flex items-center justify-between mb-2.5">
+                  <div className="flex items-center justify-between mb-2.5 flex-wrap gap-2">
                     <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
                       <Users className="w-3.5 h-3.5 text-indigo-600" />
-                      <span>نیازمندی‌ها، عوامل و ویژگی‌های طرح</span>
+                      <span>
+                        {selectedProjectType
+                          ? `فیلدهای اختصاصی نوع پروژه «${selectedProjectType.title}»`
+                          : 'نیازمندی‌ها، عوامل و ویژگی‌های طرح'}
+                      </span>
                     </h4>
-                    <span className="text-[11px] text-slate-400">
-                      تعریف‌شده در ساختار فیلدهای پویا
+                    <span className="text-[11px] text-slate-500 tabular-nums">
+                      {displayedDynamicFields.length} فیلد فعال
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-                    {rootFields.map((field) => renderDynamicFieldCard(field, 0))}
-                  </div>
+                  {rootFields.length === 0 ? (
+                    <div className="p-4 rounded-2xl bg-slate-50 border border-dashed border-slate-300 text-xs text-slate-500 text-center">
+                      برای نوع پروژه «{selectedProjectType?.title}» هنوز فیلد پویایی متصل نشده است. از بخش «فیلدهای پویا و انواع پروژه» می‌توانید فیلدهای مورد نیاز را به این نوع متصل کنید.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                      {rootFields.map((field) => renderDynamicFieldCard(field, 0))}
+                    </div>
+                  )}
                 </div>
               );
             })()}

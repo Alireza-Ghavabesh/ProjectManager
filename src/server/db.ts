@@ -181,12 +181,30 @@ export function initDatabase() {
       UNIQUE(projectId, stepOrder, userId)
     );
 
+    CREATE TABLE IF NOT EXISTS project_types (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL UNIQUE,
+      description TEXT DEFAULT '',
+      defaultWorkflowId TEXT REFERENCES workflows(id) ON DELETE SET NULL,
+      orderIndex INTEGER DEFAULT 0,
+      isActive INTEGER DEFAULT 1,
+      createdAt TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS project_type_fields (
+      projectTypeId TEXT NOT NULL REFERENCES project_types(id) ON DELETE CASCADE,
+      fieldId TEXT NOT NULL REFERENCES dynamic_fields(id) ON DELETE CASCADE,
+      orderIndex INTEGER DEFAULT 0,
+      PRIMARY KEY (projectTypeId, fieldId)
+    );
+
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       code TEXT UNIQUE NOT NULL,
       description TEXT,
       productionType TEXT,
+      projectTypeId TEXT REFERENCES project_types(id) ON DELETE SET NULL,
       location TEXT,
       deadline TEXT,
       budgetEstimated TEXT,
@@ -395,6 +413,9 @@ export function initDatabase() {
   } catch (e) {}
   try {
     rawDb.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_wf_tracking_code ON projects(workflowTrackingCode) WHERE workflowTrackingCode IS NOT NULL;');
+  } catch (e) {}
+  try {
+    db.prepare('ALTER TABLE projects ADD COLUMN projectTypeId TEXT REFERENCES project_types(id) ON DELETE SET NULL').run();
   } catch (e) {}
 
   try {

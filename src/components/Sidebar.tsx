@@ -121,8 +121,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       items: [
         {
           id: 'fields' as const,
-          title: 'تعریف فیلدهای پویای پروژه',
-          shortTitle: 'فیلدها',
+          title: 'فیلدهای پویا و انواع پروژه',
+          shortTitle: 'فیلدها و انواع',
           icon: Sliders,
           badge: null,
           badgeColor: '',
