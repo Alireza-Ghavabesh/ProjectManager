@@ -396,12 +396,24 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                     </div>
 
                     {/* Assigned Position Pill */}
-                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 mb-3">
-                      <div className="text-[10px] text-slate-500 mb-0.5">سمت انتصاب یافته:</div>
+                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 mb-3 space-y-1.5">
+                      <div className="text-[10px] text-slate-500">سمت(های) انتصاب یافته (با ارث‌بری خودکار مجوز):</div>
                       <div className="text-xs font-bold text-indigo-700 flex items-center gap-1.5">
                         <Briefcase className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                        <span className="truncate">{u.positionTitle || 'بدون سمت (انتصاب نشده)'}</span>
+                        <span className="truncate">{u.positionTitle || 'بدون سمت اصلی'}</span>
                       </div>
+                      {u.structurePositions && u.structurePositions.length > 0 && (
+                        <div className="flex flex-wrap gap-1 pt-1 border-t border-slate-200/70">
+                          {u.structurePositions.map((sp, spIdx) => (
+                            <span
+                              key={`${sp.structureId}_${sp.positionId}_${spIdx}`}
+                              className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold"
+                            >
+                              {sp.positionTitle} ({sp.structureTitle})
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     {/* Permissions summary badge */}

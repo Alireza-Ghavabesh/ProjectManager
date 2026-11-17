@@ -16,6 +16,8 @@ import {
   GitBranch,
   Plus,
   Clock,
+  SlidersHorizontal,
+  UserCheck,
 } from 'lucide-react';
 
 export interface BpmnEditableStep {
@@ -30,6 +32,12 @@ export interface BpmnEditableStep {
 
 export type BpmnBranchKind = 'approve' | 'revision' | 'reject';
 
+export type BpmnConnectTarget =
+  | { kind: 'step'; stepOrder: number }
+  | { kind: 'creator' }
+  | { kind: 'end_approved' }
+  | { kind: 'end_rejected' };
+
 interface BpmnWorkflowCanvasProps {
   steps: BpmnEditableStep[];
   selectedStepIdx: number;
@@ -37,10 +45,11 @@ interface BpmnWorkflowCanvasProps {
   onSelectStep: (idx: number) => void;
   onDiagramChange: (next: WorkflowDiagramLayout) => void;
   onUpdateStepPos: (idx: number, pos: { x: number; y: number }) => void;
+  onUpdateStepConfig?: (idx: number, patch: Partial<WorkflowStepConfig>) => void;
   onConnectBranch: (
     fromIdx: number,
     branch: BpmnBranchKind,
-    target: { kind: 'step'; stepOrder: number } | { kind: 'end_approved' } | { kind: 'end_rejected' }
+    target: BpmnConnectTarget
   ) => void;
   onDeleteStep: (idx: number) => void;
   onAddBlankStepAt: (pos?: { x: number; y: number }) => void;
@@ -60,24 +69,50 @@ interface BpmnWorkflowCanvasProps {
   onClearDrag: () => void;
 }
 
-const NODE_W = 236;
-const NODE_H = 148;
+const NODE_W = 242;
+const NODE_H = 166;
 const CIRCLE_SIZE = 68;
+const CREATOR_W = 126;
+const CREATOR_H = 60;
 
 export function getDefaultNodePosition(idx: number): { x: number; y: number } {
   return {
-    x: 220 + idx * 300,
-    y: 190,
+    x: 230 + idx * 305,
+    y: 175,
   };
 }
 
 export function getDefaultDiagramLayout(stepCount: number): WorkflowDiagramLayout {
-  const endX = Math.max(540, 220 + Math.max(1, stepCount) * 300);
+  const endX = Math.max(560, 230 + Math.max(1, stepCount) * 305);
   return {
-    startPos: { x: 64, y: 230 },
-    endApprovedPos: { x: endX, y: 120 },
-    endRejectedPos: { x: endX, y: 340 },
+    startPos: { x: 64, y: 224 },
+    creatorPos: { x: 48, y: 392 },
+    endApprovedPos: { x: endX, y: 112 },
+    endRejectedPos: { x: endX, y: 332 },
   };
+}
+
+function getEffectiveBranchMode(
+  branchMode: string | undefined,
+  approvalMode: string | undefined,
+  kind: 'revision' | 'reject'
+): 'SINGLE' | 'MAJORITY' | 'ALL' {
+  if (branchMode === 'SINGLE' || branchMode === 'MAJORITY' || branchMode === 'ALL') {
+    return branchMode;
+  }
+  if (kind === 'revision') {
+    if (approvalMode === 'MAJORITY' || approvalMode === 'ALL') return 'MAJORITY';
+    return 'SINGLE';
+  }
+  if (approvalMode === 'MAJORITY') return 'MAJORITY';
+  return 'SINGLE';
+}
+
+function modeShortLabel(mode: string | undefined): string {
+  if (mode === 'MAJORITY') return 'اکثریت';
+  if (mode === 'ALL') return 'اجماع';
+  if (mode === 'NOTIFY_ONLY') return 'اطلاع';
+  return '۱ نفر';
 }
 
 export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
@@ -87,6 +122,7 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
   onSelectStep,
   onDiagramChange,
   onUpdateStepPos,
+  onUpdateStepConfig,
   onConnectBranch,
   onDeleteStep,
   onAddBlankStepAt,
@@ -111,27 +147,46 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
   const [isCanvasDropActive, setIsCanvasDropActive] = useState(false);
 
   const [draggingNode, setDraggingNode] = useState<{
-    target: { kind: 'start' } | { kind: 'end_approved' } | { kind: 'end_rejected' } | { kind: 'step'; idx: number };
+    target:
+      | { kind: 'start' }
+      | { kind: 'creator' }
+      | { kind: 'end_approved' }
+      | { kind: 'end_rejected' }
+      | { kind: 'step'; idx: number };
     offsetX: number;
     offsetY: number;
   } | null>(null);
 
-  const startPos = diagram.startPos || { x: 64, y: 230 };
-  const endApprovedPos = diagram.endApprovedPos || getDefaultDiagramLayout(steps.length).endApprovedPos!;
-  const endRejectedPos = diagram.endRejectedPos || getDefaultDiagramLayout(steps.length).endRejectedPos!;
+  const defaultLayout = getDefaultDiagramLayout(steps.length);
+  const startPos = diagram.startPos || defaultLayout.startPos!;
+  const creatorPos = diagram.creatorPos || defaultLayout.creatorPos!;
+  const endApprovedPos = diagram.endApprovedPos || defaultLayout.endApprovedPos!;
+  const endRejectedPos = diagram.endRejectedPos || defaultLayout.endRejectedPos!;
 
   const getStepPos = (idx: number) => steps[idx]?.config?.nodePosition || getDefaultNodePosition(idx);
 
   const canvasDimensions = useMemo(() => {
-    let maxX = Math.max(1080, startPos.x + 200, endApprovedPos.x + 160, endRejectedPos.x + 160);
-    let maxY = Math.max(560, startPos.y + 180, endApprovedPos.y + 160, endRejectedPos.y + 160);
+    let maxX = Math.max(
+      1100,
+      startPos.x + 200,
+      creatorPos.x + CREATOR_W + 160,
+      endApprovedPos.x + 160,
+      endRejectedPos.x + 160
+    );
+    let maxY = Math.max(
+      560,
+      startPos.y + 180,
+      creatorPos.y + CREATOR_H + 140,
+      endApprovedPos.y + 160,
+      endRejectedPos.y + 160
+    );
     steps.forEach((_, idx) => {
       const p = getStepPos(idx);
       maxX = Math.max(maxX, p.x + NODE_W + 120);
-      maxY = Math.max(maxY, p.y + NODE_H + 160);
+      maxY = Math.max(maxY, p.y + NODE_H + 170);
     });
     return { width: maxX, height: maxY };
-  }, [steps, startPos, endApprovedPos, endRejectedPos]);
+  }, [steps, startPos, creatorPos, endApprovedPos, endRejectedPos]);
 
   const toCanvasCoords = (clientX: number, clientY: number) => {
     const el = canvasRef.current;
@@ -147,11 +202,13 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
     if (draggingNode) {
       const pt = toCanvasCoords(e.clientX, e.clientY);
       const nextPos = {
-        x: Math.max(16, Math.min(canvasDimensions.width - 100, pt.x - draggingNode.offsetX)),
+        x: Math.max(16, Math.min(canvasDimensions.width - 110, pt.x - draggingNode.offsetX)),
         y: Math.max(16, Math.min(canvasDimensions.height - 90, pt.y - draggingNode.offsetY)),
       };
       if (draggingNode.target.kind === 'start') {
         onDiagramChange({ ...diagram, startPos: nextPos });
+      } else if (draggingNode.target.kind === 'creator') {
+        onDiagramChange({ ...diagram, creatorPos: nextPos });
       } else if (draggingNode.target.kind === 'end_approved') {
         onDiagramChange({ ...diagram, endApprovedPos: nextPos });
       } else if (draggingNode.target.kind === 'end_rejected') {
@@ -176,7 +233,12 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
 
   const startDragNode = (
     e: React.PointerEvent,
-    target: { kind: 'start' } | { kind: 'end_approved' } | { kind: 'end_rejected' } | { kind: 'step'; idx: number },
+    target:
+      | { kind: 'start' }
+      | { kind: 'creator' }
+      | { kind: 'end_approved' }
+      | { kind: 'end_rejected' }
+      | { kind: 'step'; idx: number },
     currentPos: { x: number; y: number }
   ) => {
     if (e.button !== 0) return;
@@ -190,13 +252,19 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
     });
   };
 
+  type ResolvedTarget =
+    | { kind: 'step'; idx: number }
+    | { kind: 'creator' }
+    | { kind: 'end_approved' }
+    | { kind: 'end_rejected' };
+
   const resolveOutgoingTargets = (idx: number) => {
     const step = steps[idx];
     const cfg = step?.config || {};
     const stepOrder = idx + 1;
 
     // 1. Approve target
-    let approveTarget: { kind: 'step'; idx: number } | { kind: 'end_approved' };
+    let approveTarget: ResolvedTarget;
     if (cfg.approveTarget === 'END_APPROVED') {
       approveTarget = { kind: 'end_approved' };
     } else if (
@@ -215,10 +283,12 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
     // 2. Revision target
     const revRule = cfg.onRevisionAction || cfg.onRejectAction || 'RETURN_PREV';
     const revStepOrd = cfg.onRevisionStepOrder ?? cfg.onRejectStepOrder;
-    let revisionTarget: { kind: 'step'; idx: number } | { kind: 'end_rejected' };
+    let revisionTarget: ResolvedTarget;
     if (revRule === 'REJECT_PROJECT') {
       revisionTarget = { kind: 'end_rejected' };
     } else if (revRule === 'RETURN_CREATOR') {
+      revisionTarget = { kind: 'creator' };
+    } else if (revRule === 'RETURN_STEP_1') {
       revisionTarget = { kind: 'step', idx: 0 };
     } else if (revRule === 'CUSTOM_STEP' && revStepOrd && revStepOrd >= 1 && revStepOrd <= steps.length) {
       revisionTarget = { kind: 'step', idx: revStepOrd - 1 };
@@ -230,11 +300,15 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
     const rejectRule =
       cfg.onRevisionAction !== undefined
         ? cfg.onRejectAction || 'REJECT_PROJECT'
-        : cfg.onRejectAction === 'RETURN_CREATOR' || cfg.onRejectAction === 'CUSTOM_STEP'
+        : cfg.onRejectAction === 'RETURN_CREATOR' ||
+          cfg.onRejectAction === 'RETURN_STEP_1' ||
+          cfg.onRejectAction === 'CUSTOM_STEP'
         ? cfg.onRejectAction
         : 'REJECT_PROJECT';
-    let rejectTarget: { kind: 'step'; idx: number } | { kind: 'end_rejected' };
+    let rejectTarget: ResolvedTarget;
     if (rejectRule === 'RETURN_CREATOR') {
+      rejectTarget = { kind: 'creator' };
+    } else if (rejectRule === 'RETURN_STEP_1') {
       rejectTarget = { kind: 'step', idx: 0 };
     } else if (rejectRule === 'RETURN_PREV') {
       rejectTarget = { kind: 'step', idx: Math.max(0, stepOrder - 2) };
@@ -254,15 +328,11 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
 
   const getPortOrigin = (idx: number, branch: BpmnBranchKind) => {
     const p = getStepPos(idx);
-    // Ports arranged horizontally along the bottom edge of the Task/Gateway node
     const offset = branch === 'approve' ? NODE_W - 44 : branch === 'revision' ? NODE_W / 2 : 44;
     return { x: p.x + offset, y: p.y + NODE_H };
   };
 
-  const getTargetAnchor = (
-    fromPt: { x: number; y: number },
-    target: { kind: 'step'; idx: number } | { kind: 'end_approved' } | { kind: 'end_rejected' }
-  ) => {
+  const getTargetAnchor = (fromPt: { x: number; y: number }, target: ResolvedTarget) => {
     if (target.kind === 'end_approved') {
       return {
         x: endApprovedPos.x,
@@ -273,6 +343,12 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
       return {
         x: endRejectedPos.x,
         y: endRejectedPos.y + CIRCLE_SIZE / 2,
+      };
+    }
+    if (target.kind === 'creator') {
+      return {
+        x: creatorPos.x + CREATOR_W / 2,
+        y: creatorPos.y + CREATOR_H,
       };
     }
     const tp = getStepPos(target.idx);
@@ -293,7 +369,7 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
   const buildEdgePath = (
     from: { x: number; y: number },
     to: { x: number; y: number },
-    branch: BpmnBranchKind | 'start',
+    branch: BpmnBranchKind | 'start' | 'creator_return',
     isBackwardLoop: boolean
   ) => {
     if (branch === 'start') {
@@ -302,8 +378,14 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
       return { path, midX: (from.x + to.x) / 2, midY: (from.y + to.y) / 2 };
     }
 
+    if (branch === 'creator_return') {
+      const path = `M ${from.x} ${from.y} C ${from.x} ${from.y - 45}, ${to.x - 55} ${to.y}, ${to.x} ${to.y}`;
+      const midX = (from.x + to.x) / 2 - 16;
+      const midY = (from.y + to.y) / 2;
+      return { path, midX, midY };
+    }
+
     if (isBackwardLoop) {
-      // Smooth under-arc for revision/reject return arrows so they don't cut across cards
       const arcDepth = branch === 'revision' ? 75 : 108;
       const peakY = Math.max(from.y, to.y) + arcDepth;
       const path = `M ${from.x} ${from.y} C ${from.x} ${peakY}, ${to.x} ${peakY}, ${to.x} ${to.y}`;
@@ -323,13 +405,12 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
     return { path, midX, midY };
   };
 
-  const completeConnection = (
-    target: { kind: 'step'; stepOrder: number } | { kind: 'end_approved' } | { kind: 'end_rejected' }
-  ) => {
+  const completeConnection = (target: BpmnConnectTarget) => {
     if (!connecting) return;
-    // Prevent nonsensical approve->end_rejected or reject->end_approved if clicked accidentally?
-    // Actually allow connecting revision/reject to end_rejected or any step, and approve to end_approved or any step
-    if (connecting.branch === 'approve' && target.kind === 'end_rejected') {
+    if (
+      connecting.branch === 'approve' &&
+      (target.kind === 'end_rejected' || target.kind === 'creator')
+    ) {
       setConnecting(null);
       setHoverTargetKey(null);
       return;
@@ -344,11 +425,18 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
     setHoverTargetKey(null);
   };
 
+  const hasAnyCreatorReturnRoute = useMemo(() => {
+    return steps.some((st) => {
+      const cfg = st.config || {};
+      return cfg.onRevisionAction === 'RETURN_CREATOR' || cfg.onRejectAction === 'RETURN_CREATOR';
+    });
+  }, [steps]);
+
   const edges = useMemo(() => {
     const list: Array<{
       id: string;
       fromIdx: number;
-      branch: BpmnBranchKind | 'start';
+      branch: BpmnBranchKind | 'start' | 'creator_return';
       label: string;
       color: string;
       badgeBg: string;
@@ -379,10 +467,40 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
         midX,
         midY,
       });
+
+      if (hasAnyCreatorReturnRoute) {
+        const cFrom = { x: creatorPos.x + CREATOR_W / 2, y: creatorPos.y };
+        const step0 = getStepPos(0);
+        const cTo = { x: step0.x, y: step0.y + NODE_H * 0.72 };
+        const { path: cPath, midX: cMidX, midY: cMidY } = buildEdgePath(
+          cFrom,
+          cTo,
+          'creator_return',
+          false
+        );
+        list.push({
+          id: 'edge-creator-return',
+          fromIdx: 0,
+          branch: 'creator_return',
+          label: 'ارسال مجدد',
+          color: '#0d9488',
+          badgeBg: '#f0fdfa',
+          badgeBorder: '#99f6e4',
+          badgeText: '#115e59',
+          markerId: 'arrow-creator',
+          path: cPath,
+          midX: cMidX,
+          midY: cMidY,
+          isDashed: true,
+        });
+      }
     }
 
-    steps.forEach((_, idx) => {
+    steps.forEach((st, idx) => {
+      const cfg = st.config || {};
       const { approveTarget, revisionTarget, rejectTarget } = resolveOutgoingTargets(idx);
+      const revMode = getEffectiveBranchMode(cfg.revisionMode, cfg.approvalMode, 'revision');
+      const rejMode = getEffectiveBranchMode(cfg.rejectMode, cfg.approvalMode, 'reject');
 
       // Approve Flow
       {
@@ -390,11 +508,12 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
         const to = getTargetAnchor(from, approveTarget);
         const isBack = approveTarget.kind === 'step' && approveTarget.idx <= idx;
         const { path, midX, midY } = buildEdgePath(from, to, 'approve', isBack);
+        const baseLbl = approveTarget.kind === 'end_approved' ? 'تایید نهایی' : 'تایید';
         list.push({
           id: `edge-${idx}-approve`,
           fromIdx: idx,
           branch: 'approve',
-          label: approveTarget.kind === 'end_approved' ? 'تایید نهایی' : 'تایید',
+          label: `${baseLbl} (${modeShortLabel(cfg.approvalMode)})`,
           color: '#059669',
           badgeBg: '#ecfdf5',
           badgeBorder: '#a7f3d0',
@@ -410,13 +529,21 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
       {
         const from = getPortOrigin(idx, 'revision');
         const to = getTargetAnchor(from, revisionTarget);
-        const isBack = revisionTarget.kind === 'step' && revisionTarget.idx <= idx;
+        const isBack =
+          revisionTarget.kind === 'creator' ||
+          (revisionTarget.kind === 'step' && revisionTarget.idx <= idx);
         const { path, midX, midY } = buildEdgePath(from, to, 'revision', isBack);
+        const revLbl =
+          revisionTarget.kind === 'creator'
+            ? 'اصلاح ← ثبت‌کننده'
+            : revisionTarget.kind === 'end_rejected'
+            ? 'اصلاح ← رد'
+            : 'اصلاح';
         list.push({
           id: `edge-${idx}-revision`,
           fromIdx: idx,
           branch: 'revision',
-          label: 'اصلاح',
+          label: `${revLbl} (${modeShortLabel(revMode)})`,
           color: '#d97706',
           badgeBg: '#fffbeb',
           badgeBorder: '#fde68a',
@@ -433,13 +560,21 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
       {
         const from = getPortOrigin(idx, 'reject');
         const to = getTargetAnchor(from, rejectTarget);
-        const isBack = rejectTarget.kind === 'step' && rejectTarget.idx <= idx;
+        const isBack =
+          rejectTarget.kind === 'creator' ||
+          (rejectTarget.kind === 'step' && rejectTarget.idx <= idx);
         const { path, midX, midY } = buildEdgePath(from, to, 'reject', isBack);
+        const rejLbl =
+          rejectTarget.kind === 'end_rejected'
+            ? 'رد نهایی'
+            : rejectTarget.kind === 'creator'
+            ? 'رد ← ثبت‌کننده'
+            : 'رد ← گام';
         list.push({
           id: `edge-${idx}-reject`,
           fromIdx: idx,
           branch: 'reject',
-          label: rejectTarget.kind === 'end_rejected' ? 'رد نهایی' : 'رد ← گام',
+          label: `${rejLbl} (${modeShortLabel(rejMode)})`,
           color: '#e11d48',
           badgeBg: '#fff1f2',
           badgeBorder: '#fecdd3',
@@ -454,20 +589,15 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
     });
 
     return list;
-  }, [steps, startPos, endApprovedPos, endRejectedPos]);
+  }, [steps, startPos, creatorPos, endApprovedPos, endRejectedPos, hasAnyCreatorReturnRoute]);
 
-  const approvalBadgeText = (cfg: WorkflowStepConfig) => {
-    const mode = cfg.approvalMode || 'SINGLE';
-    const base =
-      mode === 'MAJORITY'
-        ? 'اکثریت'
-        : mode === 'ALL'
-        ? 'اجماع'
-        : mode === 'NOTIFY_ONLY'
-        ? 'اطلاع‌رسانی'
-        : 'تک‌نفره';
-    return cfg.voteCollectionMode === 'WAIT_ALL' ? `${base} · صبر تا همه` : base;
-  };
+  const selectedStep = steps[selectedStepIdx] || null;
+  const selectedRevMode = selectedStep
+    ? getEffectiveBranchMode(selectedStep.config.revisionMode, selectedStep.config.approvalMode, 'revision')
+    : 'SINGLE';
+  const selectedRejMode = selectedStep
+    ? getEffectiveBranchMode(selectedStep.config.rejectMode, selectedStep.config.approvalMode, 'reject')
+    : 'SINGLE';
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 overflow-hidden flex flex-col">
@@ -558,7 +688,7 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
               : connecting.branch === 'revision'
               ? 'اصلاح'
               : 'رد'}
-            » از گام {connecting.fromIdx + 1}: روی گام مقصد یا گره پایان مورد نظر کلیک کنید.
+            » از گام {connecting.fromIdx + 1}: روی گام مقصد، «کارتابل ثبت‌کننده (اصلاح)» یا گره پایان مورد نظر کلیک کنید.
           </span>
           <button
             type="button"
@@ -571,13 +701,13 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
       ) : (
         <div className="px-3.5 py-1.5 bg-indigo-50/70 border-b border-indigo-100 text-[11px] text-indigo-950 flex flex-wrap items-center justify-between gap-2">
           <span>
-            سمت‌ها را از لیست کنار بوم به فضای خالی بکشید یا برای ارسال هم‌زمان روی گام فعلی رها کنید؛ گره‌ها را جابجا کنید و با کلیک روی خروجی‌های <strong>تایید / اصلاح / رد</strong> فلش‌های مسیر را به هر گامی بچسبانید.
+            خروجی‌های <strong>تایید / اصلاح / رد</strong> را به گام‌ها، گره <strong>«کارتابل ثبت‌کننده»</strong> یا گره‌های پایان وصل کنید و در نوار تنظیمات سریع پایین بوم، نصاب (تک‌نفره / اکثریت / اجماع) هر اقدام را جداگانه تعیین نمایید.
           </span>
         </div>
       )}
 
       {/* Scrollable BPMN Dot-Grid Diagram Viewport */}
-      <div className="overflow-auto max-h-[460px] bg-slate-100/70 relative" dir="ltr">
+      <div className="overflow-auto max-h-[430px] bg-slate-100/70 relative" dir="ltr">
         <div
           ref={canvasRef}
           onPointerMove={handleCanvasPointerMove}
@@ -634,6 +764,7 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
               <defs>
                 {[
                   { id: 'arrow-start', color: '#4f46e5' },
+                  { id: 'arrow-creator', color: '#0d9488' },
                   { id: 'arrow-approve', color: '#059669' },
                   { id: 'arrow-revision', color: '#d97706' },
                   { id: 'arrow-reject', color: '#e11d48' },
@@ -653,7 +784,10 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
               </defs>
 
               {edges.map((edge) => {
-                const isSelectedSource = edge.branch !== 'start' && edge.fromIdx === selectedStepIdx;
+                const isSelectedSource =
+                  edge.branch !== 'start' &&
+                  edge.branch !== 'creator_return' &&
+                  edge.fromIdx === selectedStepIdx;
                 return (
                   <g key={edge.id}>
                     <path
@@ -663,7 +797,11 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                       strokeWidth={isSelectedSource ? 2.6 : 2}
                       strokeDasharray={edge.isDashed ? '6 4' : undefined}
                       markerEnd={`url(#${edge.markerId})`}
-                      opacity={isSelectedSource || edge.branch === 'start' ? 0.95 : 0.72}
+                      opacity={
+                        isSelectedSource || edge.branch === 'start' || edge.branch === 'creator_return'
+                          ? 0.95
+                          : 0.72
+                      }
                     />
                   </g>
                 );
@@ -692,7 +830,7 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
               })()}
             </svg>
 
-            {/* Edge Pill Labels (Clickable to focus step in inspector) */}
+            {/* Edge Pill Labels (Clickable to focus source step) */}
             {edges.map((edge) => (
               <button
                 key={`${edge.id}-label`}
@@ -731,6 +869,42 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
             >
               <Play className="w-4 h-4 text-emerald-700 fill-emerald-600" />
               <span className="text-[10px] font-black text-emerald-900 mt-0.5">شروع</span>
+            </div>
+
+            {/* PROJECT CREATOR REVISION NODE (کارتابل ثبت‌کننده) */}
+            <div
+              onPointerDown={(e) => startDragNode(e, { kind: 'creator' }, creatorPos)}
+              onPointerEnter={() => connecting && setHoverTargetKey('creator')}
+              onPointerLeave={() => hoverTargetKey === 'creator' && setHoverTargetKey(null)}
+              onClick={(e) => {
+                if (connecting) {
+                  e.stopPropagation();
+                  completeConnection({ kind: 'creator' });
+                }
+              }}
+              style={{
+                left: `${creatorPos.x}px`,
+                top: `${creatorPos.y}px`,
+                width: `${CREATOR_W}px`,
+                height: `${CREATOR_H}px`,
+              }}
+              dir="rtl"
+              className={`absolute z-20 rounded-2xl bg-amber-50 border-2 border-amber-500 shadow-sm px-2 flex flex-col items-center justify-center transition ${
+                connecting
+                  ? connecting.branch !== 'approve'
+                    ? 'cursor-crosshair ring-4 ring-amber-300 scale-105'
+                    : 'opacity-40 cursor-not-allowed'
+                  : 'cursor-grab active:cursor-grabbing hover:ring-4 hover:ring-amber-200/70'
+              } ${hoverTargetKey === 'creator' ? 'bg-amber-100 scale-110' : ''}`}
+              title="کارتابل ثبت‌کننده پروژه جهت انجام اصلاحات و ارسال مجدد به گام ۱"
+            >
+              <div className="flex items-center gap-1 text-amber-800">
+                <UserCheck className="w-3.5 h-3.5 shrink-0" />
+                <span className="text-[10px] font-black leading-tight">ثبت‌کننده پروژه</span>
+              </div>
+              <span className="text-[9px] font-bold text-amber-700 mt-0.5">
+                کارتابل اصلاح و عودت
+              </span>
             </div>
 
             {/* END APPROVED NODE */}
@@ -809,6 +983,16 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
               const isParallelDrop =
                 hoverDropStepIdx === idx && dragPayload?.kind === 'toolbox-position';
               const isWaitAll = st.config.voteCollectionMode === 'WAIT_ALL';
+              const stepRevMode = getEffectiveBranchMode(
+                st.config.revisionMode,
+                st.config.approvalMode,
+                'revision'
+              );
+              const stepRejMode = getEffectiveBranchMode(
+                st.config.rejectMode,
+                st.config.approvalMode,
+                'reject'
+              );
 
               return (
                 <div
@@ -868,7 +1052,7 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                   } ${isConnectTarget ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'}`}
                 >
                   {/* Card Top Bar */}
-                  <div className="px-3 pt-2.5 pb-1.5 border-b border-slate-100 flex items-center justify-between gap-1.5">
+                  <div className="px-3 pt-2 pb-1.5 border-b border-slate-100 flex items-center justify-between gap-1.5">
                     <div className="flex items-center gap-1.5 min-w-0">
                       <span
                         className={`w-6 h-6 rounded-lg text-[11px] font-black flex items-center justify-center shrink-0 tabular-nums ${
@@ -886,28 +1070,34 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                       </span>
                     </div>
 
-                    {steps.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDeleteStep(idx);
-                        }}
-                        className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer shrink-0"
-                        title="حذف گام"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
+                    <div className="flex items-center gap-1 shrink-0">
+                      <span className="inline-flex items-center gap-0.5 text-[10px] text-slate-500 font-bold tabular-nums">
+                        <Users className="w-3 h-3 text-slate-400" />
+                        {assigneeCount}
+                      </span>
+                      {steps.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteStep(idx);
+                          }}
+                          className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer shrink-0"
+                          title="حذف گام"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Card Middle: Positions & Gateway Rule */}
+                  {/* Card Middle: Positions & Per-Action Quorums */}
                   <div className="px-3 py-1.5 space-y-1.5 flex-1 overflow-hidden">
                     <div className="flex flex-wrap gap-1">
                       {st.positionIds.slice(0, 2).map((pid) => (
                         <span
                           key={pid}
-                          className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-800 border border-slate-200 truncate max-w-[100px]"
+                          className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-800 border border-slate-200 truncate max-w-[104px]"
                         >
                           <Briefcase className="w-2.5 h-2.5 text-indigo-600 shrink-0" />
                           <span className="truncate">{getPositionTitle(pid, st.structureId)}</span>
@@ -920,21 +1110,23 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                       )}
                     </div>
 
-                    <div className="flex items-center justify-between gap-1 text-[10px]">
-                      <span
-                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md font-bold border ${
-                          isWaitAll
-                            ? 'bg-indigo-50 text-indigo-800 border-indigo-200'
-                            : 'bg-violet-50 text-violet-800 border-violet-200'
-                        }`}
-                      >
-                        {isWaitAll && <Clock className="w-2.5 h-2.5 text-indigo-600 shrink-0" />}
-                        <span className="truncate">{approvalBadgeText(st.config)}</span>
+                    {/* Per-action quorum chips */}
+                    <div className="flex flex-wrap items-center gap-1 text-[9px] font-bold">
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                        تایید: {modeShortLabel(st.config.approvalMode)}
                       </span>
-                      <span className="inline-flex items-center gap-0.5 text-slate-500 font-semibold tabular-nums shrink-0">
-                        <Users className="w-3 h-3 text-slate-400" />
-                        {assigneeCount}
+                      <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                        اصلاح: {modeShortLabel(stepRevMode)}
                       </span>
+                      <span className="px-1.5 py-0.5 rounded bg-rose-50 text-rose-800 border border-rose-200">
+                        رد: {modeShortLabel(stepRejMode)}
+                      </span>
+                      {isWaitAll && (
+                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-800 border border-indigo-200">
+                          <Clock className="w-2.5 h-2.5" />
+                          صبر همه
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -1003,6 +1195,215 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Inline BPMN Per-Step Quick Decision & Quorum Bar */}
+      {selectedStep && onUpdateStepConfig && (
+        <div className="p-3 bg-white border-t border-slate-200 space-y-2.5" dir="rtl">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-xs font-black text-slate-900">
+              <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-600" />
+              <span>
+                پیکربندی مستقیم دروازه تصمیم‌گیری BPMN — گام {selectedStepIdx + 1}: «{selectedStep.title || 'بدون عنوان'}»
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 text-[11px]">
+              <label className="flex items-center gap-1 text-slate-600 font-bold">
+                <span>جمع‌آوری آرا:</span>
+                <select
+                  value={selectedStep.config.voteCollectionMode || 'EARLY_DECIDE'}
+                  onChange={(e) =>
+                    onUpdateStepConfig(selectedStepIdx, {
+                      voteCollectionMode: e.target.value as 'EARLY_DECIDE' | 'WAIT_ALL',
+                    })
+                  }
+                  className="rounded-lg bg-slate-50 border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-900 cursor-pointer"
+                >
+                  <option value="EARLY_DECIDE">به‌محض تحقق نصاب هر اقدام</option>
+                  <option value="WAIT_ALL">صبر تا اقدام تمام اعضا</option>
+                </select>
+              </label>
+
+              <label className="flex items-center gap-1 text-slate-600 font-bold">
+                <span>تساوی آرا:</span>
+                <select
+                  value={selectedStep.config.tieBreaker || 'REVISION'}
+                  onChange={(e) =>
+                    onUpdateStepConfig(selectedStepIdx, {
+                      tieBreaker: e.target.value as 'REVISION' | 'REJECT' | 'APPROVE',
+                    })
+                  }
+                  className="rounded-lg bg-slate-50 border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-900 cursor-pointer"
+                >
+                  <option value="REVISION">مسیر اصلاح</option>
+                  <option value="REJECT">مسیر رد</option>
+                  <option value="APPROVE">مسیر تایید</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+            {/* Approve Column */}
+            <div className="p-2 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-1.5">
+              <div className="text-[11px] font-black text-emerald-900 flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                <span>تایید (سبز)</span>
+              </div>
+              <select
+                value={selectedStep.config.approvalMode || 'SINGLE'}
+                onChange={(e) =>
+                  onUpdateStepConfig(selectedStepIdx, {
+                    approvalMode: e.target.value as WorkflowStepConfig['approvalMode'],
+                  })
+                }
+                className="w-full rounded-lg bg-white border border-emerald-300 px-2 py-1 text-[11px] font-bold text-slate-800 cursor-pointer"
+              >
+                <option value="SINGLE">تک‌نفره (تایید ۱ نفر)</option>
+                <option value="MAJORITY">اکثریت اعضا (&gt;۵۰٪)</option>
+                <option value="ALL">اجماع تمام اعضا (۱۰۰٪)</option>
+                <option value="NOTIFY_ONLY">فقط اطلاع‌رسانی</option>
+              </select>
+              <select
+                value={selectedStep.config.approveTarget || 'NEXT_STEP'}
+                onChange={(e) =>
+                  onUpdateStepConfig(selectedStepIdx, {
+                    approveTarget: e.target.value as WorkflowStepConfig['approveTarget'],
+                  })
+                }
+                className="w-full rounded-lg bg-white border border-emerald-300 px-2 py-1 text-[11px] font-semibold text-slate-800 cursor-pointer"
+              >
+                <option value="NEXT_STEP">مسیر: گام بعدی / تصویب نهایی</option>
+                <option value="CUSTOM_STEP">مسیر: ارجاع به گام دلخواه</option>
+                <option value="END_APPROVED">مسیر: تصویب نهایی مستقیم</option>
+              </select>
+              {selectedStep.config.approveTarget === 'CUSTOM_STEP' && (
+                <select
+                  value={selectedStep.config.onApproveStepOrder || 1}
+                  onChange={(e) =>
+                    onUpdateStepConfig(selectedStepIdx, {
+                      onApproveStepOrder: parseInt(e.target.value, 10),
+                    })
+                  }
+                  className="w-full rounded-lg bg-white border border-emerald-300 px-2 py-1 text-[11px] text-slate-900"
+                >
+                  {steps.map((t, i) => (
+                    <option key={t.localKey} value={i + 1}>
+                      گام {i + 1}: {t.title}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {/* Revision Column */}
+            <div className="p-2 rounded-xl bg-amber-50/70 border border-amber-200 space-y-1.5">
+              <div className="text-[11px] font-black text-amber-900 flex items-center gap-1">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                <span>اصلاح (زرد)</span>
+              </div>
+              <select
+                value={selectedRevMode}
+                onChange={(e) =>
+                  onUpdateStepConfig(selectedStepIdx, {
+                    revisionMode: e.target.value as 'SINGLE' | 'MAJORITY' | 'ALL',
+                  })
+                }
+                className="w-full rounded-lg bg-white border border-amber-300 px-2 py-1 text-[11px] font-bold text-slate-800 cursor-pointer"
+              >
+                <option value="SINGLE">تک‌نفره (رای ۱ نفر)</option>
+                <option value="MAJORITY">اکثریت اعضا (&gt;۵۰٪)</option>
+                <option value="ALL">اجماع تمام اعضا (۱۰۰٪)</option>
+              </select>
+              <select
+                value={selectedStep.config.onRevisionAction || 'RETURN_PREV'}
+                onChange={(e) =>
+                  onUpdateStepConfig(selectedStepIdx, {
+                    onRevisionAction: e.target.value as WorkflowStepConfig['onRevisionAction'],
+                  })
+                }
+                className="w-full rounded-lg bg-white border border-amber-300 px-2 py-1 text-[11px] font-semibold text-slate-800 cursor-pointer"
+              >
+                <option value="RETURN_CREATOR">مسیر: کارتابل ثبت‌کننده پروژه (اصلاح)</option>
+                <option value="RETURN_PREV">مسیر: بازگشت به گام قبلی</option>
+                <option value="RETURN_STEP_1">مسیر: بازگشت به گام ۱</option>
+                <option value="CUSTOM_STEP">مسیر: ارجاع به گام دلخواه</option>
+                <option value="REJECT_PROJECT">مسیر: رد و خاتمه طرح</option>
+              </select>
+              {selectedStep.config.onRevisionAction === 'CUSTOM_STEP' && (
+                <select
+                  value={selectedStep.config.onRevisionStepOrder || 1}
+                  onChange={(e) =>
+                    onUpdateStepConfig(selectedStepIdx, {
+                      onRevisionStepOrder: parseInt(e.target.value, 10),
+                    })
+                  }
+                  className="w-full rounded-lg bg-white border border-amber-300 px-2 py-1 text-[11px] text-slate-900"
+                >
+                  {steps.map((t, i) => (
+                    <option key={t.localKey} value={i + 1}>
+                      گام {i + 1}: {t.title}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {/* Reject Column */}
+            <div className="p-2 rounded-xl bg-rose-50/70 border border-rose-200 space-y-1.5">
+              <div className="text-[11px] font-black text-rose-900 flex items-center gap-1">
+                <XCircle className="w-3.5 h-3.5 text-rose-600" />
+                <span>رد طرح (قرمز)</span>
+              </div>
+              <select
+                value={selectedRejMode}
+                onChange={(e) =>
+                  onUpdateStepConfig(selectedStepIdx, {
+                    rejectMode: e.target.value as 'SINGLE' | 'MAJORITY' | 'ALL',
+                  })
+                }
+                className="w-full rounded-lg bg-white border border-rose-300 px-2 py-1 text-[11px] font-bold text-slate-800 cursor-pointer"
+              >
+                <option value="SINGLE">تک‌نفره (رای ۱ نفر)</option>
+                <option value="MAJORITY">اکثریت اعضا (&gt;۵۰٪)</option>
+                <option value="ALL">اجماع تمام اعضا (۱۰۰٪)</option>
+              </select>
+              <select
+                value={selectedStep.config.onRejectAction || 'REJECT_PROJECT'}
+                onChange={(e) =>
+                  onUpdateStepConfig(selectedStepIdx, {
+                    onRejectAction: e.target.value as WorkflowStepConfig['onRejectAction'],
+                  })
+                }
+                className="w-full rounded-lg bg-white border border-rose-300 px-2 py-1 text-[11px] font-semibold text-slate-800 cursor-pointer"
+              >
+                <option value="REJECT_PROJECT">مسیر: رد نهایی و خاتمه طرح</option>
+                <option value="RETURN_CREATOR">مسیر: کارتابل ثبت‌کننده پروژه (اصلاح)</option>
+                <option value="RETURN_PREV">مسیر: بازگشت به گام قبلی</option>
+                <option value="RETURN_STEP_1">مسیر: بازگشت به گام ۱</option>
+                <option value="CUSTOM_STEP">مسیر: ارجاع به گام دلخواه</option>
+              </select>
+              {selectedStep.config.onRejectAction === 'CUSTOM_STEP' && (
+                <select
+                  value={selectedStep.config.onRejectStepOrder || 1}
+                  onChange={(e) =>
+                    onUpdateStepConfig(selectedStepIdx, {
+                      onRejectStepOrder: parseInt(e.target.value, 10),
+                    })
+                  }
+                  className="w-full rounded-lg bg-white border border-rose-300 px-2 py-1 text-[11px] text-slate-900"
+                >
+                  {steps.map((t, i) => (
+                    <option key={t.localKey} value={i + 1}>
+                      گام {i + 1}: {t.title}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

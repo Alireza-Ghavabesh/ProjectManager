@@ -35,12 +35,17 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
   const [error, setError] = useState('');
 
   const steps = project.workflowSteps || [];
-  const currentStepIndex = Math.max(0, (project.currentStepOrder || 1) - 1);
-  const currentStep = steps[currentStepIndex];
-  const nextStep = steps[currentStepIndex + 1];
+  const rawStepOrder = project.currentStepOrder ?? 1;
+  const isCreatorRevisionTurn =
+    project.status === 'NEEDS_REVISION' && Number(rawStepOrder) === 0;
+  const currentStepIndex = isCreatorRevisionTurn ? 0 : Math.max(0, rawStepOrder - 1);
+  const currentStep = isCreatorRevisionTurn ? undefined : steps[currentStepIndex];
+  const nextStep = isCreatorRevisionTurn ? steps[0] : steps[currentStepIndex + 1];
   const logs = project.workflowLogs || [];
   const stepProgress = project.currentStepApprovalProgress;
   const currentApprovalMode = currentStep?.config?.approvalMode || stepProgress?.mode || 'SINGLE';
+  const currentRevisionMode = stepProgress?.revisionMode || 'SINGLE';
+  const currentRejectMode = stepProgress?.rejectMode || 'SINGLE';
   const currentVoteCollectionMode =
     currentStep?.config?.voteCollectionMode || stepProgress?.voteCollectionMode || 'EARLY_DECIDE';
   const isCompletedOrRejected = project.status === 'APPROVED' || project.status === 'REJECTED';
@@ -52,8 +57,9 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
       : [];
   const isAssignee = Boolean(
     project.isMyWorkflowTurn ||
+      (isCreatorRevisionTurn && project.createdById === currentUser.id) ||
       project.currentAssignees?.some((a) => a.id === currentUser.id) ||
-      (currentUser.positionId && currentPosIds.includes(currentUser.positionId))
+      (!isCreatorRevisionTurn && currentUser.positionId && currentPosIds.includes(currentUser.positionId))
   );
   const canSubmitAction =
     !isCompletedOrRejected &&
@@ -64,12 +70,20 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
   ]);
   const showQuorumBar =
     Boolean(stepProgress) &&
+    !isCreatorRevisionTurn &&
     (currentApprovalMode === 'MAJORITY' ||
       currentApprovalMode === 'ALL' ||
+      currentRevisionMode === 'MAJORITY' ||
+      currentRevisionMode === 'ALL' ||
+      currentRejectMode === 'MAJORITY' ||
+      currentRejectMode === 'ALL' ||
       currentVoteCollectionMode === 'WAIT_ALL') &&
     !isCompletedOrRejected;
 
   const approveTargetLabel = (() => {
+    if (isCreatorRevisionTurn) {
+      return steps[0] ? `به گام ۱: ${steps[0].title}` : 'به گام اول گردش کار';
+    }
     const cfg = currentStep?.config;
     if (cfg?.approveTarget === 'END_APPROVED') return 'تصویب نهایی و اتمام';
     if (cfg?.approveTarget === 'CUSTOM_STEP' && cfg.onApproveStepOrder) {
@@ -82,7 +96,8 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
   const revisionTargetLabel = (() => {
     const cfg = currentStep?.config;
     const rule = cfg?.onRevisionAction || cfg?.onRejectAction || 'RETURN_PREV';
-    if (rule === 'RETURN_CREATOR') return 'بازگشت به گام ۱';
+    if (rule === 'RETURN_CREATOR') return 'کارتابل ثبت‌کننده پروژه';
+    if (rule === 'RETURN_STEP_1') return 'بازگشت به گام ۱';
     if (rule === 'REJECT_PROJECT') return 'رد و مختومه شدن طرح';
     if (rule === 'CUSTOM_STEP') {
       const ord = cfg?.onRevisionStepOrder ?? cfg?.onRejectStepOrder ?? 1;
@@ -97,10 +112,13 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
     const rule =
       cfg?.onRevisionAction !== undefined
         ? cfg?.onRejectAction || 'REJECT_PROJECT'
-        : cfg?.onRejectAction === 'RETURN_CREATOR' || cfg?.onRejectAction === 'CUSTOM_STEP'
+        : cfg?.onRejectAction === 'RETURN_CREATOR' ||
+          cfg?.onRejectAction === 'RETURN_STEP_1' ||
+          cfg?.onRejectAction === 'CUSTOM_STEP'
         ? cfg.onRejectAction
         : 'REJECT_PROJECT';
-    if (rule === 'RETURN_CREATOR') return 'بازگشت به گام ۱';
+    if (rule === 'RETURN_CREATOR') return 'کارتابل ثبت‌کننده پروژه';
+    if (rule === 'RETURN_STEP_1') return 'بازگشت به گام ۱';
     if (rule === 'RETURN_PREV') return 'بازگشت به گام قبل';
     if (rule === 'CUSTOM_STEP' && cfg?.onRejectStepOrder) {
       const tStep = steps.find((s) => s.stepOrder === cfg.onRejectStepOrder);
@@ -171,18 +189,27 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
         <div className="p-5 border-b border-slate-100 bg-slate-50/40 space-y-3">
           <div className="text-xs font-bold text-slate-600 flex items-center justify-between">
             <span>مراحل طی‌شده در چارت سازمانی:</span>
-            <span className="text-blue-700 font-bold bg-blue-50 px-2.5 py-0.5 rounded-lg border border-blue-200 tabular-nums">
-              گام {project.currentStepOrder || 1} از {steps.length}
+            <span
+              className={`font-bold px-2.5 py-0.5 rounded-lg border tabular-nums ${
+                isCreatorRevisionTurn
+                  ? 'text-amber-900 bg-amber-50 border-amber-300'
+                  : 'text-blue-700 bg-blue-50 border-blue-200'
+              }`}
+            >
+              {isCreatorRevisionTurn
+                ? 'در کارتابل ثبت‌کننده (نیازمند اصلاح)'
+                : `گام ${rawStepOrder} از ${steps.length}`}
             </span>
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {steps.map((st, idx) => {
-              const isPast = project.status === 'APPROVED' || (project.currentStepOrder || 1) > st.stepOrder;
+              const isPast = !isCreatorRevisionTurn && (project.status === 'APPROVED' || rawStepOrder > st.stepOrder);
               const isCurrent =
+                !isCreatorRevisionTurn &&
                 project.status !== 'APPROVED' &&
                 project.status !== 'REJECTED' &&
-                (project.currentStepOrder || 1) === st.stepOrder;
+                rawStepOrder === st.stepOrder;
               const stepPosText =
                 st.positions && st.positions.length > 0
                   ? st.positions.map((p) => p.title).join('، ')
@@ -234,13 +261,10 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="font-bold text-slate-800">
-                      وضعیت رای‌گیری در این گام (
-                      {currentApprovalMode === 'MAJORITY'
-                        ? 'اکثریت اعضا'
-                        : currentApprovalMode === 'ALL'
-                        ? 'تایید همه اعضا'
-                        : 'جمع‌آوری آرا'}
-                      ):
+                      وضعیت رای‌گیری و نصاب در این گام:
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                      نصاب تایید: {currentApprovalMode === 'ALL' ? 'اجماع' : currentApprovalMode === 'MAJORITY' ? 'اکثریت' : '۱ نفر'} | اصلاح: {currentRevisionMode === 'ALL' ? 'اجماع' : currentRevisionMode === 'MAJORITY' ? 'اکثریت' : '۱ نفر'} | رد: {currentRejectMode === 'ALL' ? 'اجماع' : currentRejectMode === 'MAJORITY' ? 'اکثریت' : '۱ نفر'}
                     </span>
                     {currentVoteCollectionMode === 'WAIT_ALL' && (
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
@@ -393,72 +417,128 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
             </div>
           )}
 
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-2">
-              انتخاب اقدام در این مرحله از گردش کار:
-            </label>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-              
-              <button
-                type="button"
-                onClick={() => setAction('FORWARD')}
-                className={`p-3 rounded-2xl border text-center transition cursor-pointer flex flex-col items-center justify-center ${
-                  action === 'FORWARD'
-                    ? 'bg-emerald-50 border-emerald-500 text-emerald-800 ring-2 ring-emerald-500/20 shadow-xs'
-                    : 'bg-white border-slate-200 text-slate-600 hover:border-emerald-300 hover:bg-emerald-50/50'
-                }`}
-              >
-                <CheckCircle2 className="w-5 h-5 mb-1 text-emerald-600" />
-                <span className="text-xs font-bold">
-                  {currentApprovalMode === 'MAJORITY'
-                    ? 'رای موافق (تایید در اکثریت)'
-                    : showQuorumBar
-                    ? 'ثبت تایید من در این مرحله'
-                    : 'تایید و ارجاع'}
-                </span>
-                <span className="text-[10px] text-slate-500 mt-0.5 truncate max-w-full">
-                  {approveTargetLabel}
-                </span>
-              </button>
+          {isCreatorRevisionTurn ? (
+            <div className="space-y-3">
+              <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 text-xs space-y-1">
+                <div className="font-black flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>پرونده در کارتابل ثبت‌کننده پروژه جهت انجام اصلاحات قرار دارد</span>
+                </div>
+                <p className="text-[11px] leading-relaxed text-amber-800">
+                  می‌توانید ابتدا اطلاعات پروژه را ویرایش کنید و سپس با انتخاب گزینه «ارسال مجدد»، پروژه را دوباره به مرحله اول گردش کار بفرستید.
+                </p>
+              </div>
 
-              <button
-                type="button"
-                onClick={() => setAction('NEEDS_REVISION')}
-                className={`p-3 rounded-2xl border text-center transition cursor-pointer flex flex-col items-center justify-center ${
-                  action === 'NEEDS_REVISION'
-                    ? 'bg-amber-50 border-amber-500 text-amber-800 ring-2 ring-amber-500/20 shadow-xs'
-                    : 'bg-white border-slate-200 text-slate-600 hover:border-amber-300 hover:bg-amber-50/50'
-                }`}
-              >
-                <AlertTriangle className="w-5 h-5 mb-1 text-amber-600" />
-                <span className="text-xs font-bold">
-                  {showQuorumBar ? 'رای نیاز به اصلاح' : 'عودت جهت اصلاح'}
-                </span>
-                <span className="text-[10px] text-slate-500 mt-0.5 truncate max-w-full">
-                  {showQuorumBar ? `ثبت در مرحله (${revisionTargetLabel})` : revisionTargetLabel}
-                </span>
-              </button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setAction('FORWARD')}
+                  className={`p-3 rounded-2xl border text-center transition cursor-pointer flex flex-col items-center justify-center ${
+                    action === 'FORWARD'
+                      ? 'bg-emerald-50 border-emerald-500 text-emerald-800 ring-2 ring-emerald-500/20 shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-600 hover:border-emerald-300 hover:bg-emerald-50/50'
+                  }`}
+                >
+                  <CheckCircle2 className="w-5 h-5 mb-1 text-emerald-600" />
+                  <span className="text-xs font-bold">اصلاح شد — ارسال مجدد به گام ۱</span>
+                  <span className="text-[10px] text-slate-500 mt-0.5 truncate max-w-full">
+                    {approveTargetLabel}
+                  </span>
+                </button>
 
-              <button
-                type="button"
-                onClick={() => setAction('REJECTED')}
-                className={`p-3 rounded-2xl border text-center transition cursor-pointer flex flex-col items-center justify-center ${
-                  action === 'REJECTED'
-                    ? 'bg-rose-50 border-rose-500 text-rose-800 ring-2 ring-rose-500/20 shadow-xs'
-                    : 'bg-white border-slate-200 text-slate-600 hover:border-rose-300 hover:bg-rose-50/50'
-                }`}
-              >
-                <XCircle className="w-5 h-5 mb-1 text-rose-600" />
-                <span className="text-xs font-bold">
-                  {showQuorumBar ? 'رای مخالف (رد در مرحله)' : 'رد در این مرحله'}
-                </span>
-                <span className="text-[10px] text-slate-500 mt-0.5 truncate max-w-full">
-                  {showQuorumBar ? `ثبت در آمار آرا (${rejectTargetLabel})` : rejectTargetLabel}
-                </span>
-              </button>
-
+                <button
+                  type="button"
+                  onClick={() => setAction('REJECTED')}
+                  className={`p-3 rounded-2xl border text-center transition cursor-pointer flex flex-col items-center justify-center ${
+                    action === 'REJECTED'
+                      ? 'bg-rose-50 border-rose-500 text-rose-800 ring-2 ring-rose-500/20 shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-600 hover:border-rose-300 hover:bg-rose-50/50'
+                  }`}
+                >
+                  <XCircle className="w-5 h-5 mb-1 text-rose-600" />
+                  <span className="text-xs font-bold">انصراف و مختومه کردن طرح</span>
+                  <span className="text-[10px] text-slate-500 mt-0.5 truncate max-w-full">
+                    بستن نهایی پروژه
+                  </span>
+                </button>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-2">
+                انتخاب اقدام در این مرحله از گردش کار:
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                
+                <button
+                  type="button"
+                  onClick={() => setAction('FORWARD')}
+                  className={`p-3 rounded-2xl border text-center transition cursor-pointer flex flex-col items-center justify-center ${
+                    action === 'FORWARD'
+                      ? 'bg-emerald-50 border-emerald-500 text-emerald-800 ring-2 ring-emerald-500/20 shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-600 hover:border-emerald-300 hover:bg-emerald-50/50'
+                  }`}
+                >
+                  <CheckCircle2 className="w-5 h-5 mb-1 text-emerald-600" />
+                  <span className="text-xs font-bold">
+                    {currentApprovalMode === 'MAJORITY'
+                      ? 'رای موافق (نصاب اکثریت)'
+                      : showQuorumBar
+                      ? 'ثبت تایید من در این مرحله'
+                      : 'تایید و ارجاع'}
+                  </span>
+                  <span className="text-[10px] text-slate-500 mt-0.5 truncate max-w-full">
+                    {approveTargetLabel}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setAction('NEEDS_REVISION')}
+                  className={`p-3 rounded-2xl border text-center transition cursor-pointer flex flex-col items-center justify-center ${
+                    action === 'NEEDS_REVISION'
+                      ? 'bg-amber-50 border-amber-500 text-amber-800 ring-2 ring-amber-500/20 shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-600 hover:border-amber-300 hover:bg-amber-50/50'
+                  }`}
+                >
+                  <AlertTriangle className="w-5 h-5 mb-1 text-amber-600" />
+                  <span className="text-xs font-bold">
+                    {currentRevisionMode === 'MAJORITY'
+                      ? 'رای اصلاح (نصاب اکثریت)'
+                      : currentRevisionMode === 'ALL'
+                      ? 'رای اصلاح (نصاب اجماع)'
+                      : 'عودت جهت اصلاح'}
+                  </span>
+                  <span className="text-[10px] text-slate-500 mt-0.5 truncate max-w-full">
+                    {showQuorumBar ? `ثبت در مرحله ← ${revisionTargetLabel}` : revisionTargetLabel}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setAction('REJECTED')}
+                  className={`p-3 rounded-2xl border text-center transition cursor-pointer flex flex-col items-center justify-center ${
+                    action === 'REJECTED'
+                      ? 'bg-rose-50 border-rose-500 text-rose-800 ring-2 ring-rose-500/20 shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-600 hover:border-rose-300 hover:bg-rose-50/50'
+                  }`}
+                >
+                  <XCircle className="w-5 h-5 mb-1 text-rose-600" />
+                  <span className="text-xs font-bold">
+                    {currentRejectMode === 'MAJORITY'
+                      ? 'رای مخالف (نصاب اکثریت)'
+                      : currentRejectMode === 'ALL'
+                      ? 'رای مخالف (نصاب اجماع)'
+                      : 'رد در این مرحله'}
+                  </span>
+                  <span className="text-[10px] text-slate-500 mt-0.5 truncate max-w-full">
+                    {showQuorumBar ? `ثبت در آمار آرا ← ${rejectTargetLabel}` : rejectTargetLabel}
+                  </span>
+                </button>
+
+              </div>
+            </div>
+          )}
 
           <div>
             <div className="flex items-center justify-between mb-1.5">

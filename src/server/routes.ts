@@ -59,63 +59,86 @@ function getCurrentUser(req: Request) {
 
 const EXPLICIT_ONLY_PERMISSIONS = new Set(['projects.manual_approve']);
 
-// Unified helper to get all effective permissions for a user
-export function getUserPermissionsList(user: { id: string; role: string; positionId?: string | null; hasCustomPermissions?: number | boolean }): string[] {
-  // Check if user has explicit custom permissions configured
-  let isCustom = Boolean(user.hasCustomPermissions);
-  if (user.hasCustomPermissions === undefined) {
+// Unified helper to collect position-inherited permissions (from primary position AND all structure positions)
+export function getUserPositionInheritance(user: { id: string; positionId?: string | null }): {
+  permissionCodes: Set<string>;
+  sources: Array<{ positionId: string; positionTitle: string; structureTitle?: string }>;
+} {
+  const permissionCodes = new Set<string>();
+  const sources: Array<{ positionId: string; positionTitle: string; structureTitle?: string }> = [];
+  const seenSourceKeys = new Set<string>();
+
+  if (user.positionId) {
     try {
-      const row = db.prepare('SELECT hasCustomPermissions FROM users WHERE id = ?').get(user.id) as any;
-      isCustom = Boolean(row?.hasCustomPermissions);
+      const posRow = db.prepare('SELECT id, title FROM positions WHERE id = ?').get(user.positionId) as any;
+      if (posRow) {
+        const key = `primary:${posRow.id}`;
+        if (!seenSourceKeys.has(key)) {
+          seenSourceKeys.add(key);
+          sources.push({ positionId: posRow.id, positionTitle: posRow.title });
+        }
+      }
+      const posP = db.prepare('SELECT permissionCode FROM position_permissions WHERE positionId = ?').all(user.positionId) as { permissionCode: string }[];
+      posP.forEach((p) => permissionCodes.add(p.permissionCode));
     } catch (e) {}
   }
 
-  const getExplicitUserAndPosPerms = (): Set<string> => {
-    const s = new Set<string>();
-    try {
-      const userP = db.prepare('SELECT permissionCode FROM user_permissions WHERE userId = ?').all(user.id) as { permissionCode: string }[];
-      userP.forEach((p) => s.add(p.permissionCode));
-    } catch (e) {}
-    if (!isCustom) {
-      if (user.positionId) {
-        try {
-          const posP = db.prepare('SELECT permissionCode FROM position_permissions WHERE positionId = ?').all(user.positionId) as { permissionCode: string }[];
-          posP.forEach((p) => s.add(p.permissionCode));
-        } catch (e) {}
+  try {
+    const structPositions = db.prepare(`
+      SELECT sp.positionId, p.title as positionTitle, ps.title as structureTitle
+      FROM structure_position_users spu
+      JOIN structure_positions sp ON spu.structurePositionId = sp.id
+      JOIN positions p ON sp.positionId = p.id
+      LEFT JOIN project_structures ps ON sp.structureId = ps.id
+      WHERE spu.userId = ?
+    `).all(user.id) as Array<{ positionId: string; positionTitle: string; structureTitle?: string }>;
+
+    for (const sp of structPositions) {
+      const key = `struct:${sp.positionId}:${sp.structureTitle || ''}`;
+      if (!seenSourceKeys.has(key)) {
+        seenSourceKeys.add(key);
+        sources.push({
+          positionId: sp.positionId,
+          positionTitle: sp.positionTitle,
+          structureTitle: sp.structureTitle,
+        });
       }
-      try {
-        const structPosP = db.prepare(`
-          SELECT pp.permissionCode
-          FROM structure_position_users spu
-          JOIN structure_positions sp ON spu.structurePositionId = sp.id
-          JOIN position_permissions pp ON sp.positionId = pp.positionId
-          WHERE spu.userId = ?
-        `).all(user.id) as { permissionCode: string }[];
-        structPosP.forEach((p) => s.add(p.permissionCode));
-      } catch (e) {}
     }
-    return s;
-  };
+
+    const structPosP = db.prepare(`
+      SELECT DISTINCT pp.permissionCode
+      FROM structure_position_users spu
+      JOIN structure_positions sp ON spu.structurePositionId = sp.id
+      JOIN position_permissions pp ON sp.positionId = pp.positionId
+      WHERE spu.userId = ?
+    `).all(user.id) as { permissionCode: string }[];
+    structPosP.forEach((p) => permissionCodes.add(p.permissionCode));
+  } catch (e) {}
+
+  return { permissionCodes, sources };
+}
+
+// Unified helper to get all effective permissions for a user
+// Always inherits permissions from any assigned position (primary position OR structure positions) unioned with explicit user permissions.
+export function getUserPermissionsList(user: { id: string; role: string; positionId?: string | null; hasCustomPermissions?: number | boolean }): string[] {
+  const combined = new Set<string>();
+
+  try {
+    const userP = db.prepare('SELECT permissionCode FROM user_permissions WHERE userId = ?').all(user.id) as { permissionCode: string }[];
+    userP.forEach((p) => combined.add(p.permissionCode));
+  } catch (e) {}
+
+  const { permissionCodes: posInherited } = getUserPositionInheritance(user);
+  posInherited.forEach((c) => combined.add(c));
 
   if (user.role === 'ADMIN') {
     const allP = db.prepare('SELECT code FROM permissions').all() as { code: string }[];
-    const explicitSet = getExplicitUserAndPosPerms();
     return allP
       .map((p) => p.code)
-      .filter((code) => !EXPLICIT_ONLY_PERMISSIONS.has(code) || explicitSet.has(code));
+      .filter((code) => !EXPLICIT_ONLY_PERMISSIONS.has(code) || combined.has(code));
   }
 
-  if (isCustom) {
-    try {
-      const userP = db.prepare(`
-        SELECT permissionCode FROM user_permissions
-        WHERE userId = ?
-      `).all(user.id) as { permissionCode: string }[];
-      return userP.map((p) => p.permissionCode);
-    } catch (e) {}
-  }
-
-  return Array.from(getExplicitUserAndPosPerms());
+  return Array.from(combined);
 }
 
 // Check permission helper (supports single code or array of acceptable codes)
@@ -463,10 +486,33 @@ apiRouter.get('/users', (_req: Request, res: Response) => {
     ORDER BY u.role DESC, u.name ASC
   `).all() as any[];
 
-  // Attach unified permissions for each user
+  const structPositionsRows = db.prepare(`
+    SELECT spu.userId, sp.structureId, ps.title as structureTitle, sp.positionId, pos.title as positionTitle
+    FROM structure_position_users spu
+    JOIN structure_positions sp ON spu.structurePositionId = sp.id
+    JOIN project_structures ps ON sp.structureId = ps.id
+    JOIN positions pos ON sp.positionId = pos.id
+    ORDER BY ps.title ASC, pos.title ASC
+  `).all() as Array<{
+    userId: string;
+    structureId: string;
+    structureTitle: string;
+    positionId: string;
+    positionTitle: string;
+  }>;
+
+  // Attach unified permissions & structure positions for each user
   const result = users.map((u) => {
     const permissions = getUserPermissionsList(u);
-    return { ...u, permissions };
+    const structurePositions = structPositionsRows
+      .filter((r) => r.userId === u.id)
+      .map(({ structureId, structureTitle, positionId, positionTitle }) => ({
+        structureId,
+        structureTitle,
+        positionId,
+        positionTitle,
+      }));
+    return { ...u, permissions, structurePositions };
   });
 
   res.json({ users: result });
@@ -672,17 +718,18 @@ apiRouter.get('/users/:id/permissions', (req: Request, res: Response) => {
   }
 
   const effective = getUserPermissionsList(user);
-  
+
   // Custom direct user permissions
   const custom = db.prepare('SELECT permissionCode FROM user_permissions WHERE userId = ?').all(userId) as { permissionCode: string }[];
-  
-  // Inherited position permissions
-  const inherited = user.positionId ? (db.prepare('SELECT permissionCode FROM position_permissions WHERE positionId = ?').all(user.positionId) as { permissionCode: string }[]).map(p => p.permissionCode) : [];
+
+  // Inherited permissions from primary position + all structure positions
+  const { permissionCodes: inheritedSet, sources: inheritedSources } = getUserPositionInheritance(user);
 
   res.json({
     permissions: effective,
     customPermissions: custom.map((c) => c.permissionCode),
-    inheritedPermissions: inherited,
+    inheritedPermissions: Array.from(inheritedSet),
+    inheritedSources,
     hasCustomPermissions: Boolean(user.hasCustomPermissions),
   });
 });
@@ -1058,21 +1105,31 @@ function getRequiredApprovalsForMode(mode: string | undefined, totalAssignees: n
   return 1;
 }
 
-function getRevisionThresholdForMode(
+function resolveEffectiveBranchMode(
+  branchMode: string | undefined,
   approvalMode: string | undefined,
-  revisionMode: string | undefined,
+  branchKind: 'revision' | 'reject'
+): 'SINGLE' | 'MAJORITY' | 'ALL' {
+  if (branchMode === 'SINGLE' || branchMode === 'MAJORITY' || branchMode === 'ALL') {
+    return branchMode;
+  }
+  // Legacy fallback when FOLLOW_APPROVAL or unset
+  if (branchKind === 'revision') {
+    if (approvalMode === 'MAJORITY' || approvalMode === 'ALL') return 'MAJORITY';
+    return 'SINGLE';
+  }
+  if (approvalMode === 'MAJORITY') return 'MAJORITY';
+  return 'SINGLE';
+}
+
+function getThresholdForActionMode(
+  effMode: 'SINGLE' | 'MAJORITY' | 'ALL',
   totalAssignees: number
 ): number {
   const n = Math.max(1, totalAssignees);
-  const effRev =
-    !revisionMode || revisionMode === 'FOLLOW_APPROVAL'
-      ? approvalMode === 'SINGLE' || approvalMode === 'NOTIFY_ONLY'
-        ? 'SINGLE'
-        : 'MAJORITY'
-      : revisionMode;
-  if (effRev === 'SINGLE') return 1;
-  if (effRev === 'ALL') return n;
-  return Math.floor(n / 2) + 1;
+  if (effMode === 'ALL') return n;
+  if (effMode === 'MAJORITY') return Math.floor(n / 2) + 1;
+  return 1;
 }
 
 function buildStepApprovalProgress(
@@ -1089,6 +1146,9 @@ function buildStepApprovalProgress(
       : stepConfigOrMode || {};
   const mode = (cfg.approvalMode || 'SINGLE') as 'SINGLE' | 'MAJORITY' | 'ALL' | 'NOTIFY_ONLY';
   const voteCollectionMode = (cfg.voteCollectionMode || 'EARLY_DECIDE') as 'EARLY_DECIDE' | 'WAIT_ALL';
+  const effectiveRevisionMode = resolveEffectiveBranchMode(cfg.revisionMode, mode, 'revision');
+  const effectiveRejectMode = resolveEffectiveBranchMode(cfg.rejectMode, mode, 'reject');
+
   const rows = db.prepare(`
     SELECT wsa.userId, wsa.createdAt, COALESCE(wsa.decision, 'APPROVE') as decision,
            COALESCE(wsa.comment, '') as comment,
@@ -1128,18 +1188,13 @@ function buildStepApprovalProgress(
     : [];
 
   const requiredCount = getRequiredApprovalsForMode(mode, assignees.length);
-  const revisionRequiredCount = getRevisionThresholdForMode(mode, cfg.revisionMode, assignees.length);
-  const rejectRequiredCount =
-    mode === 'MAJORITY'
-      ? Math.max(1, Math.max(1, assignees.length) - requiredCount + 1)
-      : mode === 'ALL' && voteCollectionMode !== 'WAIT_ALL' && cfg.revisionMode === 'SINGLE'
-      ? 1
-      : mode === 'ALL'
-      ? Math.floor(Math.max(1, assignees.length) / 2) + 1
-      : 1;
+  const revisionRequiredCount = getThresholdForActionMode(effectiveRevisionMode, assignees.length);
+  const rejectRequiredCount = getThresholdForActionMode(effectiveRejectMode, assignees.length);
 
   return {
     mode,
+    revisionMode: effectiveRevisionMode,
+    rejectMode: effectiveRejectMode,
     voteCollectionMode,
     approvedUserIds: approvedRows.map((r) => r.userId),
     approvedUsers: visibleApprovedUsers,
@@ -1277,9 +1332,26 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
         st.config?.userIds
       ),
     }));
-    const currentStep = steps.find((s) => s.stepOrder === (prj.currentStepOrder || 1)) || null;
-    const currentPositionIds: string[] = currentStep
-      ? (currentStep.positionIds || [])
+    const stepOrderNum =
+      prj.currentStepOrder !== null && prj.currentStepOrder !== undefined
+        ? Number(prj.currentStepOrder)
+        : 1;
+    const isCompletedOrRejected = prj.status === 'APPROVED' || prj.status === 'REJECTED';
+    const isCreatorRevisionTurn = Boolean(
+      prj.workflowId &&
+        steps.length > 0 &&
+        !isCompletedOrRejected &&
+        prj.status === 'NEEDS_REVISION' &&
+        stepOrderNum === 0
+    );
+
+    const currentStep = isCreatorRevisionTurn
+      ? null
+      : steps.find((s) => s.stepOrder === stepOrderNum) || null;
+    const currentPositionIds: string[] = isCreatorRevisionTurn
+      ? []
+      : currentStep
+      ? currentStep.positionIds || []
       : prj.currentPositionId
       ? [String(prj.currentPositionId)]
       : [];
@@ -1287,9 +1359,26 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
       .map((pid: string) => posMap.get(pid))
       .filter((p: { id: string; title: string; color?: string } | undefined): p is { id: string; title: string; color?: string } => Boolean(p));
 
-    const isCompletedOrRejected = prj.status === 'APPROVED' || prj.status === 'REJECTED';
+    const creatorUserObj = prj.createdById ? allUsers.find((u) => u.id === prj.createdById) : null;
+    const creatorAssignee = creatorUserObj
+      ? {
+          id: creatorUserObj.id,
+          name: creatorUserObj.name,
+          username: creatorUserObj.username,
+          avatar: creatorUserObj.avatar,
+          phone: creatorUserObj.phone,
+          role: creatorUserObj.role,
+          positionTitle: creatorUserObj.positionTitle,
+          sources: ['ثبت‌کننده پروژه (نیازمند اصلاح)'],
+        }
+      : null;
+
     const currentAssignees = isCompletedOrRejected
       ? []
+      : isCreatorRevisionTurn
+      ? creatorAssignee
+        ? [creatorAssignee]
+        : []
       : resolveAssigneesForStepPositions(
           currentPositionIds,
           currentStep?.structureId || null,
@@ -1299,23 +1388,26 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
           currentStep?.config?.userIds
         );
 
-    const currentStepApprovalProgress = isCompletedOrRejected
-      ? null
-      : buildStepApprovalProgress(
-          prj.id,
-          prj.currentStepOrder || 1,
-          currentStep?.config,
-          currentAssignees,
-          currentUser.id,
-          canInspectWorkflowHistory
-        );
+    const currentStepApprovalProgress =
+      isCompletedOrRejected || isCreatorRevisionTurn
+        ? null
+        : buildStepApprovalProgress(
+            prj.id,
+            stepOrderNum || 1,
+            currentStep?.config,
+            currentAssignees,
+            currentUser.id,
+            canInspectWorkflowHistory
+          );
 
     const logs = allLogs.filter((l) => l.projectId === prj.id);
     const expired = isDeadlineExpired(prj.deadline);
 
     const isMyWorkflowTurn =
       Boolean(prj.workflowId && steps.length > 0 && !isCompletedOrRejected) &&
-      currentAssignees.some((a) => a.id === currentUser.id);
+      (isCreatorRevisionTurn
+        ? Boolean(prj.createdById && prj.createdById === currentUser.id)
+        : currentAssignees.some((a) => a.id === currentUser.id));
 
     return {
       projectId: prj.id,
@@ -1331,19 +1423,20 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
       majorityResult: prj.majorityResult,
       workflowId: prj.workflowId || null,
       workflowTitle: prj.workflowId ? (prj.workflowTitle || 'گردش کار') : 'بدون گردش کار',
-      currentStepOrder: prj.currentStepOrder || 1,
+      currentStepOrder: isCreatorRevisionTurn ? 0 : stepOrderNum || 1,
       totalSteps: steps.length,
-      currentStepTitle: currentStep?.title || '',
-      currentStepActionType: currentStep?.actionType || '',
+      currentStepTitle: isCreatorRevisionTurn ? 'در کارتابل ثبت‌کننده (نیازمند اصلاح)' : currentStep?.title || '',
+      currentStepActionType: isCreatorRevisionTurn ? 'CREATOR_REVISION' : currentStep?.actionType || '',
       currentStructureId: currentStep?.structureId || null,
       currentStructureTitle: currentStep?.structureTitle || null,
-      currentPositionId: prj.currentPositionId || currentPositionIds[0] || null,
+      currentPositionId: isCreatorRevisionTurn ? null : prj.currentPositionId || currentPositionIds[0] || null,
       currentPositionIds,
       currentPositions,
-      currentPositionTitle:
-        currentPositions.length > 0
-          ? currentPositions.map((p) => p.title).join('، ')
-          : prj.currentPositionTitle || currentStep?.positionTitle || null,
+      currentPositionTitle: isCreatorRevisionTurn
+        ? 'ثبت‌کننده پروژه (نیازمند اصلاح)'
+        : currentPositions.length > 0
+        ? currentPositions.map((p) => p.title).join('، ')
+        : prj.currentPositionTitle || currentStep?.positionTitle || null,
       currentPositionColor: prj.currentPositionColor || currentStep?.positionColor || 'indigo',
       currentAssignees,
       currentStepApprovalProgress,
@@ -1587,8 +1680,8 @@ apiRouter.post('/workflows/:id/set-default', (req: Request, res: Response) => {
 
 apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || !hasPermission(currentUser, 'workflow.forward')) {
-    return res.status(403).json({ error: 'شما مجاز به ارجاع در گردش کار نیستید.' });
+  if (!currentUser) {
+    return res.status(401).json({ error: 'کاربر احراز هویت نشده است.' });
   }
 
   const { id: projectId } = req.params;
@@ -1602,6 +1695,14 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
     return res.status(400).json({ error: 'این پروژه قبلاً در گردش کار نهایی و مختومه شده است.' });
   }
 
+  const isCreatorRevisionState =
+    project.status === 'NEEDS_REVISION' && Number(project.currentStepOrder) === 0;
+  const isCreatorUser = Boolean(project.createdById && project.createdById === currentUser.id);
+
+  if (!hasPermission(currentUser, 'workflow.forward') && !(isCreatorRevisionState && isCreatorUser)) {
+    return res.status(403).json({ error: 'شما مجاز به ارجاع در گردش کار نیستید.' });
+  }
+
   const now = new Date().toISOString();
   const logId = `log-${randomUUID().substring(0, 8)}`;
 
@@ -1612,14 +1713,78 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
     ORDER BY stepOrder ASC
   `).all(project.workflowId || 'wf-standard') as any[];
 
-  let targetStepOrder = project.currentStepOrder || 1;
+  // Handle resubmission / action when project is in the Project Creator's revision cartable (currentStepOrder === 0)
+  if (isCreatorRevisionState) {
+    if (!isCreatorUser && !(currentUser.role === 'ADMIN' && adminOverride)) {
+      const creatorRow = project.createdById
+        ? (db.prepare('SELECT name FROM users WHERE id = ?').get(project.createdById) as any)
+        : null;
+      return res.status(403).json({
+        error: creatorRow?.name
+          ? `این پروژه جهت اصلاح در کارتابل ثبت‌کننده (${creatorRow.name}) قرار دارد.`
+          : 'این پروژه جهت اصلاح در کارتابل ثبت‌کننده قرار دارد.',
+      });
+    }
+
+    if (action === 'REJECTED') {
+      db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ?').run(projectId);
+      db.prepare(`
+        INSERT INTO workflow_logs (id, projectId, stepOrder, fromUserId, toPositionId, action, comment, createdAt)
+        VALUES (?, ?, 0, ?, NULL, 'REJECTED', ?, ?)
+      `).run(logId, projectId, currentUser.id, comment || 'انصراف / رد پروژه از کارتابل ثبت‌کننده', now);
+      db.prepare(`
+        UPDATE projects SET currentStepOrder = 0, currentPositionId = NULL, status = 'REJECTED', updatedAt = ? WHERE id = ?
+      `).run(now, projectId);
+      return res.json({ success: true, advanced: true, currentStepOrder: 0, currentPositionId: null, status: 'REJECTED' });
+    }
+
+    // Resubmit back to Step 1
+    const firstStep = steps[0];
+    const firstPosIds = parseStepPositionIds(firstStep);
+    const targetStepOrder = 1;
+    const targetPositionId = nextPositionId || firstPosIds[0] || null;
+    db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ?').run(projectId);
+    db.prepare(`
+      INSERT INTO workflow_logs (id, projectId, stepOrder, fromUserId, toPositionId, action, comment, createdAt)
+      VALUES (?, ?, 0, ?, ?, 'FORWARD', ?, ?)
+    `).run(
+      logId,
+      projectId,
+      currentUser.id,
+      targetPositionId,
+      comment || 'اصلاحات انجام شد و پرونده مجدداً به گام اول گردش کار ارسال گردید',
+      now
+    );
+    db.prepare(`
+      UPDATE projects SET currentStepOrder = ?, currentPositionId = ?, status = 'IN_REVIEW', updatedAt = ? WHERE id = ?
+    `).run(targetStepOrder, targetPositionId, now, projectId);
+    db.prepare(`
+      INSERT INTO messages (id, senderId, receiverId, isGroup, content, projectId, createdAt)
+      VALUES (?, ?, NULL, 1, ?, ?, ?)
+    `).run(
+      `msg-${randomUUID().substring(0, 8)}`,
+      currentUser.id,
+      `پروژه «${project.title}» پس از اصلاح توسط ${currentUser.name} مجدداً به مرحله اول گردش کار ارسال شد.${comment ? ` توضیح: ${comment}` : ''}`,
+      projectId,
+      now
+    );
+    return res.json({
+      success: true,
+      advanced: true,
+      currentStepOrder: targetStepOrder,
+      currentPositionId: targetPositionId,
+      status: 'IN_REVIEW',
+    });
+  }
+
+  let targetStepOrder = Number(project.currentStepOrder || 1);
   let targetPositionId = project.currentPositionId;
   let newStatus = project.status;
   const currentStep = steps.find((s) => s.stepOrder === (project.currentStepOrder || 1));
   const currentConfig = parseStepConfig(currentStep?.configJson);
   const currentPosIds = parseStepPositionIds(currentStep);
 
-  // Resolve current step assignees for turn guard & approval quorum checks (MAJORITY / ALL)
+  // Resolve current step assignees for turn guard & approval quorum checks (SINGLE / MAJORITY / ALL)
   const allUsers = db.prepare(`
     SELECT u.id, u.username, u.name, u.role, u.positionId, p.title as positionTitle
     FROM users u
@@ -1658,11 +1823,19 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
   }
 
   const approvalMode = (currentConfig.approvalMode || 'SINGLE') as 'SINGLE' | 'MAJORITY' | 'ALL' | 'NOTIFY_ONLY';
+  const effRevMode = resolveEffectiveBranchMode(currentConfig.revisionMode, approvalMode, 'revision');
+  const effRejMode = resolveEffectiveBranchMode(currentConfig.rejectMode, approvalMode, 'reject');
   const voteCollectionMode = (currentConfig.voteCollectionMode || 'EARLY_DECIDE') as 'EARLY_DECIDE' | 'WAIT_ALL';
-  const currentStepNum = project.currentStepOrder || 1;
+  const currentStepNum = Number(project.currentStepOrder || 1);
   const isMultiUserVotingStep =
     stepAssignees.length > 1 &&
-    (approvalMode === 'MAJORITY' || approvalMode === 'ALL' || voteCollectionMode === 'WAIT_ALL');
+    (approvalMode === 'MAJORITY' ||
+      approvalMode === 'ALL' ||
+      effRevMode === 'MAJORITY' ||
+      effRevMode === 'ALL' ||
+      effRejMode === 'MAJORITY' ||
+      effRejMode === 'ALL' ||
+      voteCollectionMode === 'WAIT_ALL');
 
   const voteDecision: 'APPROVE' | 'REVISION' | 'REJECT' =
     action === 'NEEDS_REVISION' ? 'REVISION' : action === 'REJECTED' ? 'REJECT' : 'APPROVE';
@@ -1703,41 +1876,68 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
     const totalAssignees = stepAssignees.length;
 
     const requiredCount = getRequiredApprovalsForMode(approvalMode, totalAssignees);
-    const revisionRequiredCount = getRevisionThresholdForMode(
-      approvalMode,
-      currentConfig.revisionMode,
-      totalAssignees
-    );
-    const rejectRequiredCount =
-      approvalMode === 'MAJORITY'
-        ? Math.max(1, totalAssignees - requiredCount + 1)
-        : approvalMode === 'ALL' && voteCollectionMode !== 'WAIT_ALL' && currentConfig.revisionMode === 'SINGLE'
-        ? 1
-        : Math.floor(totalAssignees / 2) + 1;
+    const revisionRequiredCount = getThresholdForActionMode(effRevMode, totalAssignees);
+    const rejectRequiredCount = getThresholdForActionMode(effRejMode, totalAssignees);
+
+    const resolveCompletedOutcome = (): 'APPROVE' | 'REVISION' | 'REJECT' => {
+      // Check if an action strictly satisfied its configured threshold
+      const approveMet = approveCount >= requiredCount;
+      const revMet = revisionCount >= revisionRequiredCount;
+      const rejMet = rejectCount >= rejectRequiredCount;
+
+      const metCandidates: Array<{ key: 'APPROVE' | 'REVISION' | 'REJECT'; count: number }> = [];
+      if (approveMet) metCandidates.push({ key: 'APPROVE', count: approveCount });
+      if (revMet) metCandidates.push({ key: 'REVISION', count: revisionCount });
+      if (rejMet) metCandidates.push({ key: 'REJECT', count: rejectCount });
+
+      if (metCandidates.length === 1) {
+        return metCandidates[0].key;
+      }
+
+      const pool =
+        metCandidates.length > 1
+          ? metCandidates
+          : ([
+              approvalMode !== 'ALL' || approveCount >= totalAssignees
+                ? { key: 'APPROVE' as const, count: approveCount }
+                : null,
+              effRevMode !== 'ALL' || revisionCount >= totalAssignees
+                ? { key: 'REVISION' as const, count: revisionCount }
+                : null,
+              effRejMode !== 'ALL' || rejectCount >= totalAssignees
+                ? { key: 'REJECT' as const, count: rejectCount }
+                : null,
+            ].filter(Boolean) as Array<{ key: 'APPROVE' | 'REVISION' | 'REJECT'; count: number }>);
+
+      const finalPool =
+        pool.length > 0
+          ? pool
+          : [
+              { key: 'APPROVE' as const, count: approveCount },
+              { key: 'REVISION' as const, count: revisionCount },
+              { key: 'REJECT' as const, count: rejectCount },
+            ];
+
+      const maxVotes = Math.max(...finalPool.map((p) => p.count));
+      const tied = finalPool.filter((p) => p.count === maxVotes);
+      if (tied.length === 1) return tied[0].key;
+
+      const tb = currentConfig.tieBreaker || 'REVISION';
+      if (tb === 'APPROVE' && tied.some((t) => t.key === 'APPROVE')) return 'APPROVE';
+      if (tb === 'REJECT' && tied.some((t) => t.key === 'REJECT')) return 'REJECT';
+      if (tied.some((t) => t.key === 'REVISION')) return 'REVISION';
+      if (tied.some((t) => t.key === 'REJECT')) return 'REJECT';
+      return tied[0].key;
+    };
 
     let decided: 'APPROVE' | 'REVISION' | 'REJECT' | null = null;
 
     if (voteCollectionMode === 'WAIT_ALL') {
-      // Wait unconditionally until every assignee in this step has submitted a vote
       if (totalVoted >= totalAssignees) {
-        if (approvalMode === 'ALL') {
-          if (approveCount >= totalAssignees) decided = 'APPROVE';
-          else if (rejectCount > revisionCount) decided = 'REJECT';
-          else decided = 'REVISION';
-        } else {
-          if (approveCount > revisionCount && approveCount > rejectCount) decided = 'APPROVE';
-          else if (revisionCount > approveCount && revisionCount >= rejectCount) decided = 'REVISION';
-          else if (rejectCount > approveCount && rejectCount > revisionCount) decided = 'REJECT';
-          else {
-            const tb = currentConfig.tieBreaker || 'REVISION';
-            if (tb === 'APPROVE' && approveCount > 0) decided = 'APPROVE';
-            else if (tb === 'REJECT' && rejectCount > 0) decided = 'REJECT';
-            else decided = revisionCount > 0 ? 'REVISION' : rejectCount > 0 ? 'REJECT' : 'APPROVE';
-          }
-        }
+        decided = resolveCompletedOutcome();
       }
     } else {
-      // EARLY_DECIDE: only resolve early if strict threshold is achieved (e.g. >50% for revision/majority, NOT 1 click!)
+      // EARLY_DECIDE: each action triggers immediately only when its own threshold is achieved
       if (approveCount >= requiredCount) {
         decided = 'APPROVE';
       } else if (revisionCount >= revisionRequiredCount) {
@@ -1745,21 +1945,7 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
       } else if (rejectCount >= rejectRequiredCount) {
         decided = 'REJECT';
       } else if (totalVoted >= totalAssignees) {
-        if (approvalMode === 'ALL') {
-          if (approveCount >= totalAssignees) decided = 'APPROVE';
-          else if (rejectCount > revisionCount) decided = 'REJECT';
-          else decided = 'REVISION';
-        } else {
-          if (approveCount > revisionCount && approveCount > rejectCount) decided = 'APPROVE';
-          else if (revisionCount > approveCount && revisionCount >= rejectCount) decided = 'REVISION';
-          else if (rejectCount > approveCount && rejectCount > revisionCount) decided = 'REJECT';
-          else {
-            const tb = currentConfig.tieBreaker || 'REVISION';
-            if (tb === 'APPROVE' && approveCount > 0) decided = 'APPROVE';
-            else if (tb === 'REJECT' && rejectCount > 0) decided = 'REJECT';
-            else decided = revisionCount > 0 ? 'REVISION' : rejectCount > 0 ? 'REJECT' : 'APPROVE';
-          }
-        }
+        decided = resolveCompletedOutcome();
       }
     }
 
@@ -1773,9 +1959,9 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
       const stepLabel = currentStep?.title || `گام ${currentStepNum}`;
       const stepNote =
         voteDecision === 'REVISION'
-          ? `درخواست اصلاح در مرحله «${stepLabel}» ثبت شد (${revisionCount} رای اصلاح، در انتظار نظر سایر اعضا — ${totalVoted} از ${totalAssignees})${comment ? ` — ${comment}` : ''}`
+          ? `درخواست اصلاح در مرحله «${stepLabel}» ثبت شد (${revisionCount} از ${revisionRequiredCount} رای اصلاح لازم — ${totalVoted} از ${totalAssignees})${comment ? ` — ${comment}` : ''}`
           : voteDecision === 'REJECT'
-          ? `مخالفت در مرحله «${stepLabel}» ثبت شد (${rejectCount} رای مخالف، در انتظار نظر سایر اعضا — ${totalVoted} از ${totalAssignees})${comment ? ` — ${comment}` : ''}`
+          ? `مخالفت در مرحله «${stepLabel}» ثبت شد (${rejectCount} از ${rejectRequiredCount} رای مخالف لازم — ${totalVoted} از ${totalAssignees})${comment ? ` — ${comment}` : ''}`
           : `تایید در مرحله «${stepLabel}» ثبت شد (${approveCount} از ${requiredCount} رای موافق لازم — ${totalVoted} از ${totalAssignees})${comment ? ` — ${comment}` : ''}`;
 
       db.prepare(`
@@ -1872,12 +2058,17 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
       db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ?').run(projectId);
       newStatus = 'REJECTED';
     } else if (revRule === 'RETURN_CREATOR') {
+      // Send directly into Project Creator's revision cartable (stepOrder = 0)
+      newStatus = 'NEEDS_REVISION';
+      targetStepOrder = 0;
+      targetPositionId = null;
+      db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ?').run(projectId);
+    } else if (revRule === 'RETURN_STEP_1') {
       newStatus = 'NEEDS_REVISION';
       targetStepOrder = 1;
       const targetStep = steps.find((s) => s.stepOrder === 1);
       targetPositionId = parseStepPositionIds(targetStep)[0] || project.currentPositionId;
-      db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ? AND stepOrder >= ?')
-        .run(projectId, targetStepOrder);
+      db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ? AND stepOrder >= 1').run(projectId);
     } else if (revRule === 'CUSTOM_STEP' && revStepOrder) {
       newStatus = 'NEEDS_REVISION';
       targetStepOrder = Math.min(steps.length, Math.max(1, revStepOrder));
@@ -1898,16 +2089,22 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
     const rejectRule =
       currentConfig.onRevisionAction !== undefined
         ? currentConfig.onRejectAction || 'REJECT_PROJECT'
-        : currentConfig.onRejectAction === 'RETURN_CREATOR' || currentConfig.onRejectAction === 'CUSTOM_STEP'
+        : currentConfig.onRejectAction === 'RETURN_CREATOR' ||
+          currentConfig.onRejectAction === 'RETURN_STEP_1' ||
+          currentConfig.onRejectAction === 'CUSTOM_STEP'
         ? currentConfig.onRejectAction
         : 'REJECT_PROJECT';
     if (rejectRule === 'RETURN_CREATOR') {
       newStatus = 'NEEDS_REVISION';
+      targetStepOrder = 0;
+      targetPositionId = null;
+      db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ?').run(projectId);
+    } else if (rejectRule === 'RETURN_STEP_1') {
+      newStatus = 'NEEDS_REVISION';
       targetStepOrder = 1;
       const targetStep = steps.find((s) => s.stepOrder === 1);
       targetPositionId = parseStepPositionIds(targetStep)[0] || project.currentPositionId;
-      db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ? AND stepOrder >= ?')
-        .run(projectId, targetStepOrder);
+      db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ? AND stepOrder >= 1').run(projectId);
     } else if (rejectRule === 'RETURN_PREV') {
       newStatus = 'NEEDS_REVISION';
       targetStepOrder = Math.max(1, currentStepNum - 1);
@@ -1933,6 +2130,13 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
       ? 'FINAL_APPROVED'
       : effectiveAction;
 
+  const logComment =
+    effectiveAction === 'NEEDS_REVISION' && targetStepOrder === 0
+      ? comment
+        ? `${comment} (ارسال به کارتابل ثبت‌کننده جهت اصلاح)`
+        : 'ارسال به کارتابل ثبت‌کننده جهت اصلاح'
+      : comment || '';
+
   db.prepare(`
     INSERT INTO workflow_logs (id, projectId, stepOrder, fromUserId, toPositionId, action, comment, createdAt)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -1943,7 +2147,7 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
     currentUser.id,
     targetPositionId,
     loggedAction,
-    comment || '',
+    logComment,
     now
   );
 
@@ -1959,6 +2163,8 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
       ? 'تصویب نهایی و اتمام گردش کار'
       : effectiveAction === 'FORWARD'
       ? 'تایید و ارجاع در گردش کار'
+      : effectiveAction === 'NEEDS_REVISION' && targetStepOrder === 0
+      ? 'نیاز به اصلاح و ارسال به کارتابل ثبت‌کننده'
       : effectiveAction === 'NEEDS_REVISION'
       ? 'درخواست اصلاح و ارجاع برای بازبینی'
       : effectiveAction === 'REJECTED'
@@ -2973,9 +3179,21 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
     const prjLogs = allLogs.filter((l) => l.projectId === prj.id);
     const prjAttachments = allAttachments.filter((a) => a.projectId === prj.id);
 
+    const stepOrderNum =
+      prj.currentStepOrder !== null && prj.currentStepOrder !== undefined
+        ? Number(prj.currentStepOrder)
+        : 1;
     const isCompletedOrRejected = prj.status === 'APPROVED' || prj.status === 'REJECTED';
-    const currentStepObj = prjSteps.find((s) => s.stepOrder === (prj.currentStepOrder || 1));
-    const currentPositionIds: string[] = currentStepObj
+    const isCreatorRevisionTurn = Boolean(
+      hasWorkflow && !isCompletedOrRejected && prj.status === 'NEEDS_REVISION' && stepOrderNum === 0
+    );
+
+    const currentStepObj = isCreatorRevisionTurn
+      ? undefined
+      : prjSteps.find((s) => s.stepOrder === stepOrderNum);
+    const currentPositionIds: string[] = isCreatorRevisionTurn
+      ? []
+      : currentStepObj
       ? currentStepObj.positionIds
       : prj.currentPositionId
       ? [prj.currentPositionId]
@@ -2984,13 +3202,32 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
       .map((pid) => posMap.get(pid))
       .filter((p): p is { id: string; title: string; color?: string } => Boolean(p));
 
-    const currentPositionTitle =
-      currentPositions.length > 0
-        ? currentPositions.map((p) => p.title).join('، ')
-        : prj.currentPositionTitle || currentStepObj?.positionTitle || '';
+    const currentPositionTitle = isCreatorRevisionTurn
+      ? 'ثبت‌کننده پروژه (نیازمند اصلاح)'
+      : currentPositions.length > 0
+      ? currentPositions.map((p) => p.title).join('، ')
+      : prj.currentPositionTitle || currentStepObj?.positionTitle || '';
+
+    const creatorUserObj = prj.createdById ? allUsers.find((u) => u.id === prj.createdById) : null;
+    const creatorAssignee = creatorUserObj
+      ? {
+          id: creatorUserObj.id,
+          name: creatorUserObj.name,
+          username: creatorUserObj.username,
+          avatar: creatorUserObj.avatar,
+          phone: creatorUserObj.phone,
+          role: creatorUserObj.role,
+          positionTitle: creatorUserObj.positionTitle,
+          sources: ['ثبت‌کننده پروژه (نیازمند اصلاح)'],
+        }
+      : null;
 
     const currentAssignees = isCompletedOrRejected
       ? []
+      : isCreatorRevisionTurn
+      ? creatorAssignee
+        ? [creatorAssignee]
+        : []
       : resolveAssigneesForStepPositions(
           currentPositionIds,
           currentStepObj?.structureId || null,
@@ -3000,24 +3237,27 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
           currentStepObj?.config?.userIds
         );
 
-    const currentStepApprovalProgress = isCompletedOrRejected
-      ? null
-      : buildStepApprovalProgress(
-          prj.id,
-          prj.currentStepOrder || 1,
-          currentStepObj?.config,
-          currentAssignees,
-          currentUser.id,
-          canInspectWorkflowHistory
-        );
+    const currentStepApprovalProgress =
+      isCompletedOrRejected || isCreatorRevisionTurn
+        ? null
+        : buildStepApprovalProgress(
+            prj.id,
+            stepOrderNum || 1,
+            currentStepObj?.config,
+            currentAssignees,
+            currentUser.id,
+            canInspectWorkflowHistory
+          );
 
     const isDirectPosMatch = Boolean(
       !isCompletedOrRejected &&
+      !isCreatorRevisionTurn &&
       currentUser.positionId &&
       currentPositionIds.includes(currentUser.positionId)
     );
     const isStructPosMatch = Boolean(
       !isCompletedOrRejected &&
+      !isCreatorRevisionTurn &&
       currentPositionIds.length > 0 &&
       userStructureAssignments.some(
         (a) =>
@@ -3027,10 +3267,15 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
     );
     const isExplicitUserMatch = Boolean(
       !isCompletedOrRejected &&
+      !isCreatorRevisionTurn &&
       Array.isArray(currentStepObj?.config?.userIds) &&
       currentStepObj.config.userIds.includes(currentUser.id)
     );
-    const isMyWorkflowTurn = hasWorkflow && (isDirectPosMatch || isStructPosMatch || isExplicitUserMatch);
+    const isMyWorkflowTurn =
+      hasWorkflow &&
+      (isCreatorRevisionTurn
+        ? Boolean(prj.createdById && prj.createdById === currentUser.id)
+        : isDirectPosMatch || isStructPosMatch || isExplicitUserMatch);
 
     // Accurate deduplicated participant count across ALL positions + explicit users in all workflow steps
     const workflowParticipantIds = new Set<string>();
@@ -3285,12 +3530,21 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
 
 apiRouter.put('/projects/:id', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
-  if (!currentUser || !hasPermission(currentUser, 'projects.edit')) {
-    return res.status(403).json({ error: 'شما مجاز به ویرایش پروژه نیستید.' });
+  if (!currentUser) {
+    return res.status(401).json({ error: 'احراز هویت نشده است.' });
   }
 
   const { id } = req.params;
-  const prevProject = db.prepare('SELECT id, title, status, deadline, workflowId, currentStepOrder, currentPositionId, projectTypeId FROM projects WHERE id = ?').get(id) as any;
+  const prevProject = db.prepare('SELECT id, title, status, deadline, workflowId, currentStepOrder, currentPositionId, projectTypeId, createdById FROM projects WHERE id = ?').get(id) as any;
+  const isCreatorRevisionEdit = Boolean(
+    prevProject &&
+      prevProject.status === 'NEEDS_REVISION' &&
+      Number(prevProject.currentStepOrder) === 0 &&
+      prevProject.createdById === currentUser.id
+  );
+  if (!hasPermission(currentUser, 'projects.edit') && !isCreatorRevisionEdit) {
+    return res.status(403).json({ error: 'شما مجاز به ویرایش پروژه نیستید.' });
+  }
   const { title, code, description, productionType, projectTypeId, location, deadline, deliveryDate, budgetEstimated, requirements, status, workflowId } = req.body;
 
   // Guard: Manual final approval of workflow projects requires explicit projects.manual_approve permission (even for ADMIN)
@@ -3318,8 +3572,8 @@ apiRouter.put('/projects/:id', (req: Request, res: Response) => {
   const now = new Date().toISOString();
   const isWorkflowChanged = Boolean(workflowId && prevProject && workflowId !== prevProject.workflowId);
 
-  let nextStepOrder = prevProject?.currentStepOrder || 1;
-  let nextPositionId = prevProject?.currentPositionId || null;
+  let nextStepOrder = prevProject?.currentStepOrder ?? 1;
+  let nextPositionId = prevProject?.currentPositionId ?? null;
   if (isWorkflowChanged) {
     nextStepOrder = 1;
     const firstStep = db.prepare('SELECT positionId, positionIdsJson FROM workflow_steps WHERE workflowId = ? ORDER BY stepOrder ASC LIMIT 1').get(workflowId) as any;

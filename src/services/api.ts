@@ -187,7 +187,13 @@ class ApiService {
   }
 
   // User Permissions
-  async getUserPermissions(userId: string): Promise<{ permissions: string[]; customPermissions: string[]; inheritedPermissions: string[]; hasCustomPermissions?: boolean }> {
+  async getUserPermissions(userId: string): Promise<{
+    permissions: string[];
+    customPermissions: string[];
+    inheritedPermissions: string[];
+    inheritedSources?: Array<{ positionId: string; positionTitle: string; structureTitle?: string }>;
+    hasCustomPermissions?: boolean;
+  }> {
     const res = await fetch(`/api/users/${userId}/permissions`, {
       headers: this.getAuthHeader(),
     });

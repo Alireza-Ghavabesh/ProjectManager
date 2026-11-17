@@ -321,6 +321,42 @@ export default function App() {
     }
   }, [currentUser?.id]);
 
+  // Silently sync user permissions on window focus / tab return (e.g., when admin updates position permissions)
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    let lastChecked = 0;
+
+    const syncMeIfNeeded = async () => {
+      if (document.visibilityState === 'hidden') return;
+      const now = Date.now();
+      if (now - lastChecked < 3000) return;
+      lastChecked = now;
+      try {
+        const me = await api.getMe();
+        if (!me) return;
+        const oldPerms = JSON.stringify(currentUser.permissions || []);
+        const newPerms = JSON.stringify(me.permissions || []);
+        if (
+          me.id !== currentUser.id ||
+          me.role !== currentUser.role ||
+          me.positionId !== currentUser.positionId ||
+          oldPerms !== newPerms
+        ) {
+          setCurrentUser(me);
+        }
+      } catch {
+        // Ignore transient network errors
+      }
+    };
+
+    window.addEventListener('focus', syncMeIfNeeded);
+    document.addEventListener('visibilitychange', syncMeIfNeeded);
+    return () => {
+      window.removeEventListener('focus', syncMeIfNeeded);
+      document.removeEventListener('visibilitychange', syncMeIfNeeded);
+    };
+  }, [currentUser?.id, currentUser?.role, currentUser?.positionId, currentUser?.permissions]);
+
   // Keep activeTab pointing to a section the user actually has permission to access
   useEffect(() => {
     if (!currentUser || activeTab === 'smstest') return;

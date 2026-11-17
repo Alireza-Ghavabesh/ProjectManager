@@ -656,6 +656,8 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
           {filteredItems.map((item) => {
             const isExpanded = Boolean(expandedProjectIds[item.projectId]);
             const isFinished = item.status === 'APPROVED' || item.status === 'REJECTED';
+            const isCreatorRevisionTurn =
+              item.status === 'NEEDS_REVISION' && Number(item.currentStepOrder) === 0;
 
             return (
               <div
@@ -714,8 +716,10 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
 
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-slate-500 font-medium">مرحله فعلی:</span>
-                      <span className="font-bold text-indigo-700">
-                        {item.totalSteps > 0
+                      <span className={`font-bold ${isCreatorRevisionTurn ? 'text-amber-700' : 'text-indigo-700'}`}>
+                        {isCreatorRevisionTurn
+                          ? 'کارتابل ثبت‌کننده پروژه (نیازمند اصلاح)'
+                          : item.totalSteps > 0
                           ? `گام ${item.currentStepOrder} از ${item.totalSteps}${item.currentStepTitle ? ` (${item.currentStepTitle})` : ''}`
                           : 'بدون گام تعریف‌شده'}
                       </span>
@@ -724,7 +728,12 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                     <div className="flex items-start justify-between gap-2">
                       <span className="text-slate-500 font-medium shrink-0">سمت(های) متصدی فعلی:</span>
                       <div className="flex flex-wrap justify-end gap-1">
-                        {item.currentPositions && item.currentPositions.length > 0 ? (
+                        {isCreatorRevisionTurn ? (
+                          <span className="inline-flex items-center gap-1 font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-300">
+                            <UserIcon className="w-3 h-3 text-amber-600" />
+                            ثبت‌کننده: {item.creatorName}
+                          </span>
+                        ) : item.currentPositions && item.currentPositions.length > 0 ? (
                           item.currentPositions.map((p) => (
                             <span
                               key={p.id}
@@ -743,23 +752,34 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                       </div>
                     </div>
 
-                    {item.currentStepApprovalProgress &&
+                    {!isCreatorRevisionTurn &&
+                      item.currentStepApprovalProgress &&
                       (item.currentStepApprovalProgress.mode === 'MAJORITY' ||
                         item.currentStepApprovalProgress.mode === 'ALL' ||
+                        item.currentStepApprovalProgress.revisionMode === 'MAJORITY' ||
+                        item.currentStepApprovalProgress.revisionMode === 'ALL' ||
+                        item.currentStepApprovalProgress.rejectMode === 'MAJORITY' ||
+                        item.currentStepApprovalProgress.rejectMode === 'ALL' ||
                         item.currentStepApprovalProgress.voteCollectionMode === 'WAIT_ALL') &&
                       !isFinished && (
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-slate-500 font-medium">آرای مرحله:</span>
                           <span className="font-bold text-violet-800 bg-violet-50 px-2 py-0.5 rounded-lg border border-violet-200 tabular-nums text-[11px]">
-                            {`${item.currentStepApprovalProgress.approvedUserIds.length} موافق / ${
+                            {`${item.currentStepApprovalProgress.approvedUserIds.length}/${item.currentStepApprovalProgress.requiredCount} موافق | ${
                               item.currentStepApprovalProgress.revisionUserIds?.length || 0
-                            } اصلاح / ${
+                            }/${
+                              item.currentStepApprovalProgress.revisionRequiredCount ??
+                              item.currentStepApprovalProgress.requiredCount
+                            } اصلاح | ${
                               item.currentStepApprovalProgress.rejectedUserIds?.length || 0
-                            } مخالف (نصاب: ${item.currentStepApprovalProgress.requiredCount}${
+                            }/${
+                              item.currentStepApprovalProgress.rejectRequiredCount ??
+                              item.currentStepApprovalProgress.requiredCount
+                            } مخالف${
                               item.currentStepApprovalProgress.voteCollectionMode === 'WAIT_ALL'
                                 ? ' · صبر تا همه'
                                 : ''
-                            })`}
+                            }`}
                           </span>
                         </div>
                       )}
@@ -943,16 +963,20 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                   </button>
 
                   {!isFinished &&
-                    canForwardWorkflow &&
+                    (canForwardWorkflow || (isCreatorRevisionTurn && item.creatorId === currentUser.id)) &&
                     onOpenWorkflowModalByProjectId &&
                     (item.currentAssignees.some((a) => a.id === currentUser.id) || currentUser.role === 'ADMIN') && (
                       <button
                         type="button"
                         onClick={() => onOpenWorkflowModalByProjectId(item.projectId)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-2xs transition cursor-pointer"
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-white text-xs font-bold shadow-2xs transition cursor-pointer ${
+                          isCreatorRevisionTurn
+                            ? 'bg-amber-600 hover:bg-amber-700'
+                            : 'bg-blue-600 hover:bg-blue-700'
+                        }`}
                       >
                         <ArrowLeft className="w-3.5 h-3.5" />
-                        <span>تایید و ارجاع مرحله</span>
+                        <span>{isCreatorRevisionTurn ? 'ارسال مجدد اصلاحات' : 'تایید و ارجاع مرحله'}</span>
                       </button>
                     )}
                 </div>
@@ -970,10 +994,11 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
                           {item.steps.map((st) => {
                             const isPast =
-                              item.status === 'APPROVED' || item.currentStepOrder > st.stepOrder;
+                              item.status === 'APPROVED' || (!isCreatorRevisionTurn && item.currentStepOrder > st.stepOrder);
                             const isCurrent =
                               item.status !== 'APPROVED' &&
                               item.status !== 'REJECTED' &&
+                              !isCreatorRevisionTurn &&
                               item.currentStepOrder === st.stepOrder;
 
                             return (

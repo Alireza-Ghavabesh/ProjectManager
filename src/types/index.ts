@@ -55,6 +55,12 @@ export interface User {
   phone?: string;
   createdAt?: string;
   permissions?: string[];
+  structurePositions?: Array<{
+    structureId: string;
+    structureTitle: string;
+    positionId: string;
+    positionTitle: string;
+  }>;
 }
 
 export interface ProjectStructure {
@@ -123,12 +129,13 @@ export interface WorkflowStepConfig {
   approvalMode?: 'SINGLE' | 'MAJORITY' | 'ALL' | 'NOTIFY_ONLY';
   voteCollectionMode?: 'EARLY_DECIDE' | 'WAIT_ALL';
   revisionMode?: 'FOLLOW_APPROVAL' | 'MAJORITY' | 'ALL' | 'SINGLE';
+  rejectMode?: 'FOLLOW_APPROVAL' | 'MAJORITY' | 'ALL' | 'SINGLE';
   tieBreaker?: 'REVISION' | 'REJECT' | 'APPROVE';
   approveTarget?: 'NEXT_STEP' | 'END_APPROVED' | 'CUSTOM_STEP';
   onApproveStepOrder?: number;
-  onRevisionAction?: 'RETURN_PREV' | 'RETURN_CREATOR' | 'REJECT_PROJECT' | 'CUSTOM_STEP';
+  onRevisionAction?: 'RETURN_PREV' | 'RETURN_CREATOR' | 'RETURN_STEP_1' | 'REJECT_PROJECT' | 'CUSTOM_STEP';
   onRevisionStepOrder?: number;
-  onRejectAction?: 'RETURN_PREV' | 'RETURN_CREATOR' | 'REJECT_PROJECT' | 'CUSTOM_STEP';
+  onRejectAction?: 'RETURN_PREV' | 'RETURN_CREATOR' | 'RETURN_STEP_1' | 'REJECT_PROJECT' | 'CUSTOM_STEP';
   onRejectStepOrder?: number;
   conditionLabel?: string;
   customActionLabel?: string;
@@ -168,6 +175,8 @@ export interface WorkflowStepApprovalProgress {
   requiredCount: number;
   revisionRequiredCount?: number;
   rejectRequiredCount?: number;
+  revisionMode?: 'SINGLE' | 'MAJORITY' | 'ALL';
+  rejectMode?: 'SINGLE' | 'MAJORITY' | 'ALL';
   hasCurrentUserApproved: boolean;
   hasCurrentUserRequestedRevision?: boolean;
   hasCurrentUserRejected?: boolean;
@@ -194,6 +203,7 @@ export interface WorkflowStep {
 
 export interface WorkflowDiagramLayout {
   startPos?: { x: number; y: number };
+  creatorPos?: { x: number; y: number };
   endApprovedPos?: { x: number; y: number };
   endRejectedPos?: { x: number; y: number };
 }

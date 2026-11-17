@@ -240,7 +240,11 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
 
   const steps = project.workflowSteps || [];
   const hasWorkflow = Boolean(project.hasWorkflow || project.workflowId || steps.length > 0);
-  const currentStep = steps.find((s) => s.stepOrder === project.currentStepOrder);
+  const rawStepOrder = project.currentStepOrder ?? 1;
+  const isCreatorRevisionTurn = project.status === 'NEEDS_REVISION' && Number(rawStepOrder) === 0;
+  const currentStep = !isCreatorRevisionTurn
+    ? steps.find((s) => s.stepOrder === rawStepOrder)
+    : undefined;
   const isCompletedOrRejected = project.status === 'APPROVED' || project.status === 'REJECTED';
   const currentPosIds =
     project.currentPositionIds && project.currentPositionIds.length > 0
@@ -252,7 +256,15 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
     hasWorkflow &&
     !isCompletedOrRejected &&
     (project.isMyWorkflowTurn ??
-      Boolean(currentUser.positionId && currentPosIds.includes(currentUser.positionId)));
+      (isCreatorRevisionTurn
+        ? project.createdById === currentUser.id
+        : Boolean(currentUser.positionId && currentPosIds.includes(currentUser.positionId))));
+  const canEditEffective =
+    canEditProject || (isCreatorRevisionTurn && project.createdById === currentUser.id);
+  const canForwardEffective =
+    canForwardWorkflow || (isCreatorRevisionTurn && project.createdById === currentUser.id);
+  const canManageAttachmentsEffective =
+    canManageAttachments || (isCreatorRevisionTurn && project.createdById === currentUser.id);
   const hasCurrentUserApproved = Boolean(project.currentStepApprovalProgress?.hasCurrentUserApproved);
   const hasCurrentUserRequestedRevision = Boolean(
     project.currentStepApprovalProgress?.hasCurrentUserRequestedRevision
@@ -367,13 +379,22 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
 
           {/* Column 2 (2 cols): Workflow Stage & Current Position */}
           <div className="lg:col-span-2 min-w-0 text-xs flex lg:flex-col items-center lg:items-start justify-between gap-1">
-            {steps.length > 0 ? (
+            {isCreatorRevisionTurn ? (
+              <>
+                <span className="font-semibold text-amber-800 truncate max-w-full">
+                  کارتابل ثبت‌کننده (نیازمند اصلاح)
+                </span>
+                <span className="text-[11px] text-amber-700 truncate max-w-full">
+                  عودت جهت ویرایش و ارسال مجدد
+                </span>
+              </>
+            ) : steps.length > 0 ? (
               <>
                 <span className="font-semibold text-slate-800 truncate max-w-full">
                   {currentStep?.title || project.workflowTitle || 'گردش کار'}
                 </span>
                 <span className="text-[11px] text-slate-500 tabular-nums truncate max-w-full">
-                  گام {project.currentStepOrder || 1} از {steps.length}
+                  گام {rawStepOrder} از {steps.length}
                   {project.currentPositionTitle ? ` · ${project.currentPositionTitle}` : ''}
                 </span>
               </>
@@ -485,18 +506,22 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               !hasCurrentUserApproved &&
               !hasCurrentUserRequestedRevision &&
               !hasCurrentUserRejected &&
-              canForwardWorkflow &&
+              canForwardEffective &&
               !isCompletedOrRejected &&
               (isMyTurnInWorkflow || currentUser.role === 'ADMIN') &&
               onOpenWorkflowModal && (
                 <button
                   type="button"
                   onClick={() => onOpenWorkflowModal(project)}
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold transition cursor-pointer whitespace-nowrap shrink-0"
-                  title="تایید و ارجاع مرحله"
+                  className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-white text-[11px] font-bold transition cursor-pointer whitespace-nowrap shrink-0 ${
+                    isCreatorRevisionTurn
+                      ? 'bg-amber-600 hover:bg-amber-700'
+                      : 'bg-blue-600 hover:bg-blue-700'
+                  }`}
+                  title={isCreatorRevisionTurn ? 'ارسال مجدد پروژه اصلاح‌شده به گردش کار' : 'تایید و ارجاع مرحله'}
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>ارجاع</span>
+                  <span>{isCreatorRevisionTurn ? 'ارسال مجدد' : 'ارجاع'}</span>
                 </button>
               )}
 
@@ -504,7 +529,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               !hasCurrentUserApproved &&
               !hasCurrentUserRequestedRevision &&
               !hasCurrentUserRejected &&
-              !canForwardWorkflow &&
+              !canForwardEffective &&
               !isCompletedOrRejected &&
               isMyTurnInWorkflow && (
                 <span
@@ -550,16 +575,16 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               </span>
             </div>
 
-            {(canEditProject || canDeleteProject) && (
+            {(canEditEffective || canDeleteProject) && (
               <div className="flex items-center gap-1.5">
-                {canEditProject && onEditProject && (
+                {canEditEffective && onEditProject && (
                   <button
                     type="button"
                     onClick={() => onEditProject(project)}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 transition cursor-pointer"
                   >
                     <Edit3 className="w-3.5 h-3.5" />
-                    <span>ویرایش پروژه</span>
+                    <span>{isCreatorRevisionTurn ? 'ویرایش و اصلاح پروژه' : 'ویرایش پروژه'}</span>
                   </button>
                 )}
                 {canDeleteProject && onDeleteProject && (
@@ -619,17 +644,29 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
 
               <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600 pt-1.5 border-t border-indigo-100">
                 <div className="flex items-center gap-2 flex-wrap tabular-nums">
-                  {!isCompletedOrRejected &&
-                  project.currentStepApprovalProgress &&
-                  (project.currentStepApprovalProgress.mode === 'MAJORITY' ||
-                    project.currentStepApprovalProgress.mode === 'ALL' ||
-                    project.currentStepApprovalProgress.voteCollectionMode === 'WAIT_ALL') ? (
+                  {isCreatorRevisionTurn ? (
+                    <span className="text-amber-800 font-bold">
+                      کارتابل ثبت‌کننده پروژه (نیازمند اصلاح و ارسال مجدد)
+                    </span>
+                  ) : !isCompletedOrRejected &&
+                    project.currentStepApprovalProgress &&
+                    (project.currentStepApprovalProgress.mode === 'MAJORITY' ||
+                      project.currentStepApprovalProgress.mode === 'ALL' ||
+                      project.currentStepApprovalProgress.revisionMode === 'MAJORITY' ||
+                      project.currentStepApprovalProgress.revisionMode === 'ALL' ||
+                      project.currentStepApprovalProgress.rejectMode === 'MAJORITY' ||
+                      project.currentStepApprovalProgress.rejectMode === 'ALL' ||
+                      project.currentStepApprovalProgress.voteCollectionMode === 'WAIT_ALL') ? (
                     <span className="text-violet-800 font-semibold">
-                      {`موافق: ${project.currentStepApprovalProgress.approvedUserIds.length} | اصلاح: ${
+                      {`موافق: ${project.currentStepApprovalProgress.approvedUserIds.length}/${project.currentStepApprovalProgress.requiredCount} | اصلاح: ${
                         project.currentStepApprovalProgress.revisionUserIds?.length || 0
-                      } | مخالف: ${project.currentStepApprovalProgress.rejectedUserIds?.length || 0} (نصاب: ${
+                      }/${
+                        project.currentStepApprovalProgress.revisionRequiredCount ??
                         project.currentStepApprovalProgress.requiredCount
-                      } از ${project.currentStepApprovalProgress.totalAssignees}${
+                      } | مخالف: ${project.currentStepApprovalProgress.rejectedUserIds?.length || 0}/${
+                        project.currentStepApprovalProgress.rejectRequiredCount ??
+                        project.currentStepApprovalProgress.requiredCount
+                      } (کل: ${project.currentStepApprovalProgress.totalAssignees}${
                         project.currentStepApprovalProgress.voteCollectionMode === 'WAIT_ALL'
                           ? ' · صبر تا همه'
                           : ''
@@ -637,7 +674,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                     </span>
                   ) : (
                     <span>
-                      مرحله {project.currentStepOrder || 1} از {steps.length}
+                      مرحله {rawStepOrder} از {steps.length}
                       {project.currentPositionTitle ? ` · ${project.currentPositionTitle}` : ''}
                     </span>
                   )}
@@ -663,14 +700,14 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                     <span className={`font-bold ${primaryStatusMeta.textClass}`}>
                       {primaryStatusMeta.label}
                     </span>
-                  ) : canForwardWorkflow && isMyTurnInWorkflow && onOpenWorkflowModal ? (
+                  ) : canForwardEffective && isMyTurnInWorkflow && onOpenWorkflowModal ? (
                     <button
                       type="button"
                       onClick={() => onOpenWorkflowModal(project)}
                       className="text-blue-800 font-bold hover:text-blue-900 bg-blue-100/80 hover:bg-blue-100 px-2.5 py-1 rounded-lg border border-blue-300 flex items-center gap-1 cursor-pointer transition"
                     >
                       <ArrowLeft className="w-3 h-3 text-blue-700" />
-                      ثبت اقدام گردش کار
+                      {isCreatorRevisionTurn ? 'ارسال مجدد به گردش کار' : 'ثبت اقدام گردش کار'}
                     </button>
                   ) : (
                     <span className="text-slate-500 font-medium">
@@ -879,7 +916,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               projectId={project.id}
               projectTitle={project.title}
               attachments={project.attachments || []}
-              canManage={canManageAttachments}
+              canManage={canManageAttachmentsEffective}
               onAttachmentChange={() => {
                 if (onRefreshData) onRefreshData();
               }}
@@ -902,29 +939,40 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                     ? 'تصویب نهایی شده در گردش کار'
                     : project.status === 'REJECTED'
                     ? 'رد شده در گردش کار'
-                    : `مرحله ${project.currentStepOrder || 1} از ${steps.length}: ${currentStep?.title || 'در حال بررسی'}`}
+                    : isCreatorRevisionTurn
+                    ? 'کارتابل ثبت‌کننده پروژه (نیازمند اصلاح و ارسال مجدد به گام ۱)'
+                    : `مرحله ${rawStepOrder} از ${steps.length}: ${currentStep?.title || 'در حال بررسی'}`}
                 </span>
-                {!isCompletedOrRejected && project.currentPositionTitle && (
+                {!isCompletedOrRejected && !isCreatorRevisionTurn && project.currentPositionTitle && (
                   <span className="text-[11px] font-semibold text-slate-600 flex items-center gap-1">
                     <Briefcase className="w-3 h-3 text-indigo-600" />
                     سمت(های) فعلی: {project.currentPositionTitle}
                   </span>
                 )}
                 {!isCompletedOrRejected &&
+                  !isCreatorRevisionTurn &&
                   project.currentStepApprovalProgress &&
                   (project.currentStepApprovalProgress.mode === 'MAJORITY' ||
                     project.currentStepApprovalProgress.mode === 'ALL' ||
+                    project.currentStepApprovalProgress.revisionMode === 'MAJORITY' ||
+                    project.currentStepApprovalProgress.revisionMode === 'ALL' ||
+                    project.currentStepApprovalProgress.rejectMode === 'MAJORITY' ||
+                    project.currentStepApprovalProgress.rejectMode === 'ALL' ||
                     project.currentStepApprovalProgress.voteCollectionMode === 'WAIT_ALL') && (
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-violet-50 text-violet-800 border border-violet-200 tabular-nums">
-                      {`موافق: ${project.currentStepApprovalProgress.approvedUserIds.length} | اصلاح: ${
+                      {`موافق: ${project.currentStepApprovalProgress.approvedUserIds.length}/${project.currentStepApprovalProgress.requiredCount} | اصلاح: ${
                         project.currentStepApprovalProgress.revisionUserIds?.length || 0
-                      } | مخالف: ${project.currentStepApprovalProgress.rejectedUserIds?.length || 0} (نصاب: ${
+                      }/${
+                        project.currentStepApprovalProgress.revisionRequiredCount ??
+                        project.currentStepApprovalProgress.requiredCount
+                      } | مخالف: ${project.currentStepApprovalProgress.rejectedUserIds?.length || 0}/${
+                        project.currentStepApprovalProgress.rejectRequiredCount ??
                         project.currentStepApprovalProgress.requiredCount
                       }${
                         project.currentStepApprovalProgress.voteCollectionMode === 'WAIT_ALL'
                           ? ' · صبر تا همه'
                           : ''
-                      })`}
+                      }`}
                     </span>
                   )}
                 {!isCompletedOrRejected && !canManualApprove && (
@@ -947,22 +995,26 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   </button>
                 )}
 
-                {canForwardWorkflow && !isCompletedOrRejected && (isMyTurnInWorkflow || currentUser.role === 'ADMIN') && onOpenWorkflowModal ? (
+                {canForwardEffective && !isCompletedOrRejected && (isMyTurnInWorkflow || currentUser.role === 'ADMIN') && onOpenWorkflowModal ? (
                   <button
                     type="button"
                     onClick={() => onOpenWorkflowModal(project)}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition cursor-pointer"
+                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-white text-xs font-bold transition cursor-pointer ${
+                      isCreatorRevisionTurn
+                        ? 'bg-amber-600 hover:bg-amber-700'
+                        : 'bg-blue-600 hover:bg-blue-700'
+                    }`}
                   >
                     <ArrowLeft className="w-3.5 h-3.5" />
-                    <span>تایید و ارجاع گردش کار</span>
+                    <span>{isCreatorRevisionTurn ? 'ارسال مجدد اصلاحات به گردش کار' : 'تایید و ارجاع گردش کار'}</span>
                   </button>
-                ) : !isCompletedOrRejected && isMyTurnInWorkflow && !canForwardWorkflow ? (
+                ) : !isCompletedOrRejected && isMyTurnInWorkflow && !canForwardEffective ? (
                   <span className="text-[11px] font-bold text-amber-800 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-300">
                     نوبت شماست (نیاز به دسترسی «تایید و ارجاع در مراحل گردش کار»)
                   </span>
                 ) : !isCompletedOrRejected ? (
                   <span className="text-[11px] font-semibold text-slate-500 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
-                    نوبت بررسی با سمت دیگری است
+                    {isCreatorRevisionTurn ? 'در کارتابل ثبت‌کننده پروژه جهت اصلاح' : 'نوبت بررسی با سمت دیگری است'}
                   </span>
                 ) : null}
               </div>
@@ -1013,9 +1065,9 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                         {steps.map((st) => {
                           const isPast =
-                            project.status === 'APPROVED' || (project.currentStepOrder || 1) > st.stepOrder;
+                            project.status === 'APPROVED' || (!isCreatorRevisionTurn && Number(rawStepOrder) > st.stepOrder);
                           const isCurrent =
-                            !isCompletedOrRejected && (project.currentStepOrder || 1) === st.stepOrder;
+                            !isCompletedOrRejected && !isCreatorRevisionTurn && Number(rawStepOrder) === st.stepOrder;
                           const stepMode = st.config?.approvalMode || 'SINGLE';
                           const modeLabel =
                             stepMode === 'ALL'
@@ -1097,7 +1149,11 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                       <div className="space-y-2">
                         <div className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
                           <UserCheck className="w-3.5 h-3.5 text-blue-600" />
-                          <span>وضعیت لحظه‌ای افراد در مرحله فعلی (گام {project.currentStepOrder || 1}):</span>
+                          <span>
+                            {isCreatorRevisionTurn
+                              ? 'وضعیت کارتابل ثبت‌کننده (نیازمند اصلاح و ارسال مجدد):'
+                              : `وضعیت لحظه‌ای افراد در مرحله فعلی (گام ${rawStepOrder}):`}
+                          </span>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           {(project.currentAssignees || []).map((assignee) => {

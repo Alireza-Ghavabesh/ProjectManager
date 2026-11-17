@@ -59,6 +59,10 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
   const [tree, setTree] = useState<Permission[]>([]);
   const [allPermissionsList, setAllPermissionsList] = useState<Permission[]>([]);
   const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set());
+  const [inheritedPermissions, setInheritedPermissions] = useState<Set<string>>(new Set());
+  const [inheritedSources, setInheritedSources] = useState<
+    Array<{ positionId: string; positionTitle: string; structureTitle?: string }>
+  >([]);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [hasCustomPerms, setHasCustomPerms] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -83,10 +87,14 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
       if (user) {
         const userPermsData = await api.getUserPermissions(user.id);
         setSelectedCodes(new Set(userPermsData.permissions));
+        setInheritedPermissions(new Set(userPermsData.inheritedPermissions || []));
+        setInheritedSources(userPermsData.inheritedSources || []);
         setHasCustomPerms(Boolean(userPermsData.hasCustomPermissions));
       } else if (position) {
         const posPerms = await api.getPositionPermissions(position.id);
         setSelectedCodes(new Set(posPerms));
+        setInheritedPermissions(new Set());
+        setInheritedSources([]);
       }
     } catch (err: any) {
       setError(err.message || 'خطا در بارگذاری ماتریس دسترسی‌ها');
@@ -135,6 +143,16 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
   };
 
   const deselectAll = () => {
+    if (isUserTarget && inheritedPermissions.size > 0) {
+      const kept = new Set<string>(inheritedPermissions);
+      tree.forEach((root) => {
+        if ((root.children || []).some((c) => kept.has(c.code))) {
+          kept.add(root.code);
+        }
+      });
+      setSelectedCodes(kept);
+      return;
+    }
     setSelectedCodes(new Set());
   };
 
@@ -144,8 +162,15 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
     setSelectedCodes((prev) => {
       const next = new Set(prev);
       if (allChildrenSelected || (children.length === 0 && next.has(root.code))) {
-        next.delete(root.code);
-        children.forEach((c) => next.delete(c.code));
+        children.forEach((c) => {
+          if (!isUserTarget || !inheritedPermissions.has(c.code)) {
+            next.delete(c.code);
+          }
+        });
+        const anyRemaining = children.some((c) => next.has(c.code));
+        if (!anyRemaining && (!isUserTarget || !inheritedPermissions.has(root.code))) {
+          next.delete(root.code);
+        }
       } else {
         next.add(root.code);
         children.forEach((c) => next.add(c.code));
@@ -155,13 +180,16 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
   };
 
   const toggleChildPermission = (childCode: string, root: Permission) => {
+    if (isUserTarget && inheritedPermissions.has(childCode) && selectedCodes.has(childCode)) {
+      return;
+    }
     const children = root.children || [];
     setSelectedCodes((prev) => {
       const next = new Set(prev);
       if (next.has(childCode)) {
         next.delete(childCode);
         const anyRemaining = children.some((c) => next.has(c.code));
-        if (!anyRemaining) {
+        if (!anyRemaining && (!isUserTarget || !inheritedPermissions.has(root.code))) {
           next.delete(root.code);
         }
       } else {
@@ -181,7 +209,7 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
     setError('');
     try {
       await api.resetUserPermissions(user.id);
-      setSuccessMsg('مجوزهای کاربر به پیش‌فرض سمت بازنشانی شد.');
+      setSuccessMsg('مجوزهای اختصاصی پاک و ارث‌بری کامل از سمت برقرار شد.');
       await loadData();
       onSuccess();
     } catch (err: any) {
@@ -195,11 +223,24 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
     setSaving(true);
     setError('');
     try {
-      const codes = Array.from(selectedCodes);
       if (user) {
-        await api.updateUserPermissions(user.id, codes);
+        const rootCodes = new Set(tree.map((r) => r.code));
+        const customLeaves = Array.from(selectedCodes).filter(
+          (code) => !rootCodes.has(code) && !inheritedPermissions.has(code)
+        );
+        if (customLeaves.length === 0) {
+          await api.resetUserPermissions(user.id);
+        } else {
+          const customSet = new Set<string>(customLeaves);
+          tree.forEach((root) => {
+            if ((root.children || []).some((c) => customSet.has(c.code))) {
+              customSet.add(root.code);
+            }
+          });
+          await api.updateUserPermissions(user.id, Array.from(customSet));
+        }
       } else if (position) {
-        await api.updatePositionPermissions(position.id, codes);
+        await api.updatePositionPermissions(position.id, Array.from(selectedCodes));
       }
       setSuccessMsg('تغییرات با موفقیت ذخیره شدند.');
       onSuccess();
@@ -265,7 +306,7 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs text-slate-500 font-medium">
-                  {isUserTarget ? 'ماتریس مجوزهای اختصاصی کاربر:' : 'ماتریس مجوزهای پایه سمت سازمانی:'}
+                  {isUserTarget ? 'ماتریس مجوزهای کاربر (ارث‌بری خودکار + اختصاصی):' : 'ماتریس مجوزهای پایه سمت سازمانی:'}
                 </span>
                 <span className="text-sm font-bold text-slate-900">{targetTitle}</span>
                 {user?.positionTitle && (
@@ -281,12 +322,28 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
                         : 'bg-emerald-50 text-emerald-800 border-emerald-200'
                     }`}
                   >
-                    {hasCustomPerms ? 'مجوزهای اختصاصی فعال است' : 'ارث‌بری مستقیم از سمت'}
+                    {hasCustomPerms ? 'ارث‌بری از سمت + مجوز اختصاصی' : 'ارث‌بری مستقیم از سمت'}
                   </span>
                 )}
               </div>
+              {isUserTarget && inheritedSources.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                  <span className="text-[10px] font-bold text-emerald-800">سمت‌های فعال در ساختار و چارت:</span>
+                  {inheritedSources.map((src, sIdx) => (
+                    <span
+                      key={`${src.positionId}_${sIdx}`}
+                      className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold"
+                    >
+                      {src.positionTitle}
+                      {src.structureTitle ? ` (${src.structureTitle})` : ''}
+                    </span>
+                  ))}
+                </div>
+              )}
               <p className="text-[11px] text-slate-500 mt-1">
-                برای هر موجودیت می‌توانید دسترسی‌های تفکیک‌شده‌ی <strong>نمایش، ثبت جدید، ویرایش و حذف</strong> و مجوزهای تخصصی را به‌صورت مستقل فعال یا غیرفعال کنید.
+                {isUserTarget
+                  ? 'مجوزهای دارای برچسب «از سمت» به‌صورت خودکار از سمت(های) انتصابی کاربر در ساختار و چارت ارث‌بری می‌شوند و با تغییر دسترسی سمت، بلافاصله برای کاربر نیز بروزرسانی می‌گردند.'
+                  : 'هر دسترسی که به این سمت بدهید، به‌صورت خودکار برای تمام کاربرانی که در این سمت (در چارت یا ساختارهای پروژه) عضو هستند فعال می‌شود.'}
               </p>
             </div>
           </div>
@@ -490,17 +547,24 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
                               );
                             }
                             const checked = selectedCodes.has(perm.code);
+                            const isInherited = isUserTarget && inheritedPermissions.has(perm.code);
                             const IconComp = meta.icon;
                             return (
                               <button
                                 key={perm.code}
                                 type="button"
                                 onClick={() => toggleChildPermission(perm.code, root)}
-                                title={perm.description || perm.title}
-                                className={`px-3 py-2.5 rounded-xl border text-right transition cursor-pointer flex items-center justify-between gap-2 ${
-                                  checked
-                                    ? meta.activeCls
-                                    : 'bg-slate-50/80 border-slate-200 text-slate-600 hover:bg-slate-100 hover:border-slate-300'
+                                title={
+                                  isInherited
+                                    ? 'ارث‌بری خودکار از سمت (برای تغییر، دسترسی سمت را ویرایش کنید)'
+                                    : perm.description || perm.title
+                                }
+                                className={`px-3 py-2.5 rounded-xl border text-right transition flex items-center justify-between gap-2 ${
+                                  isInherited
+                                    ? 'bg-emerald-50/90 border-emerald-300 text-emerald-950 cursor-default'
+                                    : checked
+                                    ? `${meta.activeCls} cursor-pointer`
+                                    : 'bg-slate-50/80 border-slate-200 text-slate-600 hover:bg-slate-100 hover:border-slate-300 cursor-pointer'
                                 }`}
                               >
                                 <span className="flex items-center gap-1.5 min-w-0">
@@ -508,8 +572,15 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
                                   <span className="text-xs font-bold truncate">
                                     {perm.code === 'projects.view' ? 'نمایش همه' : meta.label}
                                   </span>
+                                  {isInherited && (
+                                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold shrink-0">
+                                      از سمت
+                                    </span>
+                                  )}
                                 </span>
-                                {checked ? (
+                                {isInherited ? (
+                                  <Lock className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                ) : checked ? (
                                   <CheckSquare className={`w-4 h-4 shrink-0 ${meta.iconCls}`} />
                                 ) : (
                                   <Square className="w-4 h-4 text-slate-300 shrink-0" />
@@ -530,20 +601,30 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                             {specialChildren.map((child) => {
                               const isChildSelected = selectedCodes.has(child.code);
+                              const isChildInherited = isUserTarget && inheritedPermissions.has(child.code);
                               return (
                                 <button
                                   key={child.code}
                                   type="button"
                                   onClick={() => toggleChildPermission(child.code, root)}
-                                  className={`p-2.5 rounded-xl border transition flex items-start justify-between gap-2 text-right cursor-pointer ${
-                                    isChildSelected
-                                      ? 'bg-indigo-50/70 border-indigo-300 text-slate-900'
-                                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                                  title={
+                                    isChildInherited
+                                      ? 'ارث‌بری خودکار از سمت (برای تغییر، دسترسی سمت را ویرایش کنید)'
+                                      : child.description || child.title
+                                  }
+                                  className={`p-2.5 rounded-xl border transition flex items-start justify-between gap-2 text-right ${
+                                    isChildInherited
+                                      ? 'bg-emerald-50/80 border-emerald-300 text-slate-900 cursor-default'
+                                      : isChildSelected
+                                      ? 'bg-indigo-50/70 border-indigo-300 text-slate-900 cursor-pointer'
+                                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 cursor-pointer'
                                   }`}
                                 >
                                   <div className="flex items-start gap-2 min-w-0">
                                     <div className="mt-0.5 shrink-0">
-                                      {isChildSelected ? (
+                                      {isChildInherited ? (
+                                        <Lock className="w-3.5 h-3.5 text-emerald-600" />
+                                      ) : isChildSelected ? (
                                         <CheckSquare className="w-4 h-4 text-indigo-600" />
                                       ) : (
                                         <Square className="w-4 h-4 text-slate-400" />
@@ -552,6 +633,11 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
                                     <div className="min-w-0">
                                       <div className="text-xs font-bold leading-tight flex items-center gap-1.5 flex-wrap">
                                         <span>{child.title}</span>
+                                        {isChildInherited && (
+                                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold">
+                                            ارث‌بری از سمت
+                                          </span>
+                                        )}
                                         {child.isDanger ? (
                                           <span className="text-[9px] px-1.5 py-0.2 rounded bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1 font-bold">
                                             <ShieldAlert className="w-2.5 h-2.5" />
