@@ -351,6 +351,29 @@ export function initDatabase() {
       providerResponse TEXT,
       sentAt TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS user_notifications (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      projectId TEXT REFERENCES projects(id) ON DELETE CASCADE,
+      workflowId TEXT REFERENCES workflows(id) ON DELETE SET NULL,
+      ruleId TEXT,
+      channel TEXT NOT NULL, -- 'PUSH' or 'CARTABLE'
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      severity TEXT DEFAULT 'info', -- 'info', 'success', 'warning', 'danger'
+      actorId TEXT REFERENCES users(id) ON DELETE SET NULL,
+      actorName TEXT,
+      stepOrder INTEGER,
+      eventType TEXT,
+      isRead INTEGER NOT NULL DEFAULT 0,
+      isDismissed INTEGER NOT NULL DEFAULT 0,
+      pushDelivered INTEGER NOT NULL DEFAULT 0,
+      createdAt TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_notifications_user
+      ON user_notifications(userId, channel, isDismissed, createdAt);
   `);
 
   // Safe columns migration for positions if already existed

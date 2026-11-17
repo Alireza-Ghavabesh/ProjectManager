@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { User, Project, DynamicField, ProjectType, Position, DashboardStats, ProjectStructure, Workflow, PasswordResetRequest, PublicSettings } from './types';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { User, Project, DynamicField, ProjectType, Position, DashboardStats, ProjectStructure, Workflow, PasswordResetRequest, PublicSettings, UserNotification } from './types';
 import { api } from './services/api';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -30,7 +30,14 @@ import {
   Phone,
   CheckCircle2,
   Sparkles,
-  FolderKanban
+  FolderKanban,
+  Bell,
+  BellRing,
+  X,
+  ExternalLink,
+  Info,
+  AlertTriangle,
+  AlertCircle
 } from 'lucide-react';
 
 export default function App() {
@@ -79,6 +86,24 @@ export default function App() {
   const [expandedListProjectIds, setExpandedListProjectIds] = useState<Record<string, boolean>>({});
 
   const [loading, setLoading] = useState(false);
+
+  // Notifications & Real-Time Push Alerts
+  const [notifications, setNotifications] = useState<UserNotification[]>([]);
+  const [toastNotifs, setToastNotifs] = useState<UserNotification[]>([]);
+  const [pushPermission, setPushPermission] = useState<NotificationPermission | 'unsupported'>(() =>
+    typeof window !== 'undefined' && 'Notification' in window ? window.Notification.permission : 'unsupported'
+  );
+  const shownNativeIdsRef = useRef<Set<string>>(new Set());
+  const projectsRef = useRef<Project[]>([]);
+  const allProjectsRef = useRef<Project[]>([]);
+
+  useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
+
+  useEffect(() => {
+    allProjectsRef.current = allProjects;
+  }, [allProjects]);
 
   // Check login on mount with tab/window-isolated session
   useEffect(() => {
@@ -326,14 +351,193 @@ export default function App() {
     }
   };
 
+  const openProjectById = useCallback(async (projectId?: string | null) => {
+    if (!projectId) return;
+    const cached =
+      projectsRef.current.find((p) => p.id === projectId) ||
+      allProjectsRef.current.find((p) => p.id === projectId);
+    if (cached) {
+      setWorkflowProject(cached);
+      return;
+    }
+    try {
+      const fetched = await api.getProjectById(projectId);
+      if (fetched) setWorkflowProject(fetched);
+    } catch (err) {
+      console.error('Error opening project from notification:', err);
+    }
+  }, []);
+
+  const showNativePush = useCallback(async (n: UserNotification) => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    if (window.Notification.permission !== 'granted') return;
+    if (shownNativeIdsRef.current.has(n.id)) return;
+    shownNativeIdsRef.current.add(n.id);
+
+    try {
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (reg) {
+          await reg.showNotification(n.title, {
+            body: n.message,
+            icon: '/icon-192.png',
+            tag: `council-notif-${n.id}`,
+            data: { projectId: n.projectId || null, notificationId: n.id },
+          });
+          api.markPushNotificationsDelivered([n.id]).catch(() => {});
+          return;
+        }
+      }
+      const nativeNotif = new window.Notification(n.title, {
+        body: n.message,
+        tag: `council-notif-${n.id}`,
+      });
+      nativeNotif.onclick = () => {
+        window.focus();
+        if (n.projectId) {
+          openProjectById(n.projectId);
+        }
+        nativeNotif.close();
+      };
+      api.markPushNotificationsDelivered([n.id]).catch(() => {});
+    } catch {
+      // Fallback safely if OS notification is blocked
+    }
+  }, [openProjectById]);
+
+  const requestPushPermission = async () => {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      setPushPermission('unsupported');
+      return;
+    }
+    try {
+      const result = await window.Notification.requestPermission();
+      setPushPermission(result);
+    } catch {
+      // Ignore permission prompt errors
+    }
+  };
+
+  const handleMarkNotificationRead = useCallback((id: string) => {
+    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
+    api.markNotificationRead(id).catch(() => {});
+  }, []);
+
+  const handleMarkAllNotificationsRead = useCallback(() => {
+    setNotifications((prev) =>
+      prev.map((n) => (n.channel === 'PUSH' ? { ...n, isRead: true } : n))
+    );
+    api.markAllNotificationsRead().catch(() => {});
+  }, []);
+
+  const handleDismissNotification = useCallback((id: string) => {
+    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isDismissed: true, isRead: true } : n)));
+    setToastNotifs((prev) => prev.filter((n) => n.id !== id));
+    api.dismissNotification(id).catch(() => {});
+  }, []);
+
+  const handleOpenNotificationProject = useCallback((notif: UserNotification) => {
+    if (!notif.isRead) {
+      handleMarkNotificationRead(notif.id);
+    }
+    if (notif.projectId) {
+      openProjectById(notif.projectId);
+    }
+  }, [handleMarkNotificationRead, openProjectById]);
+
   useEffect(() => {
     if (currentUser?.id) {
       refreshData();
     } else {
       setProjects([]);
       setAllProjects([]);
+      setNotifications([]);
+      setToastNotifs([]);
     }
   }, [currentUser?.id]);
+
+  // Real-Time Notification Stream (SSE) + Initial Sync + Service Worker Notification Click Handler
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    let isMounted = true;
+
+    const syncNotifications = async () => {
+      try {
+        const list = await api.getNotifications();
+        if (!isMounted) return;
+        setNotifications(list);
+        const undeliveredPush = list.filter(
+          (n) => n.channel === 'PUSH' && !n.isRead && !n.isDismissed && !n.pushDelivered
+        );
+        for (const item of undeliveredPush.slice(0, 3)) {
+          showNativePush(item);
+        }
+      } catch {
+        // Ignore transient fetch errors
+      }
+    };
+
+    syncNotifications();
+
+    const token = api.getToken();
+    let es: EventSource | null = null;
+    if (token && typeof EventSource !== 'undefined') {
+      es = new EventSource(`/api/notifications/stream?token=${encodeURIComponent(token)}`);
+      es.addEventListener('notification', (event) => {
+        try {
+          const item = JSON.parse((event as MessageEvent).data) as UserNotification;
+          if (!isMounted || !item?.id) return;
+          setNotifications((prev) => [item, ...prev.filter((p) => p.id !== item.id)]);
+
+          if (item.channel === 'PUSH') {
+            setToastNotifs((prev) => [item, ...prev.filter((p) => p.id !== item.id)].slice(0, 4));
+            window.setTimeout(() => {
+              setToastNotifs((prev) => prev.filter((p) => p.id !== item.id));
+            }, 8500);
+            showNativePush(item);
+          }
+
+          if (
+            item.channel === 'CARTABLE' ||
+            item.eventType === 'ON_STEP_ENTER' ||
+            item.eventType === 'ON_WORKFLOW_END'
+          ) {
+            api.getProjects('cartable').then((prjs) => {
+              if (isMounted) setProjects(prjs);
+            }).catch(() => {});
+          }
+        } catch {
+          // Ignore malformed SSE payload
+        }
+      });
+    }
+
+    const handleSwMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'NOTIFICATION_CLICK') {
+        if (event.data.notificationId) {
+          handleMarkNotificationRead(event.data.notificationId);
+        }
+        if (event.data.projectId) {
+          openProjectById(event.data.projectId);
+        }
+      }
+    };
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', handleSwMessage);
+    }
+
+    const pollInterval = window.setInterval(syncNotifications, 45000);
+
+    return () => {
+      isMounted = false;
+      if (es) es.close();
+      window.clearInterval(pollInterval);
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', handleSwMessage);
+      }
+    };
+  }, [currentUser?.id, showNativePush, handleMarkNotificationRead, openProjectById]);
 
   // Keep full project list synced reactively whenever user's project_list.view permission changes
   const canViewProjectListPerm = hasPerm(currentUser, 'project_list.view');
@@ -405,6 +609,8 @@ export default function App() {
 
   const handleLogout = () => {
     api.logout();
+    setNotifications([]);
+    setToastNotifs([]);
     setCurrentUser(null);
   };
 
@@ -527,6 +733,13 @@ export default function App() {
           currentUser={currentUser}
           activeTab={activeTab}
           onOpenMobileMenu={() => setMobileMenuOpen(true)}
+          notifications={notifications}
+          pushPermission={pushPermission}
+          onRequestPushPermission={requestPushPermission}
+          onMarkNotificationRead={handleMarkNotificationRead}
+          onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
+          onDismissNotification={handleDismissNotification}
+          onOpenNotificationProject={handleOpenNotificationProject}
         />
 
         {/* Content Container */}
@@ -646,6 +859,92 @@ export default function App() {
                   ))}
                 </div>
               )}
+
+              {/* ===================== CARTABLE: WORKFLOW IN-CARTABLE NOTIFICATIONS ===================== */}
+              {(() => {
+                const cartableNotifications = notifications.filter(
+                  (n) => n.channel === 'CARTABLE' && !n.isDismissed
+                );
+                if (cartableNotifications.length === 0) return null;
+                return (
+                  <div className="space-y-2.5 animate-in slide-in-from-top-2 duration-200">
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5">
+                        <Bell className="w-4 h-4 text-sky-600" />
+                        <span>اعلان‌های کارتابل من ({cartableNotifications.length})</span>
+                      </span>
+                    </div>
+                    {cartableNotifications.map((notif) => {
+                      const sevStyles =
+                        notif.severity === 'success'
+                          ? { box: 'bg-emerald-50/90 border-emerald-300 text-emerald-950', iconWrap: 'bg-emerald-600 text-white', Icon: CheckCircle2 }
+                          : notif.severity === 'warning'
+                          ? { box: 'bg-amber-50/90 border-amber-300 text-amber-950', iconWrap: 'bg-amber-500 text-white', Icon: AlertTriangle }
+                          : notif.severity === 'danger'
+                          ? { box: 'bg-rose-50/90 border-rose-300 text-rose-950', iconWrap: 'bg-rose-600 text-white', Icon: AlertCircle }
+                          : { box: 'bg-sky-50/90 border-sky-300 text-sky-950', iconWrap: 'bg-sky-600 text-white', Icon: Info };
+                      const SevIcon = sevStyles.Icon;
+                      return (
+                        <div
+                          key={notif.id}
+                          className={`p-4 rounded-2xl border shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${sevStyles.box}`}
+                        >
+                          <div className="flex items-start gap-3 min-w-0">
+                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-2xs ${sevStyles.iconWrap}`}>
+                              <SevIcon className="w-4 h-4" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-xs sm:text-sm font-extrabold">
+                                  {notif.title}
+                                </span>
+                                {(notif.projectTitle || notif.workflowTrackingCode || notif.projectCode) && (
+                                  <span className="px-2 py-0.5 rounded-lg bg-white/80 border border-slate-200/80 text-[10px] font-bold text-slate-700">
+                                    {notif.projectTitle ? notif.projectTitle : ''}
+                                    {notif.workflowTrackingCode || notif.projectCode
+                                      ? ` • ${notif.workflowTrackingCode || notif.projectCode}`
+                                      : ''}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs opacity-90 mt-1 leading-relaxed whitespace-pre-line">
+                                {notif.message}
+                              </p>
+                              <div className="flex items-center gap-3 mt-1.5 text-[10px] opacity-70 tabular-nums">
+                                <span>
+                                  {new Date(notif.createdAt).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' })} — {new Date(notif.createdAt).toLocaleDateString('fa-IR')}
+                                </span>
+                                {notif.actorName && <span>توسط: {notif.actorName}</span>}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                            {notif.projectId && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenNotificationProject(notif)}
+                                className="px-3 py-1.5 rounded-xl bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 text-indigo-700 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                                <span>مشاهده پرونده</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleDismissNotification(notif.id)}
+                              className="px-3 py-1.5 rounded-xl bg-white/80 hover:bg-white border border-slate-200 text-slate-700 text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                            >
+                              <Check className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>تایید مطالعه / بستن</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
 
               {/* Top Action Bar */}
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 p-5 rounded-3xl bg-white border border-slate-200/90 shadow-xs">
@@ -1147,10 +1446,7 @@ export default function App() {
               currentUser={currentUser}
               onRefresh={refreshWorkflowsData}
               onOpenWorkflowModalByProjectId={(projectId) => {
-                const target =
-                  projects.find((pr) => pr.id === projectId) ||
-                  allProjects.find((pr) => pr.id === projectId);
-                if (target) setWorkflowProject(target);
+                openProjectById(projectId);
               }}
             />
           )}
@@ -1242,6 +1538,70 @@ export default function App() {
           editProject={editingProject}
           workflows={workflows}
         />
+      )}
+
+      {/* Live Push Notification Toast Stack */}
+      {toastNotifs.length > 0 && (
+        <div className="fixed bottom-5 left-5 z-50 flex flex-col gap-2.5 max-w-sm w-[calc(100%-2.5rem)] pointer-events-none">
+          {toastNotifs.map((toast) => {
+            const accent =
+              toast.severity === 'success'
+                ? 'border-emerald-300 bg-white'
+                : toast.severity === 'warning'
+                ? 'border-amber-300 bg-white'
+                : toast.severity === 'danger'
+                ? 'border-rose-300 bg-white'
+                : 'border-sky-300 bg-white';
+            const iconBg =
+              toast.severity === 'success'
+                ? 'bg-emerald-100 text-emerald-700'
+                : toast.severity === 'warning'
+                ? 'bg-amber-100 text-amber-700'
+                : toast.severity === 'danger'
+                ? 'bg-rose-100 text-rose-700'
+                : 'bg-sky-100 text-sky-700';
+            return (
+              <div
+                key={toast.id}
+                className={`pointer-events-auto rounded-2xl border-2 p-3.5 shadow-xl flex items-start gap-3 animate-in slide-in-from-bottom-3 duration-200 ${accent}`}
+              >
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${iconBg}`}>
+                  <BellRing className="w-4 h-4" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start justify-between gap-2">
+                    <h4 className="text-xs font-extrabold text-slate-900 leading-snug">
+                      {toast.title}
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => setToastNotifs((prev) => prev.filter((t) => t.id !== toast.id))}
+                      className="p-0.5 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer shrink-0"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-600 mt-1 leading-relaxed line-clamp-3 whitespace-pre-line">
+                    {toast.message}
+                  </p>
+                  {toast.projectId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setToastNotifs((prev) => prev.filter((t) => t.id !== toast.id));
+                        handleOpenNotificationProject(toast);
+                      }}
+                      className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer"
+                    >
+                      <span>مشاهده پرونده</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
 
       {/* PWA Offline indicator */}

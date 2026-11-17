@@ -1,4 +1,4 @@
-import { Position, User, DynamicField, ProjectType, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowDiagramLayout, WorkflowLog, WorkflowTrackingItem, ProjectStructure, StructurePositionNode, StructurePositionSummary, ProjectAttachment, SystemSetting, PasswordResetRequest, SmsRule, SmsLog, PublicSettings, UploadProgressInfo } from '../types';
+import { Position, User, DynamicField, ProjectType, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowDiagramLayout, WorkflowLog, WorkflowTrackingItem, ProjectStructure, StructurePositionNode, StructurePositionSummary, ProjectAttachment, SystemSetting, PasswordResetRequest, SmsRule, SmsLog, PublicSettings, UploadProgressInfo, UserNotification } from '../types';
 
 class ApiService {
   getToken(): string | null {
@@ -975,6 +975,54 @@ class ApiService {
     });
     const data = await res.json();
     return data.logs || [];
+  }
+
+  async getProjectById(id: string): Promise<Project> {
+    const res = await fetch(`/api/projects/${id}`, {
+      headers: this.getAuthHeader(),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'خطا در دریافت اطلاعات پرونده');
+    return data.project;
+  }
+
+  async getNotifications(): Promise<UserNotification[]> {
+    const res = await fetch('/api/notifications', {
+      headers: this.getAuthHeader(),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.notifications || [];
+  }
+
+  async markNotificationRead(id: string): Promise<void> {
+    await fetch(`/api/notifications/${id}/read`, {
+      method: 'POST',
+      headers: this.getAuthHeader(),
+    });
+  }
+
+  async dismissNotification(id: string): Promise<void> {
+    await fetch(`/api/notifications/${id}/dismiss`, {
+      method: 'POST',
+      headers: this.getAuthHeader(),
+    });
+  }
+
+  async markAllNotificationsRead(): Promise<void> {
+    await fetch('/api/notifications/read-all', {
+      method: 'POST',
+      headers: this.getAuthHeader(),
+    });
+  }
+
+  async markPushNotificationsDelivered(ids: string[]): Promise<void> {
+    if (!ids.length) return;
+    await fetch('/api/notifications/mark-push-delivered', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify({ ids }),
+    });
   }
 }
 

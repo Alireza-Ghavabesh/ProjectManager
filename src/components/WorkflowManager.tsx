@@ -3,6 +3,10 @@ import {
   Workflow,
   WorkflowActionKey,
   WorkflowDiagramLayout,
+  WorkflowNotificationChannel,
+  WorkflowNotificationRecipientMode,
+  WorkflowNotificationRule,
+  WorkflowNotificationTriggerEvent,
   WorkflowStartTrigger,
   WorkflowStepConfig,
   Position,
@@ -60,6 +64,9 @@ import {
   Save,
   LogOut,
   Eye,
+  Bell,
+  Inbox,
+  MessageSquareText,
 } from 'lucide-react';
 
 interface WorkflowManagerProps {
@@ -648,7 +655,119 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
       creatorLabel: prev.creatorLabel,
       endApprovedLabel: prev.endApprovedLabel,
       endRejectedLabel: prev.endRejectedLabel,
+      notifications: (prev.notifications || []).map((n) => ({ ...n, pos: undefined })),
     }));
+  };
+
+  const NOTIF_TEMPLATE_VARS: Array<{ token: string; label: string }> = [
+    { token: '{project_title}', label: 'عنوان پروژه' },
+    { token: '{project_code}', label: 'کد پروژه' },
+    { token: '{tracking_code}', label: 'کد گردش' },
+    { token: '{project_status}', label: 'وضعیت پروژه' },
+    { token: '{step_title}', label: 'نام مرحله' },
+    { token: '{task_title}', label: 'عنوان کارتابل' },
+    { token: '{actor_name}', label: 'نام اقدام‌کننده' },
+    { token: '{actor_position}', label: 'سمت اقدام‌کننده' },
+    { token: '{decision}', label: 'نتیجه رای / اقدام' },
+    { token: '{comment}', label: 'توضیح ثبت‌شده' },
+    { token: '{creator_name}', label: 'ثبت‌کننده اولیه' },
+    { token: '{recipient_name}', label: 'نام گیرنده' },
+    { token: '{workflow_title}', label: 'نام گردش کار' },
+    { token: '{budget}', label: 'بودجه' },
+    { token: '{deadline}', label: 'مهلت' },
+    { token: '{date}', label: 'تاریخ' },
+    { token: '{time}', label: 'ساعت' },
+  ];
+
+  const handleCreateNotificationRule = (opts: {
+    pos?: { x: number; y: number };
+    triggerEvent: WorkflowNotificationTriggerEvent;
+    sourceStepOrder?: number | null;
+    branchCondition?: WorkflowNotificationRule['branchCondition'];
+    endOutcomeCondition?: WorkflowNotificationRule['endOutcomeCondition'];
+  }) => {
+    const defaultTitle =
+      opts.triggerEvent === 'ON_WORKFLOW_START'
+        ? 'اطلاع‌رسانی شروع گردش کار'
+        : opts.triggerEvent === 'ON_STEP_ENTER'
+        ? opts.sourceStepOrder
+          ? `اطلاع ورود به گام ${opts.sourceStepOrder}`
+          : 'اطلاع ورود به مرحله'
+        : opts.triggerEvent === 'ON_STEP_VOTE'
+        ? opts.sourceStepOrder
+          ? `اطلاع ثبت رای در گام ${opts.sourceStepOrder}`
+          : 'اطلاع ثبت رای'
+        : opts.triggerEvent === 'ON_GATEWAY_OUTCOME'
+        ? opts.sourceStepOrder
+          ? `اطلاع نتیجه شرط گام ${opts.sourceStepOrder}`
+          : 'اطلاع نتیجه دروازه شرط'
+        : opts.endOutcomeCondition === 'APPROVED'
+        ? 'اطلاع‌رسانی تصویب نهایی'
+        : opts.endOutcomeCondition === 'REJECTED'
+        ? 'اطلاع‌رسانی رد طرح'
+        : opts.endOutcomeCondition === 'NEEDS_REVISION'
+        ? 'اطلاع‌رسانی نیاز به اصلاح'
+        : 'اطلاع‌رسانی نتیجه گردش کار';
+
+    const defaultMsg =
+      opts.triggerEvent === 'ON_WORKFLOW_START'
+        ? 'پروژه «{project_title}» با کد رهگیری {tracking_code} وارد گردش کار «{workflow_title}» شد.'
+        : opts.triggerEvent === 'ON_STEP_ENTER'
+        ? 'پرونده «{project_title}» جهت «{task_title}» وارد مرحله «{step_title}» و کارتابل شما شد.'
+        : opts.triggerEvent === 'ON_STEP_VOTE'
+        ? '{actor_name} در مرحله «{step_title}» نظر «{decision}» را برای پروژه «{project_title}» ثبت کرد. {comment}'
+        : opts.triggerEvent === 'ON_GATEWAY_OUTCOME'
+        ? 'تصمیم نهایی مرحله «{step_title}» برای پروژه «{project_title}»: {decision}'
+        : 'وضعیت نهایی پروژه «{project_title}» (کد {tracking_code}): {project_status}.';
+
+    const defaultRecip: WorkflowNotificationRecipientMode =
+      opts.triggerEvent === 'ON_STEP_ENTER' ? 'CURRENT_STEP_ASSIGNEES' : 'PROJECT_CREATOR';
+
+    const newRule: WorkflowNotificationRule = {
+      id: `notif-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      title: defaultTitle,
+      enabled: true,
+      channels: ['PUSH', 'CARTABLE'],
+      triggerEvent: opts.triggerEvent,
+      sourceStepOrder: opts.sourceStepOrder ?? null,
+      branchCondition: opts.branchCondition || 'ANY',
+      endOutcomeCondition: opts.endOutcomeCondition || 'ANY',
+      projectTypeId: null,
+      actorPositionId: null,
+      recipientModes: [defaultRecip],
+      targetStructureId: null,
+      targetPositionIds: [],
+      targetUserIds: [],
+      customPhones: [],
+      titleTemplate: defaultTitle,
+      messageTemplate: defaultMsg,
+      pos: opts.pos,
+    };
+
+    setDiagramLayout((prev) => ({
+      ...prev,
+      notifications: [...(prev.notifications || []), newRule],
+    }));
+    setSelection({ kind: 'notification', notifId: newRule.id });
+  };
+
+  const handleUpdateNotificationRule = (notifId: string, patch: Partial<WorkflowNotificationRule>) => {
+    setDiagramLayout((prev) => ({
+      ...prev,
+      notifications: (prev.notifications || []).map((n) =>
+        n.id === notifId ? { ...n, ...patch } : n
+      ),
+    }));
+  };
+
+  const handleDeleteNotificationRule = (notifId: string) => {
+    setDiagramLayout((prev) => ({
+      ...prev,
+      notifications: (prev.notifications || []).filter((n) => n.id !== notifId),
+    }));
+    if (selection.kind === 'notification' && selection.notifId === notifId) {
+      setSelection({ kind: 'step', idx: Math.max(0, selectedStepIdx) });
+    }
   };
 
   const insertStepAt = (index: number, newStep: EditableStep) => {
@@ -1507,6 +1626,51 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                       <CornerDownLeft className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                       <span className="truncate">عودت ثبت‌کننده</span>
                     </button>
+
+                    <div
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.effectAllowed = 'copy';
+                        setDragPayload({ kind: 'toolbox-notification' });
+                      }}
+                      onDragEnd={clearDragState}
+                      onClick={() =>
+                        handleCreateNotificationRule({
+                          triggerEvent:
+                            selection.kind === 'step'
+                              ? 'ON_STEP_VOTE'
+                              : selection.kind === 'gateway'
+                              ? 'ON_GATEWAY_OUTCOME'
+                              : selection.kind === 'end_approved' ||
+                                selection.kind === 'end_rejected' ||
+                                selection.kind === 'creator_return'
+                              ? 'ON_WORKFLOW_END'
+                              : 'ON_WORKFLOW_START',
+                          sourceStepOrder:
+                            selection.kind === 'step' || selection.kind === 'gateway'
+                              ? selection.idx + 1
+                              : null,
+                          endOutcomeCondition:
+                            selection.kind === 'end_approved'
+                              ? 'APPROVED'
+                              : selection.kind === 'end_rejected'
+                              ? 'REJECTED'
+                              : selection.kind === 'creator_return'
+                              ? 'NEEDS_REVISION'
+                              : 'ANY',
+                        })
+                      }
+                      className="col-span-2 p-2 rounded-lg border border-sky-200 bg-sky-50/80 hover:bg-sky-100 text-sky-950 text-[10px] font-bold flex items-center justify-between gap-1.5 cursor-grab active:cursor-grabbing transition"
+                      title="بکشید روی هر مرحله، لوزی یا گره پایان (یا کلیک کنید) تا پیامک/پوش/اعلان کارتابل تعریف شود"
+                    >
+                      <span className="flex items-center gap-1.5 truncate">
+                        <Bell className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                        <span className="truncate">اطلاع‌رسانی (پوش / پیامک / کارتابل)</span>
+                      </span>
+                      <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-white text-sky-700 border border-sky-200 tabular-nums shrink-0">
+                        {(diagramLayout.notifications || []).length}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
@@ -1724,6 +1888,8 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                     onDropPositionOnStep={(targetIdx, positionId) =>
                       addParallelPositionToStep(targetIdx, positionId, null)
                     }
+                    onDropNotificationAt={handleCreateNotificationRule}
+                    onDeleteNotification={handleDeleteNotificationRule}
                     onClearDrag={clearDragState}
                   />
                 ) : (
@@ -1873,6 +2039,59 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                         );
                       })}
                     </div>
+                    {/* List Mode Notifications Strip */}
+                      <div className="mt-4 pt-4 border-t border-slate-200 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                            <Bell className="w-4 h-4 text-sky-600" />
+                            قوانین اطلاع‌رسانی ({(diagramLayout.notifications || []).length})
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleCreateNotificationRule({ triggerEvent: 'ON_WORKFLOW_START' })
+                            }
+                            className="px-2.5 py-1 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            افزودن اطلاع‌رسانی
+                          </button>
+                        </div>
+                        {(diagramLayout.notifications || []).length > 0 && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            {(diagramLayout.notifications || []).map((rule) => (
+                              <div
+                                key={rule.id}
+                                onClick={() => setSelection({ kind: 'notification', notifId: rule.id })}
+                                className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between gap-2 transition ${
+                                  selection.kind === 'notification' && selection.notifId === rule.id
+                                    ? 'bg-sky-50/70 border-sky-500 ring-2 ring-sky-500/20'
+                                    : 'bg-white border-slate-200 hover:border-sky-300'
+                                }`}
+                              >
+                                <div className="min-w-0">
+                                  <div className="text-xs font-bold text-slate-900 truncate">
+                                    {rule.title}
+                                  </div>
+                                  <div className="text-[10px] text-slate-500 truncate mt-0.5">
+                                    {rule.channels.join(' + ')} · {rule.messageTemplate}
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteNotificationRule(rule.id);
+                                  }}
+                                  className="p-1 rounded text-slate-400 hover:text-rose-600 cursor-pointer shrink-0"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                   </div>
                 )}
               </main>
@@ -1889,6 +2108,8 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                         <Diamond className="w-4 h-4 text-amber-600" />
                       ) : selection.kind === 'creator_return' ? (
                         <UserCheck className="w-4 h-4 text-amber-600" />
+                      ) : selection.kind === 'notification' ? (
+                        <Bell className="w-4 h-4 text-sky-600" />
                       ) : (
                         <SlidersHorizontal className="w-4 h-4" />
                       )}
@@ -1896,6 +2117,8 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                     <h4 className="text-xs font-black text-slate-900 truncate">
                       {selection.kind === 'start'
                         ? 'تنظیمات رویداد شروع گردش کار'
+                        : selection.kind === 'notification'
+                        ? 'تنظیمات گره اطلاع‌رسانی (پوش / پیامک / کارتابل)'
                         : selection.kind === 'gateway' && selectedStep
                         ? `دروازه لوزی (شروط) — گام ${selectedStepIdx + 1}`
                         : selection.kind === 'creator_return'
@@ -2068,6 +2291,37 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                             </div>
                           </div>
                         )}
+
+                        <div className="pt-3 border-t border-slate-200 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-black text-slate-800 flex items-center gap-1">
+                              <Bell className="w-3.5 h-3.5 text-sky-600" />
+                              اطلاع‌رسانی خودکار هنگام شروع
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleCreateNotificationRule({ triggerEvent: 'ON_WORKFLOW_START' })
+                              }
+                              className="px-2 py-1 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 text-[10px] font-bold cursor-pointer"
+                            >
+                              + افزودن اعلان
+                            </button>
+                          </div>
+                          {(diagramLayout.notifications || [])
+                            .filter((n) => n.triggerEvent === 'ON_WORKFLOW_START')
+                            .map((n) => (
+                              <button
+                                key={n.id}
+                                type="button"
+                                onClick={() => setSelection({ kind: 'notification', notifId: n.id })}
+                                className="w-full text-right p-2 rounded-lg bg-sky-50/70 border border-sky-200 hover:border-sky-400 text-[11px] font-bold text-sky-950 flex items-center justify-between cursor-pointer"
+                              >
+                                <span className="truncate">{n.title}</span>
+                                <span className="text-[9px] text-sky-700 shrink-0">ویرایش</span>
+                              </button>
+                            ))}
+                        </div>
                       </div>
                     );
                   })()}
@@ -2456,6 +2710,58 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                           )}
                         </div>
 
+                        <div className="p-3 rounded-xl bg-sky-50/70 border border-sky-200 space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-black text-sky-950 flex items-center gap-1">
+                              <Bell className="w-3.5 h-3.5 text-sky-600" />
+                              اطلاع‌رسانی خودکار این گام
+                            </span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleCreateNotificationRule({
+                                    triggerEvent: 'ON_STEP_ENTER',
+                                    sourceStepOrder: selectedStepIdx + 1,
+                                  })
+                                }
+                                className="px-2 py-0.5 rounded bg-white hover:bg-sky-100 text-sky-800 border border-sky-200 text-[10px] font-bold cursor-pointer"
+                              >
+                                + هنگام ورود
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleCreateNotificationRule({
+                                    triggerEvent: 'ON_STEP_VOTE',
+                                    sourceStepOrder: selectedStepIdx + 1,
+                                  })
+                                }
+                                className="px-2 py-0.5 rounded bg-sky-600 hover:bg-sky-700 text-white text-[10px] font-bold cursor-pointer"
+                              >
+                                + هنگام رای
+                              </button>
+                            </div>
+                          </div>
+                          {(diagramLayout.notifications || [])
+                            .filter(
+                              (n) =>
+                                (n.triggerEvent === 'ON_STEP_ENTER' || n.triggerEvent === 'ON_STEP_VOTE') &&
+                                (!n.sourceStepOrder || n.sourceStepOrder === selectedStepIdx + 1)
+                            )
+                            .map((n) => (
+                              <button
+                                key={n.id}
+                                type="button"
+                                onClick={() => setSelection({ kind: 'notification', notifId: n.id })}
+                                className="w-full text-right p-2 rounded-lg bg-white border border-sky-200 hover:border-sky-400 text-[11px] font-bold text-slate-900 flex items-center justify-between cursor-pointer"
+                              >
+                                <span className="truncate">{n.title}</span>
+                                <span className="text-[9px] text-sky-700 shrink-0">ویرایش</span>
+                              </button>
+                            ))}
+                        </div>
+
                         <div>
                           <label className="block text-[11px] font-bold text-slate-700 mb-1">
                             راهنمای مرحله برای کاربران:
@@ -2821,6 +3127,44 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                             )}
                           </div>
                         )}
+
+                        <div className="p-3 rounded-xl bg-sky-50/70 border border-sky-200 space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-black text-sky-950 flex items-center gap-1">
+                              <Bell className="w-3.5 h-3.5 text-sky-600" />
+                              اعلان نتیجه دروازه شرط (لوزی)
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleCreateNotificationRule({
+                                  triggerEvent: 'ON_GATEWAY_OUTCOME',
+                                  sourceStepOrder: selectedStepIdx + 1,
+                                })
+                              }
+                              className="px-2 py-0.5 rounded bg-sky-600 hover:bg-sky-700 text-white text-[10px] font-bold cursor-pointer"
+                            >
+                              + افزودن اعلان
+                            </button>
+                          </div>
+                          {(diagramLayout.notifications || [])
+                            .filter(
+                              (n) =>
+                                n.triggerEvent === 'ON_GATEWAY_OUTCOME' &&
+                                (!n.sourceStepOrder || n.sourceStepOrder === selectedStepIdx + 1)
+                            )
+                            .map((n) => (
+                              <button
+                                key={n.id}
+                                type="button"
+                                onClick={() => setSelection({ kind: 'notification', notifId: n.id })}
+                                className="w-full text-right p-2 rounded-lg bg-white border border-sky-200 hover:border-sky-400 text-[11px] font-bold text-slate-900 flex items-center justify-between cursor-pointer"
+                              >
+                                <span className="truncate">{n.title}</span>
+                                <span className="text-[9px] text-sky-700 shrink-0">ویرایش</span>
+                              </button>
+                            ))}
+                        </div>
                       </div>
                     );
                   })()}
@@ -2846,6 +3190,40 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                           }
                           className="w-full rounded-lg bg-slate-50 border border-slate-300 px-3 py-1.5 text-xs text-slate-900"
                         />
+                      </div>
+
+                      <div className="pt-3 border-t border-slate-200 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-black text-slate-800 flex items-center gap-1">
+                            <Bell className="w-3.5 h-3.5 text-sky-600" />
+                            اطلاع‌رسانی هنگام عودت برای اصلاح
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleCreateNotificationRule({
+                                triggerEvent: 'ON_WORKFLOW_END',
+                                endOutcomeCondition: 'NEEDS_REVISION',
+                              })
+                            }
+                            className="px-2 py-1 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 text-[10px] font-bold cursor-pointer"
+                          >
+                            + افزودن اعلان
+                          </button>
+                        </div>
+                        {(diagramLayout.notifications || [])
+                          .filter((n) => n.triggerEvent === 'ON_WORKFLOW_END' && n.endOutcomeCondition === 'NEEDS_REVISION')
+                          .map((n) => (
+                            <button
+                              key={n.id}
+                              type="button"
+                              onClick={() => setSelection({ kind: 'notification', notifId: n.id })}
+                              className="w-full text-right p-2 rounded-lg bg-sky-50/70 border border-sky-200 hover:border-sky-400 text-[11px] font-bold text-sky-950 flex items-center justify-between cursor-pointer"
+                            >
+                              <span className="truncate">{n.title}</span>
+                              <span className="text-[9px] text-sky-700 shrink-0">ویرایش</span>
+                            </button>
+                          ))}
                       </div>
                     </div>
                   )}
@@ -2874,6 +3252,40 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                           className="w-full rounded-lg bg-slate-50 border border-slate-300 px-3 py-1.5 text-xs text-slate-900"
                         />
                       </div>
+
+                      <div className="pt-3 border-t border-slate-200 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-black text-slate-800 flex items-center gap-1">
+                            <Bell className="w-3.5 h-3.5 text-sky-600" />
+                            اطلاع‌رسانی تصویب نهایی
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleCreateNotificationRule({
+                                triggerEvent: 'ON_WORKFLOW_END',
+                                endOutcomeCondition: 'APPROVED',
+                              })
+                            }
+                            className="px-2 py-1 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 text-[10px] font-bold cursor-pointer"
+                          >
+                            + افزودن اعلان
+                          </button>
+                        </div>
+                        {(diagramLayout.notifications || [])
+                          .filter((n) => n.triggerEvent === 'ON_WORKFLOW_END' && (n.endOutcomeCondition === 'APPROVED' || n.endOutcomeCondition === 'ANY'))
+                          .map((n) => (
+                            <button
+                              key={n.id}
+                              type="button"
+                              onClick={() => setSelection({ kind: 'notification', notifId: n.id })}
+                              className="w-full text-right p-2 rounded-lg bg-sky-50/70 border border-sky-200 hover:border-sky-400 text-[11px] font-bold text-sky-950 flex items-center justify-between cursor-pointer"
+                            >
+                              <span className="truncate">{n.title}</span>
+                              <span className="text-[9px] text-sky-700 shrink-0">ویرایش</span>
+                            </button>
+                          ))}
+                      </div>
                     </div>
                   )}
 
@@ -2901,8 +3313,534 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                           className="w-full rounded-lg bg-slate-50 border border-slate-300 px-3 py-1.5 text-xs text-slate-900"
                         />
                       </div>
+
+                      <div className="pt-3 border-t border-slate-200 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-black text-slate-800 flex items-center gap-1">
+                            <Bell className="w-3.5 h-3.5 text-sky-600" />
+                            اطلاع‌رسانی رد طرح
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleCreateNotificationRule({
+                                triggerEvent: 'ON_WORKFLOW_END',
+                                endOutcomeCondition: 'REJECTED',
+                              })
+                            }
+                            className="px-2 py-1 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 text-[10px] font-bold cursor-pointer"
+                          >
+                            + افزودن اعلان
+                          </button>
+                        </div>
+                        {(diagramLayout.notifications || [])
+                          .filter((n) => n.triggerEvent === 'ON_WORKFLOW_END' && (n.endOutcomeCondition === 'REJECTED' || n.endOutcomeCondition === 'ANY'))
+                          .map((n) => (
+                            <button
+                              key={n.id}
+                              type="button"
+                              onClick={() => setSelection({ kind: 'notification', notifId: n.id })}
+                              className="w-full text-right p-2 rounded-lg bg-sky-50/70 border border-sky-200 hover:border-sky-400 text-[11px] font-bold text-sky-950 flex items-center justify-between cursor-pointer"
+                            >
+                              <span className="truncate">{n.title}</span>
+                              <span className="text-[9px] text-sky-700 shrink-0">ویرایش</span>
+                            </button>
+                          ))}
+                      </div>
                     </div>
                   )}
+
+                  {/* 5. NOTIFICATION NODE INSPECTOR */}
+                  {selection.kind === 'notification' && (() => {
+                    const rule = (diagramLayout.notifications || []).find(
+                      (n) => n.id === selection.notifId
+                    );
+                    if (!rule) {
+                      return (
+                        <div className="p-4 text-center text-xs text-slate-500">
+                          گره اطلاع‌رسانی انتخاب‌شده یافت نشد.
+                        </div>
+                      );
+                    }
+
+                    const updateRule = (patch: Partial<WorkflowNotificationRule>) =>
+                      handleUpdateNotificationRule(rule.id, patch);
+
+                    const toggleChannel = (ch: WorkflowNotificationChannel) => {
+                      const has = rule.channels.includes(ch);
+                      const next = has
+                        ? rule.channels.filter((c) => c !== ch)
+                        : [...rule.channels, ch];
+                      updateRule({ channels: next });
+                    };
+
+                    const toggleRecipientMode = (mode: WorkflowNotificationRecipientMode) => {
+                      const has = rule.recipientModes.includes(mode);
+                      const next = has
+                        ? rule.recipientModes.filter((m) => m !== mode)
+                        : [...rule.recipientModes, mode];
+                      updateRule({ recipientModes: next });
+                    };
+
+                    const toggleTargetPosition = (posId: string) => {
+                      const cur = rule.targetPositionIds || [];
+                      const next = cur.includes(posId)
+                        ? cur.filter((id) => id !== posId)
+                        : [...cur, posId];
+                      updateRule({ targetPositionIds: next });
+                    };
+
+                    const toggleTargetUser = (userId: string) => {
+                      const cur = rule.targetUserIds || [];
+                      const next = cur.includes(userId)
+                        ? cur.filter((id) => id !== userId)
+                        : [...cur, userId];
+                      updateRule({ targetUserIds: next });
+                    };
+
+                    const notifCandidatePositions =
+                      rule.targetStructureId &&
+                      structurePositionsMap[rule.targetStructureId]?.length > 0
+                        ? structurePositionsMap[rule.targetStructureId].map((sp) => ({
+                            id: sp.positionId,
+                            title: sp.title,
+                          }))
+                        : positions.map((p) => ({ id: p.id, title: p.title }));
+
+                    return (
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-sky-50 border border-sky-200">
+                          <label className="flex items-center gap-2 text-xs font-bold text-sky-950 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={rule.enabled !== false}
+                              onChange={(e) => updateRule({ enabled: e.target.checked })}
+                              className="rounded text-sky-600"
+                            />
+                            <span>این اطلاع‌رسانی فعال باشد</span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteNotificationRule(rule.id)}
+                            className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            <span>حذف</span>
+                          </button>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                            نام / عنوان گره در نقشه:
+                          </label>
+                          <input
+                            type="text"
+                            value={rule.title}
+                            onChange={(e) => updateRule({ title: e.target.value })}
+                            className="w-full rounded-lg bg-slate-50 border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-900 focus:outline-none focus:border-sky-500 focus:bg-white"
+                          />
+                        </div>
+
+                        {/* 3 Delivery Channels */}
+                        <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                          <span className="block text-[11px] font-black text-slate-800">
+                            ۱. روش‌های اطلاع‌رسانی (۱، ۲ یا هر ۳ هم‌زمان):
+                          </span>
+                          <div className="grid grid-cols-3 gap-1.5">
+                            {(
+                              [
+                                {
+                                  ch: 'PUSH' as WorkflowNotificationChannel,
+                                  label: 'پوش نوتیفیکیشن',
+                                  Icon: Bell,
+                                  activeCls: 'bg-indigo-600 text-white border-indigo-600',
+                                },
+                                {
+                                  ch: 'SMS' as WorkflowNotificationChannel,
+                                  label: 'ارسال پیامک',
+                                  Icon: MessageSquareText,
+                                  activeCls: 'bg-emerald-600 text-white border-emerald-600',
+                                },
+                                {
+                                  ch: 'CARTABLE' as WorkflowNotificationChannel,
+                                  label: 'اعلان کارتابل',
+                                  Icon: Inbox,
+                                  activeCls: 'bg-amber-600 text-white border-amber-600',
+                                },
+                              ] as const
+                            ).map((item) => {
+                              const active = rule.channels.includes(item.ch);
+                              const ChIcon = item.Icon;
+                              return (
+                                <button
+                                  key={item.ch}
+                                  type="button"
+                                  onClick={() => toggleChannel(item.ch)}
+                                  className={`p-2 rounded-lg border text-[10px] font-bold flex flex-col items-center justify-center gap-1 cursor-pointer transition ${
+                                    active
+                                      ? item.activeCls
+                                      : 'bg-white border-slate-300 text-slate-700 hover:border-slate-400'
+                                  }`}
+                                >
+                                  <ChIcon className="w-3.5 h-3.5" />
+                                  <span className="text-center leading-tight">{item.label}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {rule.channels.length === 0 && (
+                            <p className="text-[10px] font-bold text-rose-600">
+                              حداقل یک روش ارسال را انتخاب کنید.
+                            </p>
+                          )}
+                        </div>
+
+                        {/* 2. Trigger Event & Conditions */}
+                        <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
+                          <span className="block text-[11px] font-black text-slate-800">
+                            ۲. زمان وقوع و شرط اجرا:
+                          </span>
+                          <select
+                            value={rule.triggerEvent}
+                            onChange={(e) =>
+                              updateRule({
+                                triggerEvent: e.target.value as WorkflowNotificationTriggerEvent,
+                              })
+                            }
+                            className="w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-900"
+                          >
+                            <option value="ON_WORKFLOW_START">هنگام شروع گردش کار</option>
+                            <option value="ON_STEP_ENTER">هنگام ورود پرونده به گام</option>
+                            <option value="ON_STEP_VOTE">به‌محض ثبت رای هر کاربر در گام</option>
+                            <option value="ON_GATEWAY_OUTCOME">پس از تصمیم‌گیری دروازه شرط (لوزی)</option>
+                            <option value="ON_WORKFLOW_END">پایان و نتیجه نهایی گردش کار</option>
+                          </select>
+
+                          {(rule.triggerEvent === 'ON_STEP_ENTER' ||
+                            rule.triggerEvent === 'ON_STEP_VOTE' ||
+                            rule.triggerEvent === 'ON_GATEWAY_OUTCOME') && (
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                                کدام مرحله؟
+                              </label>
+                              <select
+                                value={rule.sourceStepOrder || ''}
+                                onChange={(e) =>
+                                  updateRule({
+                                    sourceStepOrder: e.target.value ? Number(e.target.value) : null,
+                                  })
+                                }
+                                className="w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-[11px] text-slate-900"
+                              >
+                                <option value="">همه مراحل این گردش کار</option>
+                                {steps.map((s, i) => (
+                                  <option key={s.localKey} value={i + 1}>
+                                    گام {i + 1}: {s.title}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+
+                          {(rule.triggerEvent === 'ON_STEP_VOTE' ||
+                            rule.triggerEvent === 'ON_GATEWAY_OUTCOME') && (
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                                شرط نوع رای / مسیر خروجی:
+                              </label>
+                              <select
+                                value={rule.branchCondition || 'ANY'}
+                                onChange={(e) =>
+                                  updateRule({
+                                    branchCondition: e.target.value as WorkflowNotificationRule['branchCondition'],
+                                  })
+                                }
+                                className="w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-[11px] text-slate-900"
+                              >
+                                <option value="ANY">همه حالت‌ها (تایید / اصلاح / رد)</option>
+                                <option value="APPROVE">فقط تایید / موافقت</option>
+                                <option value="REVISION">فقط درخواست اصلاح</option>
+                                <option value="REJECT">فقط رد / مخالفت</option>
+                              </select>
+                            </div>
+                          )}
+
+                          {rule.triggerEvent === 'ON_WORKFLOW_END' && (
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                                شرط نتیجه نهایی گردش کار:
+                              </label>
+                              <select
+                                value={rule.endOutcomeCondition || 'ANY'}
+                                onChange={(e) =>
+                                  updateRule({
+                                    endOutcomeCondition: e.target.value as WorkflowNotificationRule['endOutcomeCondition'],
+                                  })
+                                }
+                                className="w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-[11px] text-slate-900"
+                              >
+                                <option value="ANY">هر نتیجه‌ای (تایید، اصلاح یا رد)</option>
+                                <option value="APPROVED">فقط تصویب نهایی / تایید اکثریت</option>
+                                <option value="NEEDS_REVISION">فقط نیاز به اصلاح (عودت به ثبت‌کننده)</option>
+                                <option value="REJECTED">فقط رد شده / مختومه</option>
+                              </select>
+                            </div>
+                          )}
+
+                          <details className="pt-1">
+                            <summary className="text-[10px] font-bold text-indigo-700 cursor-pointer select-none">
+                              فیلترهای پیشرفته (نوع پروژه / سمت اقدام‌کننده)
+                            </summary>
+                            <div className="pt-2 space-y-2">
+                              <select
+                                value={rule.projectTypeId || ''}
+                                onChange={(e) => updateRule({ projectTypeId: e.target.value || null })}
+                                className="w-full rounded-lg bg-white border border-slate-300 px-2 py-1 text-[11px] text-slate-800"
+                              >
+                                <option value="">همه انواع پروژه</option>
+                                {loadedProjectTypes.map((pt) => (
+                                  <option key={pt.id} value={pt.id}>
+                                    نوع پروژه: {pt.title}
+                                  </option>
+                                ))}
+                              </select>
+                              <select
+                                value={rule.actorPositionId || ''}
+                                onChange={(e) => updateRule({ actorPositionId: e.target.value || null })}
+                                className="w-full rounded-lg bg-white border border-slate-300 px-2 py-1 text-[11px] text-slate-800"
+                              >
+                                <option value="">همه سمت‌های اقدام‌کننده</option>
+                                {positions.map((pos) => (
+                                  <option key={pos.id} value={pos.id}>
+                                    فقط اگر اقدام‌کننده سمت «{pos.title}» داشت
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </details>
+                        </div>
+
+                        {/* 3. Recipients */}
+                        <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                          <span className="block text-[11px] font-black text-slate-800">
+                            ۳. گیرندگان اطلاع‌رسانی (چندانتخابی):
+                          </span>
+                          <div className="grid grid-cols-1 gap-1.5">
+                            {(
+                              [
+                                { mode: 'PROJECT_CREATOR' as WorkflowNotificationRecipientMode, label: 'ثبت‌کننده اولیه پروژه' },
+                                { mode: 'CURRENT_STEP_ASSIGNEES' as WorkflowNotificationRecipientMode, label: 'اعضا / سمت‌های مرحله فعال' },
+                                { mode: 'ACTOR' as WorkflowNotificationRecipientMode, label: 'کاربر انجام‌دهنده اقدام فعلی' },
+                                { mode: 'WORKFLOW_PARTICIPANTS' as WorkflowNotificationRecipientMode, label: 'تمامی مشارکت‌کنندگان پرونده' },
+                                { mode: 'SPECIFIC_POSITIONS' as WorkflowNotificationRecipientMode, label: 'سمت‌های سازمانی دلخواه' },
+                                { mode: 'SPECIFIC_USERS' as WorkflowNotificationRecipientMode, label: 'کاربران مشخص (شخصی)' },
+                                { mode: 'ALL_ADMINS' as WorkflowNotificationRecipientMode, label: 'تمامی مدیران ارشد سامانه' },
+                                { mode: 'ALL_COUNCIL' as WorkflowNotificationRecipientMode, label: 'تمامی اعضای شورا' },
+                                { mode: 'CUSTOM_PHONES' as WorkflowNotificationRecipientMode, label: 'شماره موبایل دلخواه (فقط پیامک)' },
+                              ] as const
+                            ).map((opt) => (
+                              <label
+                                key={opt.mode}
+                                className="flex items-center gap-2 px-2 py-1 rounded-lg bg-white border border-slate-200 text-[11px] font-semibold text-slate-800 cursor-pointer hover:border-sky-300"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={rule.recipientModes.includes(opt.mode)}
+                                  onChange={() => toggleRecipientMode(opt.mode)}
+                                  className="rounded text-sky-600"
+                                />
+                                <span>{opt.label}</span>
+                              </label>
+                            ))}
+                          </div>
+
+                          {rule.recipientModes.includes('SPECIFIC_POSITIONS') && (
+                            <div className="p-2.5 rounded-lg bg-white border border-sky-200 space-y-2">
+                              <select
+                                value={rule.targetStructureId || ''}
+                                onChange={(e) =>
+                                  updateRule({ targetStructureId: e.target.value || null })
+                                }
+                                className="w-full rounded-lg bg-slate-50 border border-slate-300 px-2 py-1 text-[11px] font-bold text-slate-800"
+                              >
+                                <option value="">همه ساختارها (و سمت اصلی کاربران)</option>
+                                {structures.map((s) => (
+                                  <option key={s.id} value={s.id}>
+                                    فقط ساختار: {s.title}
+                                  </option>
+                                ))}
+                              </select>
+                              <div className="max-h-32 overflow-y-auto space-y-1">
+                                {notifCandidatePositions.map((p) => (
+                                  <label
+                                    key={p.id}
+                                    className="flex items-center gap-1.5 text-[11px] text-slate-800 cursor-pointer"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={(rule.targetPositionIds || []).includes(p.id)}
+                                      onChange={() => toggleTargetPosition(p.id)}
+                                      className="rounded text-sky-600"
+                                    />
+                                    <span className="truncate">{p.title}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {rule.recipientModes.includes('SPECIFIC_USERS') && (
+                            <div className="p-2.5 rounded-lg bg-white border border-sky-200 max-h-36 overflow-y-auto space-y-1">
+                              {users.map((u) => (
+                                <label
+                                  key={u.id}
+                                  className="flex items-center gap-1.5 text-[11px] text-slate-800 cursor-pointer"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={(rule.targetUserIds || []).includes(u.id)}
+                                    onChange={() => toggleTargetUser(u.id)}
+                                    className="rounded text-sky-600"
+                                  />
+                                  <span className="truncate">
+                                    {u.name} (@{u.username})
+                                  </span>
+                                </label>
+                              ))}
+                            </div>
+                          )}
+
+                          {rule.recipientModes.includes('CUSTOM_PHONES') && (
+                            <div className="p-2 rounded-lg bg-white border border-emerald-200 space-y-1">
+                              <label className="block text-[10px] font-bold text-emerald-900">
+                                شماره‌های موبایل دلخواه (با ویرگول یا خط جدید جدا کنید):
+                              </label>
+                              <textarea
+                                rows={2}
+                                dir="ltr"
+                                value={(rule.customPhones || []).join(', ')}
+                                onChange={(e) =>
+                                  updateRule({
+                                    customPhones: e.target.value
+                                      .split(/[,;\n\s]+/)
+                                      .map((p) => p.trim())
+                                      .filter(Boolean),
+                                  })
+                                }
+                                placeholder="09120000000, 09350000000"
+                                className="w-full rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-900"
+                              />
+                            </div>
+                          )}
+                        </div>
+
+                        {/* 4. Message & Title Templates */}
+                        <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
+                          <span className="block text-[11px] font-black text-slate-800">
+                            ۴. عنوان و متن دلخواه اطلاع‌رسانی:
+                          </span>
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                              عنوان اعلان (در پوش و کارتابل):
+                            </label>
+                            <input
+                              type="text"
+                              value={rule.titleTemplate ?? rule.title}
+                              onChange={(e) => updateRule({ titleTemplate: e.target.value })}
+                              placeholder="مثلاً: نتیجه بررسی {project_title}"
+                              className="w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-xs text-slate-900"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                              متن اصلی پیام (مشترک برای همه روش‌های انتخاب‌شده):
+                            </label>
+                            <textarea
+                              rows={3}
+                              value={rule.messageTemplate}
+                              onChange={(e) => updateRule({ messageTemplate: e.target.value })}
+                              placeholder="متن پیام دلخواه خود را بنویسید..."
+                              className="w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-xs text-slate-900 leading-relaxed"
+                            />
+                          </div>
+
+                          <div>
+                            <span className="block text-[10px] font-bold text-slate-500 mb-1">
+                              درج متغیر پویا با کلیک در متن:
+                            </span>
+                            <div className="flex flex-wrap gap-1">
+                              {NOTIF_TEMPLATE_VARS.map((v) => (
+                                <button
+                                  key={v.token}
+                                  type="button"
+                                  onClick={() =>
+                                    updateRule({
+                                      messageTemplate: `${rule.messageTemplate}${rule.messageTemplate ? ' ' : ''}${v.token}`,
+                                    })
+                                  }
+                                  className="px-1.5 py-0.5 rounded bg-white hover:bg-sky-50 border border-slate-200 hover:border-sky-300 text-[9px] font-bold text-slate-700 cursor-pointer"
+                                  title={v.token}
+                                >
+                                  {v.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <details className="pt-1">
+                            <summary className="text-[10px] font-bold text-sky-700 cursor-pointer select-none">
+                              سفارشی‌سازی جداگانه متن هر کانال (اختیاری)
+                            </summary>
+                            <div className="pt-2 space-y-2">
+                              {rule.channels.includes('PUSH') && (
+                                <div>
+                                  <label className="block text-[10px] font-bold text-indigo-800 mb-0.5">
+                                    متن اختصاصی پوش نوتیفیکیشن:
+                                  </label>
+                                  <textarea
+                                    rows={2}
+                                    value={rule.pushTemplate || ''}
+                                    onChange={(e) => updateRule({ pushTemplate: e.target.value })}
+                                    placeholder="خالی = استفاده از متن اصلی"
+                                    className="w-full rounded bg-white border border-indigo-200 px-2 py-1 text-[11px]"
+                                  />
+                                </div>
+                              )}
+                              {rule.channels.includes('SMS') && (
+                                <div>
+                                  <label className="block text-[10px] font-bold text-emerald-800 mb-0.5">
+                                    متن اختصاصی پیامک:
+                                  </label>
+                                  <textarea
+                                    rows={2}
+                                    value={rule.smsTemplate || ''}
+                                    onChange={(e) => updateRule({ smsTemplate: e.target.value })}
+                                    placeholder="خالی = استفاده از متن اصلی"
+                                    className="w-full rounded bg-white border border-emerald-200 px-2 py-1 text-[11px]"
+                                  />
+                                </div>
+                              )}
+                              {rule.channels.includes('CARTABLE') && (
+                                <div>
+                                  <label className="block text-[10px] font-bold text-amber-800 mb-0.5">
+                                    متن اختصاصی اعلان کارتابل:
+                                  </label>
+                                  <textarea
+                                    rows={2}
+                                    value={rule.cartableTemplate || ''}
+                                    onChange={(e) => updateRule({ cartableTemplate: e.target.value })}
+                                    placeholder="خالی = استفاده از متن اصلی"
+                                    className="w-full rounded bg-white border border-amber-200 px-2 py-1 text-[11px]"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          </details>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               </aside>
             </div>

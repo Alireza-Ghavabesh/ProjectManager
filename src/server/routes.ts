@@ -4,6 +4,11 @@ import { randomUUID } from 'crypto';
 import { createJwtToken, verifyJwtToken } from './jwt.js';
 import { isDeadlineExpired } from '../utils/formatters.js';
 import { triggerSmsForEvent, sendSmsViaProvider } from './sms.js';
+import {
+  dispatchWorkflowNotifications,
+  registerNotificationClient,
+  unregisterNotificationClient,
+} from './notifications.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -27,6 +32,8 @@ function getCurrentUser(req: Request) {
   let rawToken = '';
   if (authHeader && authHeader.startsWith('Bearer ')) {
     rawToken = authHeader.substring(7).trim();
+  } else if (req.query.token && typeof req.query.token === 'string') {
+    rawToken = req.query.token.trim();
   } else if (req.query.userId && typeof req.query.userId === 'string') {
     rawToken = req.query.userId;
   }
@@ -1389,6 +1396,26 @@ function triggerPostApprovalWorkflows(projectId: string, actorUserId: string, no
     createdAt: now,
   });
 
+  const actorRow = db.prepare('SELECT id, name, role, positionId FROM users WHERE id = ?').get(actorUserId) as any;
+  dispatchWorkflowNotifications({
+    workflowId: nextWf.id,
+    projectId,
+    triggerEvent: 'ON_WORKFLOW_START',
+    stepOrder: 1,
+    stepTitle: firstStep.title,
+    taskTitle: nextTaskTitle,
+    actorUser: actorRow || { id: actorUserId, name: 'سامانه' },
+  }).catch(console.error);
+  dispatchWorkflowNotifications({
+    workflowId: nextWf.id,
+    projectId,
+    triggerEvent: 'ON_STEP_ENTER',
+    stepOrder: 1,
+    stepTitle: firstStep.title,
+    taskTitle: nextTaskTitle,
+    actorUser: actorRow || { id: actorUserId, name: 'سامانه' },
+  }).catch(console.error);
+
   return true;
 }
 
@@ -2097,6 +2124,16 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
             status = 'REJECTED', majorityResult = 'REJECTED', updatedAt = ?
         WHERE id = ?
       `).run(now, projectId);
+      dispatchWorkflowNotifications({
+        workflowId: project.workflowId || 'wf-standard',
+        projectId,
+        triggerEvent: 'ON_WORKFLOW_END',
+        stepOrder: 0,
+        endOutcome: 'REJECTED',
+        branchOutcome: 'REJECT',
+        actorUser: currentUser,
+        comment: comment || 'انصراف / رد پروژه از کارتابل ثبت‌کننده',
+      }).catch(console.error);
       return res.json({
         success: true,
         advanced: true,
@@ -2144,6 +2181,16 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
       projectId,
       now
     );
+    dispatchWorkflowNotifications({
+      workflowId: project.workflowId || 'wf-standard',
+      projectId,
+      triggerEvent: 'ON_STEP_ENTER',
+      stepOrder: targetStepOrder,
+      stepTitle: firstStep?.title,
+      taskTitle: nextTaskTitle,
+      actorUser: currentUser,
+      comment: comment || 'اصلاحات انجام شد و پرونده مجدداً به گام اول گردش کار ارسال گردید',
+    }).catch(console.error);
     return res.json({
       success: true,
       advanced: true,
@@ -2404,6 +2451,18 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
     );
     multiUserVoteInserted = true;
 
+    dispatchWorkflowNotifications({
+      workflowId: project.workflowId || 'wf-standard',
+      projectId,
+      triggerEvent: 'ON_STEP_VOTE',
+      stepOrder: currentStepNum,
+      branchOutcome: voteDecision,
+      stepTitle: currentStep?.title,
+      taskTitle: project.currentTaskTitle || currentConfig.taskTitle || currentStep?.title || null,
+      actorUser: currentUser,
+      comment: comment || '',
+    }).catch(console.error);
+
     if (!decided) {
       db.prepare('UPDATE projects SET updatedAt = ? WHERE id = ?').run(now, projectId);
 
@@ -2428,6 +2487,18 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
     }
 
     resolvedOutcome = decided;
+  } else {
+    dispatchWorkflowNotifications({
+      workflowId: project.workflowId || 'wf-standard',
+      projectId,
+      triggerEvent: 'ON_STEP_VOTE',
+      stepOrder: currentStepNum,
+      branchOutcome: voteDecision,
+      stepTitle: currentStep?.title,
+      taskTitle: project.currentTaskTitle || currentConfig.taskTitle || currentStep?.title || null,
+      actorUser: currentUser,
+      comment: comment || '',
+    }).catch(console.error);
   }
 
   // Execute the decided branch transition (APPROVE / REVISION / REJECT)
@@ -2686,6 +2757,46 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
     projectId,
     finalLogTime
   );
+
+  const wfIdForNotif = project.workflowId || 'wf-standard';
+  dispatchWorkflowNotifications({
+    workflowId: wfIdForNotif,
+    projectId,
+    triggerEvent: 'ON_GATEWAY_OUTCOME',
+    stepOrder: currentStepNum,
+    branchOutcome: resolvedOutcome,
+    stepTitle: currentStep?.title,
+    taskTitle: currentConfig.taskTitle || currentStep?.title || null,
+    actorUser: currentUser,
+    comment: comment || logComment || '',
+  }).catch(console.error);
+
+  if (newStatus === 'APPROVED' || newStatus === 'REJECTED' || targetStepOrder === 0) {
+    dispatchWorkflowNotifications({
+      workflowId: wfIdForNotif,
+      projectId,
+      triggerEvent: 'ON_WORKFLOW_END',
+      stepOrder: targetStepOrder,
+      endOutcome: newStatus === 'APPROVED' ? 'APPROVED' : newStatus === 'REJECTED' ? 'REJECTED' : 'NEEDS_REVISION',
+      branchOutcome: resolvedOutcome,
+      stepTitle: currentStep?.title,
+      taskTitle: nextTaskTitle,
+      actorUser: currentUser,
+      comment: comment || logComment || '',
+    }).catch(console.error);
+  } else if (targetStepOrder >= 1) {
+    const enteredStepRow = steps.find((s) => Number(s.stepOrder) === Number(targetStepOrder));
+    dispatchWorkflowNotifications({
+      workflowId: wfIdForNotif,
+      projectId,
+      triggerEvent: 'ON_STEP_ENTER',
+      stepOrder: targetStepOrder,
+      stepTitle: enteredStepRow?.title,
+      taskTitle: nextTaskTitle,
+      actorUser: currentUser,
+      comment: comment || logComment || '',
+    }).catch(console.error);
+  }
 
   if (newStatus === 'APPROVED') {
     const autoStarted = triggerPostApprovalWorkflows(
@@ -3603,29 +3714,7 @@ apiRouter.delete('/project-types/:id', (req: Request, res: Response) => {
 // 6. PROJECTS & CARTABLE (پروژه‌ها و کارتابل با پشتیبانی از گردش کار و محرمانگی)
 // --------------------------------------------------------------------------
 
-apiRouter.get('/projects', (req: Request, res: Response) => {
-  const currentUser = getCurrentUser(req);
-  if (!currentUser) {
-    return res.status(401).json({ error: 'احراز هویت نشده است.' });
-  }
-
-  const scope = req.query.scope === 'all' ? 'all' : 'cartable';
-  if (scope === 'all' && !hasPermission(currentUser, 'project_list.view')) {
-    return res.status(403).json({ error: 'شما مجوز مشاهده فهرست کامل پروژه‌ها را ندارید.', forbidden: true });
-  }
-
-  const projects = db.prepare(`
-    SELECT p.*, u.name as creatorName, w.title as workflowTitle,
-           pos.title as currentPositionTitle, pos.color as currentPositionColor,
-           COALESCE(pt.title, p.productionType) as projectTypeTitle
-    FROM projects p
-    LEFT JOIN users u ON p.createdById = u.id
-    LEFT JOIN workflows w ON p.workflowId = w.id
-    LEFT JOIN positions pos ON p.currentPositionId = pos.id
-    LEFT JOIN project_types pt ON p.projectTypeId = pt.id
-    ORDER BY p.createdAt DESC
-  `).all() as any[];
-
+function enrichProjectsForViewer(projects: any[], currentUser: any) {
   const totalCouncilCount = (db.prepare("SELECT count(*) as count FROM users WHERE role = 'COUNCIL'").get() as any)?.count || 0;
 
   // Pre-fetch all attachments without heavy base64 data
@@ -3996,6 +4085,34 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
     }
   });
 
+  return result;
+}
+
+apiRouter.get('/projects', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) {
+    return res.status(401).json({ error: 'احراز هویت نشده است.' });
+  }
+
+  const scope = req.query.scope === 'all' ? 'all' : 'cartable';
+  if (scope === 'all' && !hasPermission(currentUser, 'project_list.view')) {
+    return res.status(403).json({ error: 'شما مجوز مشاهده فهرست کامل پروژه‌ها را ندارید.', forbidden: true });
+  }
+
+  const projects = db.prepare(`
+    SELECT p.*, u.name as creatorName, w.title as workflowTitle,
+           pos.title as currentPositionTitle, pos.color as currentPositionColor,
+           COALESCE(pt.title, p.productionType) as projectTypeTitle
+    FROM projects p
+    LEFT JOIN users u ON p.createdById = u.id
+    LEFT JOIN workflows w ON p.workflowId = w.id
+    LEFT JOIN positions pos ON p.currentPositionId = pos.id
+    LEFT JOIN project_types pt ON p.projectTypeId = pt.id
+    ORDER BY p.createdAt DESC
+  `).all() as any[];
+
+  const result = enrichProjectsForViewer(projects, currentUser);
+
   if (scope === 'all') {
     return res.json({ projects: result, scope: 'all' });
   }
@@ -4015,6 +4132,46 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
     restrictedView: cartableOnly.length === 0 && !hasScopedCartableAccess,
     scopedWorkflowCartable: true,
   });
+});
+
+apiRouter.get('/projects/:id', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) {
+    return res.status(401).json({ error: 'احراز هویت نشده است.' });
+  }
+  const { id } = req.params;
+  const projectRow = db.prepare(`
+    SELECT p.*, u.name as creatorName, w.title as workflowTitle,
+           pos.title as currentPositionTitle, pos.color as currentPositionColor,
+           COALESCE(pt.title, p.productionType) as projectTypeTitle
+    FROM projects p
+    LEFT JOIN users u ON p.createdById = u.id
+    LEFT JOIN workflows w ON p.workflowId = w.id
+    LEFT JOIN positions pos ON p.currentPositionId = pos.id
+    LEFT JOIN project_types pt ON p.projectTypeId = pt.id
+    WHERE p.id = ?
+  `).get(id) as any;
+
+  if (!projectRow) {
+    return res.status(404).json({ error: 'پروژه یافت نشد.' });
+  }
+
+  const [enriched] = enrichProjectsForViewer([projectRow], currentUser);
+  const hasNotifAccess = Boolean(
+    db.prepare('SELECT id FROM user_notifications WHERE userId = ? AND projectId = ? LIMIT 1').get(currentUser.id, id)
+  );
+  const canAccess =
+    currentUser.role === 'ADMIN' ||
+    hasPermission(currentUser, ['project_list.view', 'projects.view']) ||
+    enriched.isMyWorkflowTurn ||
+    projectRow.createdById === currentUser.id ||
+    hasNotifAccess;
+
+  if (!canAccess) {
+    return res.status(403).json({ error: 'شما مجوز مشاهده این پرونده را ندارید.' });
+  }
+
+  return res.json({ project: enriched });
 });
 
 apiRouter.post('/projects', (req: Request, res: Response) => {
@@ -4145,6 +4302,38 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
       },
       actor: currentUser,
     }).catch(console.error);
+
+    // Dispatch Visio workflow 3-channel notifications (start + first step or immediate end)
+    dispatchWorkflowNotifications({
+      workflowId: targetWorkflowId,
+      projectId: id,
+      triggerEvent: 'ON_WORKFLOW_START',
+      stepOrder: 1,
+      stepTitle: firstStep?.title,
+      taskTitle: initialTaskTitle,
+      actorUser: currentUser,
+    }).catch(console.error);
+
+    if (initialStatus === 'APPROVED') {
+      dispatchWorkflowNotifications({
+        workflowId: targetWorkflowId,
+        projectId: id,
+        triggerEvent: 'ON_WORKFLOW_END',
+        stepOrder: 1,
+        endOutcome: 'APPROVED',
+        actorUser: currentUser,
+      }).catch(console.error);
+    } else if (wfStepsCount > 0) {
+      dispatchWorkflowNotifications({
+        workflowId: targetWorkflowId,
+        projectId: id,
+        triggerEvent: 'ON_STEP_ENTER',
+        stepOrder: 1,
+        stepTitle: firstStep?.title,
+        taskTitle: initialTaskTitle,
+        actorUser: currentUser,
+      }).catch(console.error);
+    }
 
     res.json({ success: true, projectId: id, workflowId: targetWorkflowId, workflowTrackingCode });
   } catch (err: any) {
@@ -4343,6 +4532,19 @@ apiRouter.post('/projects/:id/manual-approve', (req: Request, res: Response) => 
     );
   });
   tx();
+
+  if (project.workflowId) {
+    dispatchWorkflowNotifications({
+      workflowId: project.workflowId,
+      projectId: id,
+      triggerEvent: 'ON_WORKFLOW_END',
+      stepOrder: project.currentStepOrder || 1,
+      endOutcome: 'APPROVED',
+      branchOutcome: 'APPROVE',
+      actorUser: currentUser,
+      comment: comment?.trim() || 'تایید نهایی دستی پروژه',
+    }).catch(console.error);
+  }
 
   const autoStarted = triggerPostApprovalWorkflows(
     id,
@@ -5650,6 +5852,111 @@ apiRouter.post('/sms/test-direct', async (req: Request, res: Response) => {
       diagnostics,
     });
   }
+});
+
+// --------------------------------------------------------------------------
+// 11. REAL-TIME & IN-CARTABLE WORKFLOW NOTIFICATIONS (پوش نوتیفیکیشن و اعلان کارتابل)
+// --------------------------------------------------------------------------
+
+apiRouter.get('/notifications/stream', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) {
+    return res.status(401).json({ error: 'احراز هویت نشده است.' });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  res.write(`event: connected\ndata: ${JSON.stringify({ userId: currentUser.id, connectedAt: new Date().toISOString() })}\n\n`);
+
+  registerNotificationClient(currentUser.id, res);
+
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch {
+      clearInterval(heartbeat);
+      unregisterNotificationClient(currentUser.id, res);
+    }
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    unregisterNotificationClient(currentUser.id, res);
+  });
+});
+
+apiRouter.get('/notifications', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) {
+    return res.status(401).json({ error: 'احراز هویت نشده است.' });
+  }
+
+  const rows = db.prepare(`
+    SELECT n.*, p.title as projectTitle, p.code as projectCode, p.workflowTrackingCode as workflowTrackingCode
+    FROM user_notifications n
+    LEFT JOIN projects p ON n.projectId = p.id
+    WHERE n.userId = ? AND n.isDismissed = 0
+    ORDER BY n.createdAt DESC
+    LIMIT 100
+  `).all(currentUser.id) as any[];
+
+  const notifications = rows.map((r) => ({
+    ...r,
+    isRead: Boolean(r.isRead),
+    isDismissed: Boolean(r.isDismissed),
+    pushDelivered: Boolean(r.pushDelivered),
+  }));
+
+  res.json({ notifications });
+});
+
+apiRouter.post('/notifications/:id/read', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) {
+    return res.status(401).json({ error: 'احراز هویت نشده است.' });
+  }
+  const { id } = req.params;
+  db.prepare('UPDATE user_notifications SET isRead = 1 WHERE id = ? AND userId = ?').run(id, currentUser.id);
+  res.json({ success: true });
+});
+
+apiRouter.post('/notifications/:id/dismiss', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) {
+    return res.status(401).json({ error: 'احراز هویت نشده است.' });
+  }
+  const { id } = req.params;
+  db.prepare('UPDATE user_notifications SET isDismissed = 1, isRead = 1 WHERE id = ? AND userId = ?').run(id, currentUser.id);
+  res.json({ success: true });
+});
+
+apiRouter.post('/notifications/read-all', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) {
+    return res.status(401).json({ error: 'احراز هویت نشده است.' });
+  }
+  db.prepare("UPDATE user_notifications SET isRead = 1 WHERE userId = ? AND channel = 'PUSH'").run(currentUser.id);
+  res.json({ success: true });
+});
+
+apiRouter.post('/notifications/mark-push-delivered', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) {
+    return res.status(401).json({ error: 'احراز هویت نشده است.' });
+  }
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((x: any) => typeof x === 'string' && x.trim()) : [];
+  if (ids.length > 0) {
+    const placeholders = ids.map(() => '?').join(',');
+    db.prepare(`UPDATE user_notifications SET pushDelivered = 1 WHERE userId = ? AND id IN (${placeholders})`).run(
+      currentUser.id,
+      ...ids
+    );
+  }
+  res.json({ success: true });
 });
 
 

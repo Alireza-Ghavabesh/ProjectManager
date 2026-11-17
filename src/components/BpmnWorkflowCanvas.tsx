@@ -24,7 +24,11 @@ import {
   Map as MapIcon,
   LogOut,
   Zap,
+  Bell,
+  Inbox,
+  MessageSquareText,
 } from 'lucide-react';
+import type { WorkflowNotificationRule } from '../types';
 
 export interface BpmnEditableStep {
   id?: string;
@@ -50,13 +54,15 @@ export type BpmnSelection =
   | { kind: 'gateway'; idx: number }
   | { kind: 'creator_return' }
   | { kind: 'end_approved' }
-  | { kind: 'end_rejected' };
+  | { kind: 'end_rejected' }
+  | { kind: 'notification'; notifId: string };
 
 export type BpmnDragPayload =
   | { kind: 'step-reorder'; fromIndex: number }
   | { kind: 'toolbox-position'; structureId: string | null; positionId: string; title: string }
   | { kind: 'toolbox-creator' }
-  | { kind: 'toolbox-gateway' };
+  | { kind: 'toolbox-gateway' }
+  | { kind: 'toolbox-notification' };
 
 interface BpmnWorkflowCanvasProps {
   steps: BpmnEditableStep[];
@@ -85,6 +91,14 @@ interface BpmnWorkflowCanvasProps {
     pos: { x: number; y: number }
   ) => void;
   onDropPositionOnStep: (stepIdx: number, positionId: string) => void;
+  onDropNotificationAt?: (opts: {
+    pos?: { x: number; y: number };
+    triggerEvent: WorkflowNotificationRule['triggerEvent'];
+    sourceStepOrder?: number | null;
+    branchCondition?: WorkflowNotificationRule['branchCondition'];
+    endOutcomeCondition?: WorkflowNotificationRule['endOutcomeCondition'];
+  }) => void;
+  onDeleteNotification?: (notifId: string) => void;
   onClearDrag: () => void;
 }
 
@@ -94,6 +108,8 @@ const GW_SIZE = 72;
 const CIRCLE_SIZE = 74;
 const CREATOR_W = 168;
 const CREATOR_H = 68;
+const NOTIF_W = 224;
+const NOTIF_H = 104;
 const GRID_STEP = 20;
 
 export function getDefaultNodePosition(idx: number): { x: number; y: number } {
@@ -209,6 +225,8 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
   dragPayload,
   onDropPositionAtCanvas,
   onDropPositionOnStep,
+  onDropNotificationAt,
+  onDeleteNotification,
   onClearDrag,
 }) => {
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -239,7 +257,8 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
       | { kind: 'end_approved' }
       | { kind: 'end_rejected' }
       | { kind: 'step'; idx: number }
-      | { kind: 'gateway'; idx: number };
+      | { kind: 'gateway'; idx: number }
+      | { kind: 'notification'; notifId: string };
     offsetX: number;
     offsetY: number;
   } | null>(null);
@@ -293,6 +312,51 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
     return ['APPROVE', 'REVISION', 'REJECT'];
   }, [steps]);
 
+  const notificationsList = useMemo(
+    () => (Array.isArray(diagram.notifications) ? diagram.notifications : []),
+    [diagram.notifications]
+  );
+
+  const getNotificationPos = useCallback(
+    (rule: WorkflowNotificationRule, idx: number): { x: number; y: number } => {
+      if (rule.pos && typeof rule.pos.x === 'number' && typeof rule.pos.y === 'number') {
+        return rule.pos;
+      }
+      const stepIdx =
+        rule.sourceStepOrder && rule.sourceStepOrder >= 1 && rule.sourceStepOrder <= steps.length
+          ? rule.sourceStepOrder - 1
+          : -1;
+      if (rule.triggerEvent === 'ON_WORKFLOW_START') {
+        return { x: startPos.x, y: startPos.y + CIRCLE_SIZE + 80 + idx * 24 };
+      }
+      if (rule.triggerEvent === 'ON_STEP_ENTER' || rule.triggerEvent === 'ON_STEP_VOTE') {
+        if (stepIdx >= 0) {
+          const sp = getStepPos(stepIdx);
+          return { x: sp.x + 12, y: Math.max(20, sp.y - NOTIF_H - 56) };
+        }
+        return { x: 220 + idx * 40, y: 40 };
+      }
+      if (rule.triggerEvent === 'ON_GATEWAY_OUTCOME') {
+        if (stepIdx >= 0) {
+          const gp = getGatewayPos(stepIdx);
+          return { x: gp.x - 40, y: Math.max(20, gp.y - NOTIF_H - 64) };
+        }
+        return { x: 420 + idx * 40, y: 40 };
+      }
+      if (rule.endOutcomeCondition === 'APPROVED') {
+        return { x: endApprovedPos.x - 40, y: Math.max(20, endApprovedPos.y - NOTIF_H - 36) };
+      }
+      if (rule.endOutcomeCondition === 'REJECTED') {
+        return { x: endRejectedPos.x - 40, y: endRejectedPos.y + CIRCLE_SIZE + 44 };
+      }
+      if (rule.endOutcomeCondition === 'NEEDS_REVISION') {
+        return { x: creatorPos.x, y: creatorPos.y + CREATOR_H + 44 };
+      }
+      return { x: endApprovedPos.x - 40, y: endApprovedPos.y + CIRCLE_SIZE + 44 + idx * 24 };
+    },
+    [steps.length, startPos, creatorPos, endApprovedPos, endRejectedPos, getStepPos, getGatewayPos]
+  );
+
   const canvasDimensions = useMemo(() => {
     let maxX = Math.max(
       1440,
@@ -314,8 +378,13 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
       maxX = Math.max(maxX, p.x + NODE_W + 260, gp.x + GW_SIZE + 220);
       maxY = Math.max(maxY, p.y + NODE_H + 240, gp.y + GW_SIZE + 220);
     });
+    notificationsList.forEach((rule, idx) => {
+      const np = getNotificationPos(rule, idx);
+      maxX = Math.max(maxX, np.x + NOTIF_W + 180);
+      maxY = Math.max(maxY, np.y + NOTIF_H + 180);
+    });
     return { width: maxX, height: maxY };
-  }, [steps, startPos, creatorPos, endApprovedPos, endRejectedPos, getStepPos, getGatewayPos]);
+  }, [steps, notificationsList, startPos, creatorPos, endApprovedPos, endRejectedPos, getStepPos, getGatewayPos, getNotificationPos]);
 
   const handleFitToScreen = useCallback(() => {
     const vp = viewportRef.current;
@@ -332,14 +401,19 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
         contentMaxY = Math.max(contentMaxY, g.y + GW_SIZE + 80);
       }
     });
+    notificationsList.forEach((rule, idx) => {
+      const np = getNotificationPos(rule, idx);
+      contentMaxX = Math.max(contentMaxX, np.x + NOTIF_W + 60);
+      contentMaxY = Math.max(contentMaxY, np.y + NOTIF_H + 60);
+    });
     const wRatio = (vp.clientWidth - 48) / Math.max(400, contentMaxX);
     const hRatio = (vp.clientHeight - 48) / Math.max(320, contentMaxY);
     const fitted = Math.max(0.4, Math.min(1.15, Number(Math.min(wRatio, hRatio).toFixed(2))));
     setZoom(fitted);
     vp.scrollTo({ left: 0, top: 0, behavior: 'smooth' });
-  }, [steps, startPos, creatorPos, endApprovedPos, endRejectedPos, getStepPos, getGatewayPos, stepHasGateway]);
+  }, [steps, notificationsList, startPos, creatorPos, endApprovedPos, endRejectedPos, getStepPos, getGatewayPos, getNotificationPos, stepHasGateway]);
 
-  // Keyboard Delete shortcut for selected step / gateway
+  // Keyboard Delete shortcut for selected step / gateway / notification
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = (document.activeElement?.tagName || '').toLowerCase();
@@ -349,7 +423,10 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
         return;
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (activeSelection.kind === 'step' && steps.length > 1) {
+        if (activeSelection.kind === 'notification' && onDeleteNotification) {
+          e.preventDefault();
+          onDeleteNotification(activeSelection.notifId);
+        } else if (activeSelection.kind === 'step' && steps.length > 1) {
           e.preventDefault();
           onDeleteStep(activeSelection.idx);
         } else if (activeSelection.kind === 'gateway' && onUpdateStepConfig) {
@@ -361,7 +438,7 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeSelection, steps.length, connecting, onDeleteStep, onUpdateStepConfig, selectEl]);
+  }, [activeSelection, steps.length, connecting, onDeleteStep, onDeleteNotification, onUpdateStepConfig, selectEl]);
 
   const toCanvasCoords = (clientX: number, clientY: number) => {
     const el = canvasRef.current;
@@ -398,6 +475,14 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
         onDiagramChange({ ...diagram, endApprovedPos: nextPos });
       } else if (draggingNode.target.kind === 'end_rejected') {
         onDiagramChange({ ...diagram, endRejectedPos: nextPos });
+      } else if (draggingNode.target.kind === 'notification') {
+        const targetId = draggingNode.target.notifId;
+        onDiagramChange({
+          ...diagram,
+          notifications: notificationsList.map((n) =>
+            n.id === targetId ? { ...n, pos: nextPos } : n
+          ),
+        });
       } else if (draggingNode.target.kind === 'gateway') {
         if (onUpdateStepConfig) {
           onUpdateStepConfig(draggingNode.target.idx, { gatewayPos: nextPos });
@@ -441,7 +526,8 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
       | { kind: 'end_approved' }
       | { kind: 'end_rejected' }
       | { kind: 'step'; idx: number }
-      | { kind: 'gateway'; idx: number },
+      | { kind: 'gateway'; idx: number }
+      | { kind: 'notification'; notifId: string },
     currentPos: { x: number; y: number }
   ) => {
     if (e.button !== 0) return;
@@ -957,6 +1043,116 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
     buildEdgePath,
   ]);
 
+  const notifEdges = useMemo(() => {
+    return notificationsList.map((rule, idx) => {
+      const nPos = getNotificationPos(rule, idx);
+      const nCenter = { x: nPos.x + NOTIF_W / 2, y: nPos.y + NOTIF_H / 2 };
+      const stepIdx =
+        rule.sourceStepOrder && rule.sourceStepOrder >= 1 && rule.sourceStepOrder <= steps.length
+          ? rule.sourceStepOrder - 1
+          : -1;
+
+      let origin = { x: startPos.x + CIRCLE_SIZE / 2, y: startPos.y + CIRCLE_SIZE / 2 };
+      let triggerText = 'شروع گردش کار';
+      let color = '#0284c7';
+
+      if (rule.triggerEvent === 'ON_WORKFLOW_START') {
+        origin = { x: startPos.x + CIRCLE_SIZE / 2, y: startPos.y + CIRCLE_SIZE };
+        triggerText = 'رویداد شروع';
+      } else if (rule.triggerEvent === 'ON_STEP_ENTER') {
+        if (stepIdx >= 0) {
+          const sp = getStepPos(stepIdx);
+          origin = { x: sp.x + NODE_W / 2, y: nCenter.y < sp.y ? sp.y : sp.y + NODE_H };
+          triggerText = `ورود به گام ${stepIdx + 1}`;
+        } else {
+          origin = { x: startPos.x + CIRCLE_SIZE / 2, y: startPos.y + CIRCLE_SIZE / 2 };
+          triggerText = 'ورود به هر گام';
+        }
+      } else if (rule.triggerEvent === 'ON_STEP_VOTE') {
+        const condLbl =
+          rule.branchCondition === 'APPROVE'
+            ? 'رای تایید'
+            : rule.branchCondition === 'REVISION'
+            ? 'رای اصلاح'
+            : rule.branchCondition === 'REJECT'
+            ? 'رای رد'
+            : 'ثبت هر رای';
+        if (stepIdx >= 0) {
+          const sp = getStepPos(stepIdx);
+          origin = { x: sp.x + NODE_W / 2, y: nCenter.y < sp.y ? sp.y : sp.y + NODE_H };
+          triggerText = `${condLbl} (گام ${stepIdx + 1})`;
+        } else {
+          triggerText = `${condLbl} (همه گام‌ها)`;
+        }
+      } else if (rule.triggerEvent === 'ON_GATEWAY_OUTCOME') {
+        const brLbl =
+          rule.branchCondition === 'APPROVE'
+            ? 'نتیجه لوزی: تایید'
+            : rule.branchCondition === 'REVISION'
+            ? 'نتیجه لوزی: اصلاح'
+            : rule.branchCondition === 'REJECT'
+            ? 'نتیجه لوزی: رد'
+            : 'هر نتیجه لوزی';
+        color =
+          rule.branchCondition === 'APPROVE'
+            ? '#059669'
+            : rule.branchCondition === 'REVISION'
+            ? '#d97706'
+            : rule.branchCondition === 'REJECT'
+            ? '#e11d48'
+            : '#0284c7';
+        if (stepIdx >= 0) {
+          const gp = getGatewayPos(stepIdx);
+          origin = { x: gp.x + GW_SIZE / 2, y: nCenter.y < gp.y ? gp.y : gp.y + GW_SIZE };
+          triggerText = `${brLbl} (گام ${stepIdx + 1})`;
+        } else {
+          triggerText = `${brLbl}`;
+        }
+      } else if (rule.triggerEvent === 'ON_WORKFLOW_END') {
+        if (rule.endOutcomeCondition === 'APPROVED') {
+          origin = { x: endApprovedPos.x + CIRCLE_SIZE / 2, y: endApprovedPos.y + CIRCLE_SIZE / 2 };
+          triggerText = 'نتیجه نهایی: تایید';
+          color = '#059669';
+        } else if (rule.endOutcomeCondition === 'REJECTED') {
+          origin = { x: endRejectedPos.x + CIRCLE_SIZE / 2, y: endRejectedPos.y + CIRCLE_SIZE / 2 };
+          triggerText = 'نتیجه نهایی: رد';
+          color = '#e11d48';
+        } else if (rule.endOutcomeCondition === 'NEEDS_REVISION') {
+          origin = { x: creatorPos.x + CREATOR_W / 2, y: creatorPos.y + CREATOR_H / 2 };
+          triggerText = 'عودت برای اصلاح';
+          color = '#d97706';
+        } else {
+          origin = { x: endApprovedPos.x + CIRCLE_SIZE / 2, y: endApprovedPos.y + CIRCLE_SIZE };
+          triggerText = 'پایان / نتیجه گردش';
+        }
+      }
+
+      const targetAnchor =
+        Math.abs(nCenter.y - origin.y) > Math.abs(nCenter.x - origin.x)
+          ? {
+              x: nPos.x + NOTIF_W / 2,
+              y: nCenter.y > origin.y ? nPos.y : nPos.y + NOTIF_H,
+            }
+          : {
+              x: nCenter.x > origin.x ? nPos.x : nPos.x + NOTIF_W,
+              y: nPos.y + NOTIF_H / 2,
+            };
+
+      const midX = Math.round((origin.x + targetAnchor.x) / 2);
+      const midY = Math.round((origin.y + targetAnchor.y) / 2);
+      const path = `M ${origin.x} ${origin.y} Q ${origin.x} ${targetAnchor.y}, ${targetAnchor.x} ${targetAnchor.y}`;
+
+      return {
+        id: rule.id,
+        path,
+        midX,
+        midY,
+        triggerText,
+        color,
+      };
+    });
+  }, [notificationsList, steps.length, startPos, creatorPos, endApprovedPos, endRejectedPos, getStepPos, getGatewayPos, getNotificationPos]);
+
   return (
     <div className="flex-1 min-h-0 flex flex-col bg-slate-100 overflow-hidden select-none">
       {/* Visio Ribbon Toolbar */}
@@ -981,6 +1177,38 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
             <Plus className="w-3.5 h-3.5" />
             <span>+ گام سازمانی جدید</span>
           </button>
+
+          {onDropNotificationAt && (
+            <button
+              type="button"
+              onClick={() =>
+                onDropNotificationAt({
+                  triggerEvent: activeSelection.kind === 'step' || activeSelection.kind === 'gateway'
+                    ? (activeSelection.kind === 'gateway' ? 'ON_GATEWAY_OUTCOME' : 'ON_STEP_VOTE')
+                    : activeSelection.kind === 'end_approved' || activeSelection.kind === 'end_rejected' || activeSelection.kind === 'creator_return'
+                    ? 'ON_WORKFLOW_END'
+                    : 'ON_WORKFLOW_START',
+                  sourceStepOrder:
+                    activeSelection.kind === 'step' || activeSelection.kind === 'gateway'
+                      ? activeSelection.idx + 1
+                      : null,
+                  endOutcomeCondition:
+                    activeSelection.kind === 'end_approved'
+                      ? 'APPROVED'
+                      : activeSelection.kind === 'end_rejected'
+                      ? 'REJECTED'
+                      : activeSelection.kind === 'creator_return'
+                      ? 'NEEDS_REVISION'
+                      : 'ANY',
+                })
+              }
+              className="px-2.5 py-1.5 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-900 border border-sky-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition"
+              title="افزودن گره اطلاع‌رسانی (پوش، پیامک، اعلان کارتابل) متصل به عنصر انتخاب‌شده"
+            >
+              <Bell className="w-3.5 h-3.5 text-sky-600" />
+              <span>+ گره اطلاع‌رسانی</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -1152,7 +1380,8 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
             onDragOver={(e) => {
               if (
                 dragPayload?.kind === 'toolbox-position' ||
-                dragPayload?.kind === 'toolbox-creator'
+                dragPayload?.kind === 'toolbox-creator' ||
+                dragPayload?.kind === 'toolbox-notification'
               ) {
                 e.preventDefault();
                 setIsCanvasDropActive(true);
@@ -1173,6 +1402,15 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                 onClearDrag();
               } else if (dragPayload?.kind === 'toolbox-creator') {
                 onAddBlankStepAt(dropPos, 'CREATOR');
+                onClearDrag();
+              } else if (dragPayload?.kind === 'toolbox-notification' && onDropNotificationAt) {
+                onDropNotificationAt({
+                  pos: {
+                    x: snapCoord(Math.max(40, pt.x - NOTIF_W / 2), snapEnabled),
+                    y: snapCoord(Math.max(30, pt.y - NOTIF_H / 2), snapEnabled),
+                  },
+                  triggerEvent: 'ON_WORKFLOW_START',
+                });
                 onClearDrag();
               }
             }}
@@ -1223,6 +1461,7 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                     { id: 'arrow-approve', color: '#059669' },
                     { id: 'arrow-revision', color: '#d97706' },
                     { id: 'arrow-reject', color: '#e11d48' },
+                    { id: 'arrow-notif', color: '#0284c7' },
                   ].map((m) => (
                     <marker
                       key={m.id}
@@ -1256,6 +1495,22 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                       strokeDasharray={edge.isDashed ? '6 4' : undefined}
                       markerEnd={`url(#${edge.markerId})`}
                       opacity={isFocused ? 1 : 0.78}
+                    />
+                  );
+                })}
+
+                {notifEdges.map((ne) => {
+                  const isFocused = activeSelection.kind === 'notification' && activeSelection.notifId === ne.id;
+                  return (
+                    <path
+                      key={`notif-edge-${ne.id}`}
+                      d={ne.path}
+                      fill="none"
+                      stroke={ne.color}
+                      strokeWidth={isFocused ? 2.5 : 1.75}
+                      strokeDasharray="5 4"
+                      markerEnd="url(#arrow-notif)"
+                      opacity={isFocused ? 1 : 0.82}
                     />
                   );
                 })}
@@ -1308,11 +1563,50 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                   </button>
                 ))}
 
+              {/* Interactive Notification Edge Labels */}
+              {notifEdges.map((ne) => (
+                <button
+                  key={`notif-lbl-${ne.id}`}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    selectEl({ kind: 'notification', notifId: ne.id });
+                  }}
+                  style={{
+                    left: `${ne.midX}px`,
+                    top: `${ne.midY}px`,
+                    transform: 'translate(-50%, -50%)',
+                  }}
+                  dir="rtl"
+                  className="absolute z-10 px-2 py-0.5 rounded-md border border-sky-200 bg-sky-50 text-sky-900 text-[9px] font-bold shadow-2xs hover:scale-105 transition cursor-pointer whitespace-nowrap"
+                >
+                  {ne.triggerText}
+                </button>
+              ))}
+
               {/* START EVENT NODE */}
               <div
                 onPointerDown={(e) => {
                   selectEl({ kind: 'start' });
                   startDragNode(e, { kind: 'start' }, startPos);
+                }}
+                onDragOver={(e) => {
+                  if (dragPayload?.kind === 'toolbox-notification') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsCanvasDropActive(false);
+                  }
+                }}
+                onDrop={(e) => {
+                  if (dragPayload?.kind === 'toolbox-notification' && onDropNotificationAt) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onDropNotificationAt({
+                      pos: { x: startPos.x, y: startPos.y + CIRCLE_SIZE + 80 },
+                      triggerEvent: 'ON_WORKFLOW_START',
+                    });
+                    onClearDrag();
+                  }
                 }}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -1354,6 +1648,25 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                 onPointerDown={(e) => {
                   selectEl({ kind: 'creator_return' });
                   startDragNode(e, { kind: 'creator' }, creatorPos);
+                }}
+                onDragOver={(e) => {
+                  if (dragPayload?.kind === 'toolbox-notification') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsCanvasDropActive(false);
+                  }
+                }}
+                onDrop={(e) => {
+                  if (dragPayload?.kind === 'toolbox-notification' && onDropNotificationAt) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onDropNotificationAt({
+                      pos: { x: creatorPos.x, y: creatorPos.y + CREATOR_H + 44 },
+                      triggerEvent: 'ON_WORKFLOW_END',
+                      endOutcomeCondition: 'NEEDS_REVISION',
+                    });
+                    onClearDrag();
+                  }
                 }}
                 onPointerEnter={() => connecting && setHoverTargetKey('creator')}
                 onPointerLeave={() => hoverTargetKey === 'creator' && setHoverTargetKey(null)}
@@ -1400,6 +1713,25 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                   selectEl({ kind: 'end_approved' });
                   startDragNode(e, { kind: 'end_approved' }, endApprovedPos);
                 }}
+                onDragOver={(e) => {
+                  if (dragPayload?.kind === 'toolbox-notification') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsCanvasDropActive(false);
+                  }
+                }}
+                onDrop={(e) => {
+                  if (dragPayload?.kind === 'toolbox-notification' && onDropNotificationAt) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onDropNotificationAt({
+                      pos: { x: endApprovedPos.x - 40, y: Math.max(20, endApprovedPos.y - NOTIF_H - 36) },
+                      triggerEvent: 'ON_WORKFLOW_END',
+                      endOutcomeCondition: 'APPROVED',
+                    });
+                    onClearDrag();
+                  }
+                }}
                 onPointerEnter={() => connecting && setHoverTargetKey('end_approved')}
                 onPointerLeave={() => hoverTargetKey === 'end_approved' && setHoverTargetKey(null)}
                 onClick={(e) => {
@@ -1439,6 +1771,25 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                 onPointerDown={(e) => {
                   selectEl({ kind: 'end_rejected' });
                   startDragNode(e, { kind: 'end_rejected' }, endRejectedPos);
+                }}
+                onDragOver={(e) => {
+                  if (dragPayload?.kind === 'toolbox-notification') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsCanvasDropActive(false);
+                  }
+                }}
+                onDrop={(e) => {
+                  if (dragPayload?.kind === 'toolbox-notification' && onDropNotificationAt) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onDropNotificationAt({
+                      pos: { x: endRejectedPos.x - 40, y: endRejectedPos.y + CIRCLE_SIZE + 44 },
+                      triggerEvent: 'ON_WORKFLOW_END',
+                      endOutcomeCondition: 'REJECTED',
+                    });
+                    onClearDrag();
+                  }
                 }}
                 onPointerEnter={() => connecting && setHoverTargetKey('end_rejected')}
                 onPointerLeave={() => hoverTargetKey === 'end_rejected' && setHoverTargetKey(null)}
@@ -1488,7 +1839,9 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                 const isHoverConnect = hoverTargetKey === `step-${idx}`;
                 const isParallelDrop =
                   hoverDropStepIdx === idx &&
-                  (dragPayload?.kind === 'toolbox-position' || dragPayload?.kind === 'toolbox-gateway');
+                  (dragPayload?.kind === 'toolbox-position' ||
+                    dragPayload?.kind === 'toolbox-gateway' ||
+                    dragPayload?.kind === 'toolbox-notification');
                 const isWaitAll = st.config.voteCollectionMode === 'WAIT_ALL';
                 const leavesCartable = Boolean(
                   st.config.removeFromCartableAfterVote ?? isWaitAll
@@ -1516,7 +1869,8 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                       onDragOver={(e) => {
                         if (
                           dragPayload?.kind === 'toolbox-position' ||
-                          dragPayload?.kind === 'toolbox-gateway'
+                          dragPayload?.kind === 'toolbox-gateway' ||
+                          dragPayload?.kind === 'toolbox-notification'
                         ) {
                           e.preventDefault();
                           e.stopPropagation();
@@ -1539,6 +1893,13 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                         } else if (dragPayload?.kind === 'toolbox-gateway' && onUpdateStepConfig) {
                           onUpdateStepConfig(idx, { hasGateway: true });
                           selectEl({ kind: 'gateway', idx });
+                          onClearDrag();
+                        } else if (dragPayload?.kind === 'toolbox-notification' && onDropNotificationAt) {
+                          onDropNotificationAt({
+                            pos: { x: pos.x + 12, y: Math.max(20, pos.y - NOTIF_H - 56) },
+                            triggerEvent: 'ON_STEP_VOTE',
+                            sourceStepOrder: idx + 1,
+                          });
                           onClearDrag();
                         }
                       }}
@@ -1732,6 +2093,25 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                             selectEl({ kind: 'gateway', idx });
                             startDragNode(e, { kind: 'gateway', idx }, gPos);
                           }}
+                          onDragOver={(e) => {
+                            if (dragPayload?.kind === 'toolbox-notification') {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setIsCanvasDropActive(false);
+                            }
+                          }}
+                          onDrop={(e) => {
+                            if (dragPayload?.kind === 'toolbox-notification' && onDropNotificationAt) {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              onDropNotificationAt({
+                                pos: { x: gPos.x - 40, y: Math.max(20, gPos.y - NOTIF_H - 64) },
+                                triggerEvent: 'ON_GATEWAY_OUTCOME',
+                                sourceStepOrder: idx + 1,
+                              });
+                              onClearDrag();
+                            }
+                          }}
                           onClick={(e) => {
                             e.stopPropagation();
                             selectEl({ kind: 'gateway', idx });
@@ -1838,6 +2218,98 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                   </React.Fragment>
                 );
               })}
+
+              {/* VISIO NOTIFICATION / ALERT NODES */}
+              {notificationsList.map((rule, nIdx) => {
+                const nPos = getNotificationPos(rule, nIdx);
+                const isSelected =
+                  activeSelection.kind === 'notification' && activeSelection.notifId === rule.id;
+                const channels = Array.isArray(rule.channels) ? rule.channels : [];
+                const isEnabled = rule.enabled !== false;
+
+                return (
+                  <div
+                    key={rule.id}
+                    onPointerDown={(e) => {
+                      if (connecting) return;
+                      selectEl({ kind: 'notification', notifId: rule.id });
+                      startDragNode(e, { kind: 'notification', notifId: rule.id }, nPos);
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      selectEl({ kind: 'notification', notifId: rule.id });
+                    }}
+                    style={{
+                      left: `${nPos.x}px`,
+                      top: `${nPos.y}px`,
+                      width: `${NOTIF_W}px`,
+                      height: `${NOTIF_H}px`,
+                    }}
+                    dir="rtl"
+                    className={`absolute z-20 rounded-xl bg-white border flex flex-col justify-between transition cursor-grab active:cursor-grabbing ${
+                      !isEnabled
+                        ? 'border-dashed border-slate-300 opacity-65'
+                        : isSelected
+                        ? 'border-2 border-indigo-600 ring-4 ring-indigo-500/20 shadow-md'
+                        : 'border-sky-400 hover:border-sky-600 shadow-xs'
+                    }`}
+                  >
+                    <div className="px-2.5 py-1.5 border-b border-sky-100 bg-sky-50/70 rounded-t-xl flex items-center justify-between gap-1.5">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="w-5 h-5 rounded-md bg-sky-600 text-white flex items-center justify-center shrink-0">
+                          <Bell className="w-3 h-3" />
+                        </span>
+                        <span className="text-[11px] font-extrabold text-slate-900 truncate">
+                          {rule.title || 'اطلاع‌رسانی'}
+                        </span>
+                      </div>
+                      {onDeleteNotification && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteNotification(rule.id);
+                          }}
+                          className="p-0.5 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer shrink-0"
+                          title="حذف گره اطلاع‌رسانی"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="px-2.5 py-1.5 flex-1 flex flex-col justify-between overflow-hidden">
+                      <div className="flex flex-wrap items-center gap-1">
+                        {channels.includes('PUSH') && (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-800 border border-indigo-200 text-[9px] font-bold">
+                            <Bell className="w-2.5 h-2.5" />
+                            پوش
+                          </span>
+                        )}
+                        {channels.includes('SMS') && (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 text-[9px] font-bold">
+                            <MessageSquareText className="w-2.5 h-2.5" />
+                            پیامک
+                          </span>
+                        )}
+                        {channels.includes('CARTABLE') && (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 text-[9px] font-bold">
+                            <Inbox className="w-2.5 h-2.5" />
+                            کارتابل
+                          </span>
+                        )}
+                        {channels.length === 0 && (
+                          <span className="text-[9px] text-rose-600 font-semibold">بدون کانال ارسال</span>
+                        )}
+                      </div>
+
+                      <div className="text-[9px] text-slate-500 font-medium truncate">
+                        {rule.messageTemplate || 'متن اعلان تعریف نشده'}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -1909,6 +2381,21 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                       />
                     )}
                   </React.Fragment>
+                );
+              })}
+              {notificationsList.map((rule, nIdx) => {
+                const np = getNotificationPos(rule, nIdx);
+                return (
+                  <rect
+                    key={rule.id}
+                    x={np.x}
+                    y={np.y}
+                    width={NOTIF_W}
+                    height={NOTIF_H}
+                    rx={10}
+                    fill="#0ea5e9"
+                    opacity="0.7"
+                  />
                 );
               })}
             </svg>

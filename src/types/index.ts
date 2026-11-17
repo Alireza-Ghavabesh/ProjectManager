@@ -245,6 +245,50 @@ export interface WorkflowStartTrigger {
   creatorPositionId?: string | null;
 }
 
+export type WorkflowNotificationChannel = 'PUSH' | 'SMS' | 'CARTABLE';
+
+export type WorkflowNotificationTriggerEvent =
+  | 'ON_WORKFLOW_START'
+  | 'ON_STEP_ENTER'
+  | 'ON_STEP_VOTE'
+  | 'ON_GATEWAY_OUTCOME'
+  | 'ON_WORKFLOW_END';
+
+export type WorkflowNotificationRecipientMode =
+  | 'PROJECT_CREATOR'
+  | 'CURRENT_STEP_ASSIGNEES'
+  | 'ACTOR'
+  | 'WORKFLOW_PARTICIPANTS'
+  | 'SPECIFIC_POSITIONS'
+  | 'SPECIFIC_USERS'
+  | 'ALL_ADMINS'
+  | 'ALL_COUNCIL'
+  | 'CUSTOM_PHONES';
+
+export interface WorkflowNotificationRule {
+  id: string;
+  title: string;
+  enabled: boolean;
+  channels: WorkflowNotificationChannel[];
+  triggerEvent: WorkflowNotificationTriggerEvent;
+  sourceStepOrder?: number | null;
+  branchCondition?: 'ANY' | 'APPROVE' | 'REVISION' | 'REJECT';
+  endOutcomeCondition?: 'ANY' | 'APPROVED' | 'REJECTED' | 'NEEDS_REVISION';
+  projectTypeId?: string | null;
+  actorPositionId?: string | null;
+  recipientModes: WorkflowNotificationRecipientMode[];
+  targetStructureId?: string | null;
+  targetPositionIds?: string[];
+  targetUserIds?: string[];
+  customPhones?: string[];
+  titleTemplate?: string;
+  messageTemplate: string;
+  smsTemplate?: string;
+  pushTemplate?: string;
+  cartableTemplate?: string;
+  pos?: { x: number; y: number };
+}
+
 export interface WorkflowDiagramLayout {
   startPos?: { x: number; y: number };
   creatorPos?: { x: number; y: number };
@@ -256,6 +300,7 @@ export interface WorkflowDiagramLayout {
   creatorLabel?: string;
   endApprovedLabel?: string;
   endRejectedLabel?: string;
+  notifications?: WorkflowNotificationRule[];
 }
 
 export interface Workflow {
@@ -530,5 +575,28 @@ export interface UploadProgressInfo {
   loaded: number;
   total: number;
   speed: number; // bytes per second
+}
+
+export interface UserNotification {
+  id: string;
+  userId: string;
+  projectId?: string | null;
+  projectTitle?: string | null;
+  projectCode?: string | null;
+  workflowTrackingCode?: string | null;
+  workflowId?: string | null;
+  ruleId?: string | null;
+  channel: 'PUSH' | 'CARTABLE';
+  title: string;
+  message: string;
+  severity?: 'info' | 'success' | 'warning' | 'danger';
+  actorId?: string | null;
+  actorName?: string | null;
+  stepOrder?: number | null;
+  eventType?: string | null;
+  isRead: boolean;
+  isDismissed: boolean;
+  pushDelivered: boolean;
+  createdAt: string;
 }
 
