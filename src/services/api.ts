@@ -1,4 +1,4 @@
-import { Position, User, DynamicField, ProjectType, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowDiagramLayout, WorkflowLog, WorkflowTrackingItem, ProjectStructure, StructurePositionNode, ProjectAttachment, SystemSetting, PasswordResetRequest, SmsRule, SmsLog, PublicSettings, UploadProgressInfo } from '../types';
+import { Position, User, DynamicField, ProjectType, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowDiagramLayout, WorkflowLog, WorkflowTrackingItem, ProjectStructure, StructurePositionNode, StructurePositionSummary, ProjectAttachment, SystemSetting, PasswordResetRequest, SmsRule, SmsLog, PublicSettings, UploadProgressInfo } from '../types';
 
 class ApiService {
   getToken(): string | null {
@@ -191,7 +191,7 @@ class ApiService {
     permissions: string[];
     customPermissions: string[];
     inheritedPermissions: string[];
-    inheritedSources?: Array<{ positionId: string; positionTitle: string; structureTitle?: string }>;
+    inheritedSources?: Array<{ structurePositionId?: string; positionId: string; positionTitle: string; structureId?: string; structureTitle?: string }>;
     hasCustomPermissions?: boolean;
   }> {
     const res = await fetch(`/api/users/${userId}/permissions`, {
@@ -230,6 +230,38 @@ class ApiService {
       headers: this.getAuthHeader(),
     });
     return await res.json();
+  }
+
+  async getAllStructurePositions(): Promise<StructurePositionSummary[]> {
+    const res = await fetch('/api/structure-positions', {
+      headers: this.getAuthHeader(),
+    });
+    if (!res.ok) throw new Error('خطا در دریافت فهرست سمت‌های ساختارها');
+    const data = await res.json();
+    return data.structurePositions || [];
+  }
+
+  async getStructurePositionPermissions(spId: string): Promise<{
+    permissions: string[];
+    structurePosition?: { id: string; structureId: string; positionId: string; structureTitle: string; positionTitle: string };
+  }> {
+    const res = await fetch(`/api/structure-positions/${spId}/permissions`, {
+      headers: this.getAuthHeader(),
+    });
+    if (!res.ok) throw new Error('خطا در دریافت دسترسی‌های سمت در ساختار');
+    return await res.json();
+  }
+
+  async updateStructurePositionPermissions(spId: string, permissions: string[]): Promise<void> {
+    const res = await fetch(`/api/structure-positions/${spId}/permissions`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify({ permissions }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'خطا در ذخیره دسترسی‌های سمت در ساختار');
+    }
   }
 
   async getPositionPermissions(positionId: string): Promise<string[]> {
@@ -597,10 +629,11 @@ class ApiService {
   }
 
   // Projects & Cartable
-  async getProjects(): Promise<Project[]> {
-    const res = await fetch('/api/projects', {
+  async getProjects(scope: 'cartable' | 'all' = 'cartable'): Promise<Project[]> {
+    const res = await fetch(`/api/projects?scope=${scope}`, {
       headers: this.getAuthHeader(),
     });
+    if (res.status === 403) return [];
     if (!res.ok) throw new Error('خطا در دریافت پروژه‌ها');
     const data = await res.json();
     return data.projects || [];

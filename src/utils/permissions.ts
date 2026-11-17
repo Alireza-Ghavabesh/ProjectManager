@@ -1,6 +1,12 @@
 import { User } from '../types';
 
-export const EXPLICIT_ONLY_PERMISSIONS = new Set(['projects.manual_approve']);
+export const EXPLICIT_ONLY_PERMISSIONS = new Set([
+  'projects.manual_approve',
+  'project_list.view',
+  'project_list.create',
+  'project_list.edit',
+  'project_list.delete',
+]);
 
 export function hasPerm(user: User | null | undefined, code: string | string[]): boolean {
   if (!user) return false;

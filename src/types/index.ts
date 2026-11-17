@@ -43,6 +43,21 @@ export interface StructurePositionNode {
   children?: StructurePositionNode[];
 }
 
+export interface StructurePositionSummary {
+  id: string;
+  structureId: string;
+  structureTitle: string;
+  structureCode?: string;
+  positionId: string;
+  positionTitle: string;
+  parentId?: string | null;
+  parentTitle?: string;
+  orderIndex?: number;
+  userCount: number;
+  permissionCount: number;
+  permissions: string[];
+}
+
 export interface User {
   id: string;
   username: string;
@@ -56,6 +71,7 @@ export interface User {
   createdAt?: string;
   permissions?: string[];
   structurePositions?: Array<{
+    structurePositionId?: string;
     structureId: string;
     structureTitle: string;
     positionId: string;
@@ -125,7 +141,26 @@ export interface Vote {
   userPositionColor?: string;
 }
 
+export type WorkflowActionKey = 'APPROVE' | 'REVISION' | 'REJECT';
+
 export interface WorkflowStepConfig {
+  assigneeMode?: 'POSITIONS' | 'CREATOR';
+  taskTitle?: string;
+  allowedActions?: WorkflowActionKey[];
+  actionLabels?: {
+    APPROVE?: string;
+    REVISION?: string;
+    REJECT?: string;
+  };
+  removeFromCartableAfterVote?: boolean;
+  showVotesInStatusHistory?: boolean;
+  returnCreatorTaskTitle?: string;
+  hasGateway?: boolean;
+  gatewayTitle?: string;
+  gatewayPos?: { x: number; y: number };
+  approveBehavior?: 'ROUTE' | 'RECORD_AND_WAIT';
+  revisionBehavior?: 'ROUTE' | 'RECORD_AND_WAIT';
+  rejectBehavior?: 'ROUTE' | 'RECORD_AND_WAIT';
   approvalMode?: 'SINGLE' | 'MAJORITY' | 'ALL' | 'NOTIFY_ONLY';
   voteCollectionMode?: 'EARLY_DECIDE' | 'WAIT_ALL';
   revisionMode?: 'FOLLOW_APPROVAL' | 'MAJORITY' | 'ALL' | 'SINGLE';
@@ -180,6 +215,8 @@ export interface WorkflowStepApprovalProgress {
   hasCurrentUserApproved: boolean;
   hasCurrentUserRequestedRevision?: boolean;
   hasCurrentUserRejected?: boolean;
+  hasCurrentUserVoted?: boolean;
+  userVoteDecision?: 'APPROVE' | 'REVISION' | 'REJECT' | null;
 }
 
 export interface WorkflowStep {
@@ -201,11 +238,24 @@ export interface WorkflowStep {
   assignees?: WorkflowTrackingAssignee[];
 }
 
+export interface WorkflowStartTrigger {
+  event: 'PROJECT_CREATED' | 'PROJECT_APPROVED' | 'MANUAL';
+  sourceWorkflowId?: string | null;
+  projectTypeId?: string | null;
+  creatorPositionId?: string | null;
+}
+
 export interface WorkflowDiagramLayout {
   startPos?: { x: number; y: number };
   creatorPos?: { x: number; y: number };
   endApprovedPos?: { x: number; y: number };
   endRejectedPos?: { x: number; y: number };
+  startTrigger?: WorkflowStartTrigger;
+  connectorStyle?: 'ORTHOGONAL' | 'BEZIER';
+  snapToGrid?: boolean;
+  creatorLabel?: string;
+  endApprovedLabel?: string;
+  endRejectedLabel?: string;
 }
 
 export interface Workflow {
@@ -266,6 +316,7 @@ export interface WorkflowTrackingItem {
   currentStepOrder: number;
   totalSteps: number;
   currentStepTitle?: string;
+  currentTaskTitle?: string | null;
   currentStepActionType?: string;
   currentStructureId?: string | null;
   currentStructureTitle?: string | null;
@@ -320,6 +371,7 @@ export interface Project {
   workflowTitle?: string;
   hasWorkflow?: boolean;
   currentStepOrder?: number;
+  currentTaskTitle?: string | null;
   currentPositionId?: string;
   currentPositionIds?: string[];
   currentPositions?: Array<{ id: string; title: string; color?: string }>;

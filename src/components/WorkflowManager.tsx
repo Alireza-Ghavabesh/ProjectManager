@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import {
   Workflow,
+  WorkflowActionKey,
   WorkflowDiagramLayout,
+  WorkflowStartTrigger,
   WorkflowStepConfig,
   Position,
   User,
   ProjectStructure,
+  ProjectType,
   StructurePositionNode,
 } from '../types';
 import { api } from '../services/api';
@@ -15,8 +18,11 @@ import {
   BpmnWorkflowCanvas,
   BpmnBranchKind,
   BpmnConnectTarget,
+  BpmnSelection,
+  BpmnDragPayload,
   getDefaultDiagramLayout,
   getDefaultNodePosition,
+  getDefaultGatewayPosition,
 } from './BpmnWorkflowCanvas';
 import {
   GitBranch,
@@ -46,12 +52,21 @@ import {
   Clock,
   LayoutGrid,
   List,
+  Diamond,
+  Zap,
+  UserCheck,
+  Flag,
+  XCircle,
+  Save,
+  LogOut,
+  Eye,
 } from 'lucide-react';
 
 interface WorkflowManagerProps {
   workflows: Workflow[];
   positions: Position[];
   structures?: ProjectStructure[];
+  projectTypes?: ProjectType[];
   users?: User[];
   currentUser: User;
   onRefresh: () => void;
@@ -123,6 +138,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
   workflows,
   positions,
   structures = [],
+  projectTypes = [],
   users = [],
   currentUser,
   onRefresh,
@@ -138,21 +154,18 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
 
   const [steps, setSteps] = useState<EditableStep[]>([]);
   const [selectedStepIdx, setSelectedStepIdx] = useState<number>(0);
+  const [selection, setSelection] = useState<BpmnSelection>({ kind: 'step', idx: 0 });
   const [diagramLayout, setDiagramLayout] = useState<WorkflowDiagramLayout>(() =>
     getDefaultDiagramLayout(1)
   );
   const [designerMode, setDesignerMode] = useState<'bpmn' | 'list'>('bpmn');
+  const [loadedProjectTypes, setLoadedProjectTypes] = useState<ProjectType[]>(projectTypes);
 
-  // Toolbox state inside visual designer: default to empty ("چارت عمومی سازمان") so all positions match cleanly
+  // Toolbox state inside visual designer
   const [toolboxStructureId, setToolboxStructureId] = useState<string>('');
   const [toolboxSearch, setToolboxSearch] = useState<string>('');
 
-  // Drag & Drop state for visual workflow builder
-  type WfDragPayload =
-    | { kind: 'step-reorder'; fromIndex: number }
-    | { kind: 'toolbox-position'; structureId: string | null; positionId: string; title: string };
-
-  const [dragPayload, setDragPayload] = useState<WfDragPayload | null>(null);
+  const [dragPayload, setDragPayload] = useState<BpmnDragPayload | null>(null);
   const [dropSlotIndex, setDropSlotIndex] = useState<number | null>(null);
   const [dropParallelStepIdx, setDropParallelStepIdx] = useState<number | null>(null);
 
@@ -166,6 +179,14 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
   const canCreateWf = hasPerm(currentUser, 'workflow.create');
   const canEditWf = hasPerm(currentUser, 'workflow.edit');
   const canDeleteWf = hasPerm(currentUser, 'workflow.delete');
+
+  useEffect(() => {
+    if (projectTypes.length > 0) {
+      setLoadedProjectTypes(projectTypes);
+    } else {
+      api.getProjectTypes().then(setLoadedProjectTypes).catch(() => {});
+    }
+  }, [projectTypes]);
 
   const loadAllStructurePositions = async () => {
     if (structures.length === 0) return;
@@ -230,7 +251,19 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
     };
   };
 
-  const getStepUniqueAssignees = (positionIds: string[], structureId?: string | null, explicitUserIds?: string[]) => {
+  const getStepUniqueAssignees = (
+    positionIds: string[],
+    structureId?: string | null,
+    explicitUserIds?: string[],
+    assigneeMode?: 'POSITIONS' | 'CREATOR'
+  ) => {
+    if (assigneeMode === 'CREATOR') {
+      return {
+        count: 1,
+        names: ['ثبت‌کننده اولیه پروژه'],
+        namesText: 'ثبت‌کننده اولیه پروژه (به‌صورت پویا برای هر طرح)',
+      };
+    }
     const seen = new Map<string, string>();
     for (const pid of positionIds) {
       const d = getPositionDetails(pid, structureId);
@@ -308,6 +341,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
     setToolboxStructureId('');
     setToolboxSearch('');
     const defaultPos = positions[0]?.id ? [positions[0].id] : [];
+    const pos0 = getDefaultNodePosition(0);
     setSteps([
       {
         localKey: makeLocalKey(),
@@ -316,6 +350,18 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
         positionIds: defaultPos,
         description: 'سمت اولیه دریافت‌کننده پروژه',
         config: {
+          assigneeMode: 'POSITIONS',
+          allowedActions: ['APPROVE', 'REVISION', 'REJECT'],
+          actionLabels: {},
+          showVotesInStatusHistory: true,
+          removeFromCartableAfterVote: false,
+          returnCreatorTaskTitle: 'نیاز به اصلاح',
+          hasGateway: true,
+          gatewayTitle: 'تصمیم مرحله ۱',
+          gatewayPos: getDefaultGatewayPosition(pos0),
+          approveBehavior: 'ROUTE',
+          revisionBehavior: 'ROUTE',
+          rejectBehavior: 'ROUTE',
           approvalMode: 'SINGLE',
           voteCollectionMode: 'EARLY_DECIDE',
           revisionMode: 'SINGLE',
@@ -324,13 +370,14 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
           approveTarget: 'NEXT_STEP',
           onRevisionAction: 'RETURN_PREV',
           onRejectAction: 'REJECT_PROJECT',
-          nodePosition: getDefaultNodePosition(0),
+          nodePosition: pos0,
         },
       },
     ]);
     setDiagramLayout(getDefaultDiagramLayout(1));
     setDesignerMode('bpmn');
     setSelectedStepIdx(0);
+    setSelection({ kind: 'step', idx: 0 });
     setError('');
     setModalOpen(true);
     if (structures.length > 0 && Object.keys(structurePositionsMap).length === 0) {
@@ -354,12 +401,14 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
           parsedCfg = {};
         }
       }
-      const posIds =
-        Array.isArray(s.positionIds) && s.positionIds.length > 0
-          ? Array.from(new Set(s.positionIds))
-          : s.positionId
-          ? [s.positionId]
-          : [];
+      const isCreatorStep = parsedCfg.assigneeMode === 'CREATOR';
+      const posIds = isCreatorStep
+        ? []
+        : Array.isArray(s.positionIds) && s.positionIds.length > 0
+        ? Array.from(new Set(s.positionIds))
+        : s.positionId
+        ? [s.positionId]
+        : [];
       const legacyRev = parsedCfg.onRevisionAction || parsedCfg.onRejectAction || 'RETURN_PREV';
       const legacyReject =
         parsedCfg.onRevisionAction !== undefined
@@ -370,6 +419,12 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
           ? parsedCfg.onRejectAction
           : 'REJECT_PROJECT';
 
+      const nodePos = parsedCfg.nodePosition || getDefaultNodePosition(idx);
+      const allowedActs: WorkflowActionKey[] =
+        Array.isArray(parsedCfg.allowedActions) && parsedCfg.allowedActions.length > 0
+          ? parsedCfg.allowedActions
+          : ['APPROVE', 'REVISION', 'REJECT'];
+
       return {
         id: s.id,
         localKey: makeLocalKey(),
@@ -378,6 +433,19 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
         positionIds: posIds,
         description: s.description || '',
         config: {
+          assigneeMode: parsedCfg.assigneeMode || 'POSITIONS',
+          taskTitle: parsedCfg.taskTitle || '',
+          allowedActions: allowedActs,
+          actionLabels: parsedCfg.actionLabels || {},
+          removeFromCartableAfterVote: parsedCfg.removeFromCartableAfterVote,
+          showVotesInStatusHistory: parsedCfg.showVotesInStatusHistory !== false,
+          returnCreatorTaskTitle: parsedCfg.returnCreatorTaskTitle || 'نیاز به اصلاح',
+          hasGateway: parsedCfg.hasGateway !== false,
+          gatewayTitle: parsedCfg.gatewayTitle || '',
+          gatewayPos: parsedCfg.gatewayPos || getDefaultGatewayPosition(nodePos),
+          approveBehavior: parsedCfg.approveBehavior || 'ROUTE',
+          revisionBehavior: parsedCfg.revisionBehavior || 'ROUTE',
+          rejectBehavior: parsedCfg.rejectBehavior || 'ROUTE',
           approvalMode: parsedCfg.approvalMode || 'SINGLE',
           voteCollectionMode: parsedCfg.voteCollectionMode || 'EARLY_DECIDE',
           revisionMode: normalizeBranchMode(parsedCfg.revisionMode, parsedCfg.approvalMode, 'revision'),
@@ -391,14 +459,18 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
           onRejectStepOrder: parsedCfg.onRejectStepOrder,
           conditionLabel: parsedCfg.conditionLabel || '',
           userIds: Array.isArray(parsedCfg.userIds) ? parsedCfg.userIds : [],
-          nodePosition: parsedCfg.nodePosition || getDefaultNodePosition(idx),
+          nodePosition: nodePos,
         },
       };
     });
     setSteps(mapped);
-    setDiagramLayout(wf.diagram || getDefaultDiagramLayout(mapped.length));
+    setDiagramLayout({
+      ...getDefaultDiagramLayout(mapped.length),
+      ...(wf.diagram || {}),
+    });
     setDesignerMode('bpmn');
     setSelectedStepIdx(0);
+    setSelection({ kind: 'step', idx: 0 });
     setError('');
     setModalOpen(true);
     if (structures.length > 0 && Object.keys(structurePositionsMap).length === 0) {
@@ -406,23 +478,42 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
     }
   };
 
-  const createDefaultStep = (overrides: Partial<EditableStep> = {}): EditableStep => {
+  const createDefaultStep = (
+    overrides: Partial<EditableStep> = {},
+    mode: 'POSITIONS' | 'CREATOR' = 'POSITIONS'
+  ): EditableStep => {
     const structId = overrides.structureId !== undefined ? overrides.structureId : null;
+    const isCreator = mode === 'CREATOR' || overrides.config?.assigneeMode === 'CREATOR';
     const fallbackPos = positions[0]?.id || '';
-    const positionIds =
-      overrides.positionIds && overrides.positionIds.length > 0
-        ? overrides.positionIds
-        : fallbackPos
-        ? [fallbackPos]
-        : [];
+    const positionIds = isCreator
+      ? []
+      : overrides.positionIds && overrides.positionIds.length > 0
+      ? overrides.positionIds
+      : fallbackPos
+      ? [fallbackPos]
+      : [];
     const baseIdx = steps.length;
+    const nodePos = overrides.config?.nodePosition || getDefaultNodePosition(baseIdx);
     return {
       localKey: makeLocalKey(),
-      title: overrides.title || `گام ${steps.length + 1}`,
-      structureId: structId,
+      title: overrides.title || (isCreator ? 'ارسال پروژه توسط ثبت‌کننده' : `گام ${steps.length + 1}`),
+      structureId: isCreator ? null : structId,
       positionIds,
       description: overrides.description || '',
       config: overrides.config || {
+        assigneeMode: isCreator ? 'CREATOR' : 'POSITIONS',
+        taskTitle: isCreator ? 'آماده ارسال به گردش کار' : '',
+        allowedActions: isCreator ? ['APPROVE'] : ['APPROVE', 'REVISION', 'REJECT'],
+        actionLabels: isCreator ? { APPROVE: 'ارسال به گردش کار' } : {},
+        showVotesInStatusHistory: true,
+        removeFromCartableAfterVote: false,
+        returnCreatorTaskTitle: 'نیاز به اصلاح',
+        hasGateway: !isCreator,
+        gatewayTitle: isCreator ? '' : `تصمیم گام ${steps.length + 1}`,
+        gatewayPos: getDefaultGatewayPosition(nodePos),
+        approveBehavior: 'ROUTE',
+        revisionBehavior: 'ROUTE',
+        rejectBehavior: 'ROUTE',
         approvalMode: 'SINGLE',
         voteCollectionMode: 'EARLY_DECIDE',
         revisionMode: 'SINGLE',
@@ -431,7 +522,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
         approveTarget: 'NEXT_STEP',
         onRevisionAction: 'RETURN_PREV',
         onRejectAction: 'REJECT_PROJECT',
-        nodePosition: getDefaultNodePosition(baseIdx),
+        nodePosition: nodePos,
       },
     };
   };
@@ -537,15 +628,27 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
 
   const handleAutoLayoutBpmn = () => {
     setSteps((prev) =>
-      prev.map((st, idx) => ({
-        ...st,
-        config: {
-          ...st.config,
-          nodePosition: getDefaultNodePosition(idx),
-        },
-      }))
+      prev.map((st, idx) => {
+        const np = getDefaultNodePosition(idx);
+        return {
+          ...st,
+          config: {
+            ...st.config,
+            nodePosition: np,
+            gatewayPos: getDefaultGatewayPosition(np),
+          },
+        };
+      })
     );
-    setDiagramLayout(getDefaultDiagramLayout(steps.length));
+    setDiagramLayout((prev) => ({
+      ...getDefaultDiagramLayout(steps.length),
+      startTrigger: prev.startTrigger || { event: 'PROJECT_CREATED' },
+      connectorStyle: prev.connectorStyle || 'ORTHOGONAL',
+      snapToGrid: prev.snapToGrid !== false,
+      creatorLabel: prev.creatorLabel,
+      endApprovedLabel: prev.endApprovedLabel,
+      endRejectedLabel: prev.endRejectedLabel,
+    }));
   };
 
   const insertStepAt = (index: number, newStep: EditableStep) => {
@@ -554,6 +657,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
       const clamped = Math.max(0, Math.min(copy.length, index));
       copy.splice(clamped, 0, newStep);
       setSelectedStepIdx(clamped);
+      setSelection({ kind: 'step', idx: clamped });
       return copy;
     });
   };
@@ -760,9 +864,11 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
       return;
     }
 
-    const missingPos = steps.find((s) => !s.positionIds || s.positionIds.length === 0);
+    const missingPos = steps.find(
+      (s) => s.config.assigneeMode !== 'CREATOR' && (!s.positionIds || s.positionIds.length === 0)
+    );
     if (missingPos) {
-      setError(`لطفاً حداقل یک سمت مسئول برای گام «${missingPos.title}» انتخاب کنید.`);
+      setError(`لطفاً حداقل یک سمت مسئول برای گام «${missingPos.title}» انتخاب کنید (یا حالت ثبت‌کننده اولیه را فعال نمایید).`);
       return;
     }
 
@@ -775,20 +881,23 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
         description: description.trim(),
         isDefault,
         diagram: diagramLayout,
-        steps: steps.map((s, idx) => ({
-          id: s.id,
-          title: s.title,
-          structureId: s.structureId || null,
-          positionId: s.positionIds[0],
-          positionIds: s.positionIds,
-          actionType: 'APPROVAL',
-          description: s.description || '',
-          config: {
-            ...s.config,
-            nodePosition: s.config.nodePosition || getDefaultNodePosition(idx),
-          },
-          stepOrder: idx + 1,
-        })),
+        steps: steps.map((s, idx) => {
+          const isCreator = s.config.assigneeMode === 'CREATOR';
+          return {
+            id: s.id,
+            title: s.title,
+            structureId: isCreator ? null : (s.structureId || null),
+            positionId: isCreator ? null : s.positionIds[0],
+            positionIds: isCreator ? [] : s.positionIds,
+            actionType: 'APPROVAL',
+            description: s.description || '',
+            config: {
+              ...s.config,
+              nodePosition: s.config.nodePosition || getDefaultNodePosition(idx),
+            },
+            stepOrder: idx + 1,
+          };
+        }),
       };
 
       if (editingWorkflow) {
@@ -954,7 +1063,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                 >
                   {/* Header row */}
                   <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
-                    <div className="flex items-center gap-2.5">
+                    <div className="flex items-center gap-2.5 flex-wrap">
                       <span className="p-1.5 rounded-xl bg-indigo-50 text-indigo-700 font-black text-xs border border-indigo-200">
                         <GitBranch className="w-4 h-4" />
                       </span>
@@ -965,6 +1074,21 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                           گردش پیش‌فرض
                         </span>
                       )}
+                      {(() => {
+                        const trig = wf.diagram?.startTrigger?.event || 'PROJECT_CREATED';
+                        const trigLbl =
+                          trig === 'PROJECT_APPROVED'
+                            ? 'شروع: پس از تایید پروژه'
+                            : trig === 'MANUAL'
+                            ? 'شروع: انتخاب دستی'
+                            : 'شروع: ثبت پروژه جدید';
+                        return (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200">
+                            <Zap className="w-3 h-3 text-indigo-600" />
+                            {trigLbl}
+                          </span>
+                        );
+                      })()}
                     </div>
 
                     {(canEditWf || canDeleteWf) && (
@@ -981,10 +1105,10 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                           <button
                             onClick={() => handleOpenEdit(wf)}
                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-xs font-bold transition cursor-pointer"
-                            title="ویرایش بصری گردش کار"
+                            title="ویرایش بصری گردش کار در بوم Visio"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
-                            <span>ویرایش بصری</span>
+                            <span>طراحی Visio / ویرایش</span>
                           </button>
                         )}
                         {canDeleteWf && !wf.isDefault && (
@@ -1009,15 +1133,22 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                     {wf.steps.map((st, idx) => {
                       const isFirst = idx === 0;
                       const isLast = idx === wf.steps.length - 1;
-                      const posIds =
-                        Array.isArray(st.positionIds) && st.positionIds.length > 0
-                          ? st.positionIds
-                          : st.positionId
-                          ? [st.positionId]
-                          : [];
-                      const stepAssignees = getStepUniqueAssignees(posIds, st.structureId, st.config?.userIds);
-                      const structTitle = st.structureTitle || getStructureTitle(st.structureId);
                       const stepCfg: WorkflowStepConfig = st.config || {};
+                      const isCreatorStep = stepCfg.assigneeMode === 'CREATOR';
+                      const posIds = isCreatorStep
+                        ? []
+                        : Array.isArray(st.positionIds) && st.positionIds.length > 0
+                        ? st.positionIds
+                        : st.positionId
+                        ? [st.positionId]
+                        : [];
+                      const stepAssignees = getStepUniqueAssignees(
+                        posIds,
+                        st.structureId,
+                        st.config?.userIds,
+                        stepCfg.assigneeMode
+                      );
+                      const structTitle = st.structureTitle || getStructureTitle(st.structureId);
 
                       return (
                         <React.Fragment key={st.id || idx}>
@@ -1133,24 +1264,31 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                               )}
                             </div>
 
-                            {/* Responsible Positions (supports parallel multiple positions) & Users */}
+                            {/* Responsible Positions (or CREATOR) & Users */}
                             <div className="pt-2 border-t border-slate-200/80 mt-1 space-y-1.5">
                               <div className="flex flex-wrap gap-1">
-                                {posIds.map((pid) => {
-                                  const d = getPositionDetails(pid, st.structureId);
-                                  return (
-                                    <span
-                                      key={pid}
-                                      className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-900 bg-white px-2 py-0.5 rounded-lg border border-slate-200"
-                                    >
-                                      <Briefcase className="w-3 h-3 text-indigo-600 shrink-0" />
-                                      <span>{d.title}</span>
-                                      <span className="text-[10px] font-semibold text-indigo-600 tabular-nums">
-                                        ({d.userCount})
+                                {isCreatorStep ? (
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-900 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200">
+                                    <UserCheck className="w-3 h-3 text-amber-700 shrink-0" />
+                                    <span>ثبت‌کننده اولیه پروژه</span>
+                                  </span>
+                                ) : (
+                                  posIds.map((pid) => {
+                                    const d = getPositionDetails(pid, st.structureId);
+                                    return (
+                                      <span
+                                        key={pid}
+                                        className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-900 bg-white px-2 py-0.5 rounded-lg border border-slate-200"
+                                      >
+                                        <Briefcase className="w-3 h-3 text-indigo-600 shrink-0" />
+                                        <span>{d.title}</span>
+                                        <span className="text-[10px] font-semibold text-indigo-600 tabular-nums">
+                                          ({d.userCount})
+                                        </span>
                                       </span>
-                                    </span>
-                                  );
-                                })}
+                                    );
+                                  })
+                                )}
                               </div>
                               <div className="text-[10px] text-slate-500 flex items-start gap-1 leading-relaxed">
                                 <Users className="w-3 h-3 text-slate-400 shrink-0 mt-0.5" />
@@ -1177,355 +1315,419 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
         </>
       )}
 
-      {/* ===================== VISUAL DRAG & DROP WORKFLOW STUDIO MODAL ===================== */}
+      {/* ===================== FULL-SCREEN MICROSOFT VISIO-STYLE BPMN STUDIO ===================== */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/50 backdrop-blur-xs overflow-y-auto">
-          <div className="w-full max-w-6xl rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden my-4 animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[94vh]">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50/80 shrink-0">
-              <div className="flex items-center gap-2.5">
-                <span className="p-2 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-200">
+        <div className="fixed inset-0 z-50 w-screen h-screen bg-slate-100 flex flex-col overflow-hidden" dir="rtl">
+          <form onSubmit={handleSubmitWorkflow} className="w-full h-full flex flex-col overflow-hidden">
+            {/* Top Visio Studio Ribbon */}
+            <div className="px-4 py-2.5 bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0 shadow-2xs">
+              <div className="flex items-center gap-3 flex-wrap flex-1 min-w-0">
+                <span className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0">
                   <GitBranch className="w-5 h-5" />
                 </span>
-                <div>
-                  <h3 className="text-base font-bold text-slate-900">
-                    {editingWorkflow
-                      ? `ویرایش بصری گردش کار: ${editingWorkflow.title}`
-                      : 'طراحی بصری گردش کار و مسیر کارتابل (درگ‌اند‌دراپ)'}
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    برای مرحله جدید، سمت را بین گام‌ها رها کنید؛ برای ارسال هم‌زمان به چند سمت، آن را مستقیماً روی کارت یک گام رها کنید.
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setModalOpen(false)}
-                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            {error && (
-              <div className="mx-5 mt-3 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center gap-2 shrink-0">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleSubmitWorkflow} className="flex-1 overflow-y-auto p-5 space-y-5">
-              {/* Top Metadata Bar */}
-              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 p-4 rounded-2xl bg-slate-50/80 border border-slate-200">
-                <div className="sm:col-span-5">
-                  <label className="block text-xs font-bold text-slate-800 mb-1">
-                    عنوان گردش کار *
-                  </label>
+                <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[260px]">
                   <input
                     type="text"
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
-                    placeholder="مثال: فرآیند تصویب پروژه‌های ویژه / مالی..."
-                    className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-indigo-500 transition"
+                    placeholder="نام فرآیند گردش کار *"
+                    className="w-56 sm:w-64 rounded-lg bg-slate-50 border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white"
                     required
                   />
-                </div>
-                <div className="sm:col-span-5">
-                  <label className="block text-xs font-bold text-slate-800 mb-1">
-                    شرح و کاربرد فرآیند
-                  </label>
                   <input
                     type="text"
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    placeholder="توضیح مختصر در خصوص نحوه جریان پرونده..."
-                    className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-indigo-500 transition"
+                    placeholder="شرح کوتاه فرآیند (اختیاری)..."
+                    className="hidden md:block w-60 rounded-lg bg-slate-50 border border-slate-200 px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-indigo-500 focus:bg-white"
                   />
-                </div>
-                <div className="sm:col-span-2 flex items-end">
-                  <label className="w-full flex items-center gap-2 h-9 px-3 rounded-xl bg-white border border-slate-300 cursor-pointer">
+                  <label className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 cursor-pointer text-[11px] font-bold text-slate-700">
                     <input
                       type="checkbox"
                       checked={isDefault}
                       onChange={(e) => setIsDefault(e.target.checked)}
-                      className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+                      className="w-3.5 h-3.5 rounded text-indigo-600"
                     />
-                    <span className="text-xs font-bold text-slate-700">پیش‌فرض شورا</span>
+                    <span>پیش‌فرض سیستم</span>
                   </label>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelection({ kind: 'start' })}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 hover:bg-emerald-100 text-[11px] font-bold cursor-pointer transition"
+                    title="تنظیم رویداد آغازگر گردش کار"
+                  >
+                    <Zap className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>
+                      شروع:{' '}
+                      {diagramLayout.startTrigger?.event === 'PROJECT_APPROVED'
+                        ? 'پس از تایید پروژه'
+                        : diagramLayout.startTrigger?.event === 'MANUAL'
+                        ? 'انتخاب دستی'
+                        : 'ثبت پروژه جدید'}
+                    </span>
+                  </button>
                 </div>
               </div>
 
-              {/* Main 2-Column Visual Builder */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-                {/* RIGHT SIDE IN RTL: DRAGGABLE POSITIONS TOOLBOX */}
-                <div className="lg:col-span-4 space-y-3">
-                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <h4 className="text-xs font-black text-slate-900 flex items-center gap-1.5">
-                        <FolderTree className="w-4 h-4 text-indigo-600" />
-                        <span>سمت‌های سازمانی (بکشید به بوم)</span>
-                      </h4>
-                    </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* View Mode Toggle */}
+                <div className="inline-flex items-center p-0.5 rounded-lg bg-slate-100 border border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setDesignerMode('bpmn')}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold cursor-pointer transition ${
+                      designerMode === 'bpmn'
+                        ? 'bg-indigo-600 text-white'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" />
+                    <span>بوم Visio</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDesignerMode('list')}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold cursor-pointer transition ${
+                      designerMode === 'list'
+                        ? 'bg-indigo-600 text-white'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <List className="w-3.5 h-3.5" />
+                    <span>لیست گام‌ها</span>
+                  </button>
+                </div>
 
-                    <select
-                      value={toolboxStructureId}
-                      onChange={(e) => setToolboxStructureId(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-xs font-bold text-indigo-900 focus:outline-none focus:border-indigo-500"
+                <button
+                  type="button"
+                  onClick={() => setModalOpen(false)}
+                  className="px-3.5 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                >
+                  بستن
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white flex items-center gap-1.5 shadow-sm transition cursor-pointer disabled:opacity-50"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>
+                    {loading ? 'در حال ذخیره...' : editingWorkflow ? 'ذخیره گردش کار' : 'ایجاد گردش کار'}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {error && (
+              <div className="px-4 py-2 bg-rose-50 border-b border-rose-200 text-rose-800 text-xs font-bold flex items-center justify-between gap-2 shrink-0">
+                <span className="flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                  {error}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setError('')}
+                  className="text-rose-600 hover:text-rose-900 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* 3-Pane Full-Screen Visio Workspace */}
+            <div className="flex-1 min-h-0 flex overflow-hidden">
+              {/* RIGHT SIDEBAR IN RTL: VISIO STENCILS & ORGANIZATIONAL POSITIONS */}
+              <aside className="w-64 lg:w-72 shrink-0 bg-white border-l border-slate-200 flex flex-col overflow-hidden">
+                {/* Quick Visio Shapes Stencil */}
+                <div className="p-3 border-b border-slate-200 space-y-2 bg-slate-50/70">
+                  <div className="text-[11px] font-black text-slate-800 flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>اشکال استاندارد Visio / BPMN</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setSelection({ kind: 'start' })}
+                      className={`p-2 rounded-lg border text-[10px] font-bold flex items-center gap-1.5 cursor-pointer transition text-right ${
+                        selection.kind === 'start'
+                          ? 'bg-emerald-100 border-emerald-500 text-emerald-950'
+                          : 'bg-white border-slate-200 hover:border-emerald-400 text-slate-700'
+                      }`}
                     >
-                      <option value="">همه سمت‌ها (مستقل از ساختار — توصیه‌شده)</option>
-                      {structures.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          فیلتر بر اساس ساختار: {s.title}
-                        </option>
-                      ))}
-                    </select>
+                      <Zap className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span className="truncate">رویداد شروع</span>
+                    </button>
 
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={toolboxSearch}
-                        onChange={(e) => setToolboxSearch(e.target.value)}
-                        placeholder="جستجوی نام سمت..."
-                        className="w-full rounded-xl bg-white border border-slate-200 px-3 py-1.5 pr-8 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500"
-                      />
-                      <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-2 pointer-events-none" />
+                    <div
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.effectAllowed = 'copy';
+                        setDragPayload({ kind: 'toolbox-creator' });
+                      }}
+                      onDragEnd={clearDragState}
+                      onClick={() => insertStepAt(steps.length, createDefaultStep({}, 'CREATOR'))}
+                      className="p-2 rounded-lg border border-amber-200 bg-amber-50/70 hover:bg-amber-100 text-amber-950 text-[10px] font-bold flex items-center gap-1.5 cursor-grab active:cursor-grabbing transition"
+                      title="کلیک یا کشیدن به بوم برای افزودن مرحله ثبت‌کننده اولیه"
+                    >
+                      <UserCheck className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                      <span className="truncate">ثبت‌کننده اولیه</span>
                     </div>
 
-                    <div className="max-h-96 overflow-y-auto space-y-2 pr-0.5">
-                      {toolboxStructureId && filteredStructPositions.length > 0 ? (
-                        filteredStructPositions.map((sp) => (
-                          <div
-                            key={sp.id}
-                            draggable
-                            onDragStart={(e) => {
-                              e.dataTransfer.effectAllowed = 'copy';
-                              e.dataTransfer.setData('text/plain', sp.positionId);
-                              setDragPayload({
-                                kind: 'toolbox-position',
-                                structureId: toolboxStructureId,
-                                positionId: sp.positionId,
-                                title: sp.title,
-                              });
-                            }}
-                            onDragEnd={clearDragState}
-                            className="p-2.5 rounded-xl bg-white border border-indigo-200/80 hover:border-indigo-400 text-xs flex flex-col gap-2 cursor-grab active:cursor-grabbing shadow-2xs transition"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <GripVertical className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                                <div className="min-w-0">
-                                  <div className="font-bold text-slate-800 truncate">{sp.title}</div>
-                                  <div className="text-[10px] text-slate-400 truncate">
-                                    {sp.users?.length > 0
-                                      ? `${sp.users.length} نفر: ${sp.users.map((u) => u.name).join('، ')}`
-                                      : 'بدون متصدی در ساختار'}
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-1.5 justify-end">
-                              {selectedStep && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    addParallelPositionToStep(selectedStepIdx, sp.positionId, null)
-                                  }
-                                  className="text-[10px] px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-600 hover:text-white font-bold cursor-pointer transition"
-                                  title="ارسال هم‌زمان به این سمت در گام انتخاب‌شده"
-                                >
-                                  + هم‌زمان به گام {selectedStepIdx + 1}
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  insertStepAt(
-                                    steps.length,
-                                    createDefaultStep({
-                                      title: `بررسی در ${sp.title}`,
-                                      structureId: null,
-                                      positionIds: [sp.positionId],
-                                    })
-                                  )
-                                }
-                                className="text-[10px] px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-600 hover:text-white font-bold cursor-pointer transition"
-                              >
-                                + گام جدید
-                              </button>
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        filteredGeneralPositions.map((pos) => {
-                          const posDetails = getPositionDetails(pos.id, null);
-                          return (
-                            <div
-                              key={pos.id}
-                              draggable
-                              onDragStart={(e) => {
-                                e.dataTransfer.effectAllowed = 'copy';
-                                e.dataTransfer.setData('text/plain', pos.id);
-                                setDragPayload({
-                                  kind: 'toolbox-position',
-                                  structureId: toolboxStructureId || null,
-                                  positionId: pos.id,
-                                  title: pos.title,
-                                });
-                              }}
-                              onDragEnd={clearDragState}
-                              className="p-2.5 rounded-xl bg-white border border-slate-200 hover:border-indigo-400 text-xs flex flex-col gap-2 cursor-grab active:cursor-grabbing shadow-2xs transition"
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <GripVertical className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                                  <div className="min-w-0">
-                                    <div className="font-bold text-slate-800 truncate">{pos.title}</div>
-                                    <div className="text-[10px] text-slate-400 truncate tabular-nums">
-                                      {posDetails.userCount > 0
-                                        ? `${posDetails.userCount} نفر: ${posDetails.userNames}`
-                                        : 'بدون متصدی منتسب'}
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-1.5 justify-end">
-                                {selectedStep && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      addParallelPositionToStep(
-                                        selectedStepIdx,
-                                        pos.id,
-                                        null
-                                      )
-                                    }
-                                    className="text-[10px] px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-600 hover:text-white font-bold cursor-pointer transition"
-                                    title="ارسال هم‌زمان به این سمت در گام انتخاب‌شده"
-                                  >
-                                    + هم‌زمان به گام {selectedStepIdx + 1}
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    insertStepAt(
-                                      steps.length,
-                                      createDefaultStep({
-                                        title: `بررسی در ${pos.title}`,
-                                        structureId: null,
-                                        positionIds: [pos.id],
-                                      })
-                                    )
-                                  }
-                                  className="text-[10px] px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 hover:bg-indigo-600 hover:text-white font-bold cursor-pointer transition"
-                                >
-                                  + گام جدید
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
+                    <div
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.effectAllowed = 'copy';
+                        setDragPayload({ kind: 'toolbox-gateway' });
+                      }}
+                      onDragEnd={clearDragState}
+                      onClick={() => {
+                        if (selectedStep) {
+                          handleStepConfigChange(selectedStepIdx, 'hasGateway', true);
+                          setSelection({ kind: 'gateway', idx: selectedStepIdx });
+                        }
+                      }}
+                      className="p-2 rounded-lg border border-indigo-200 bg-indigo-50/70 hover:bg-indigo-100 text-indigo-950 text-[10px] font-bold flex items-center gap-1.5 cursor-grab active:cursor-grabbing transition"
+                      title="بکشید روی گام یا کلیک کنید تا لوزی شرط به مرحله اضافه شود"
+                    >
+                      <Diamond className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                      <span className="truncate">لوزی شرط (شروط)</span>
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setSelection({ kind: 'creator_return' })}
+                      className={`p-2 rounded-lg border text-[10px] font-bold flex items-center gap-1.5 cursor-pointer transition text-right ${
+                        selection.kind === 'creator_return'
+                          ? 'bg-amber-100 border-amber-500 text-amber-950'
+                          : 'bg-white border-slate-200 hover:border-amber-400 text-slate-700'
+                      }`}
+                    >
+                      <CornerDownLeft className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span className="truncate">عودت ثبت‌کننده</span>
+                    </button>
                   </div>
                 </div>
 
-                {/* LEFT SIDE IN RTL: BPMN VISUAL DESIGNER / LIST VIEW + STEP INSPECTOR */}
-                <div className="lg:col-span-8 space-y-4">
-                  {/* Designer Mode Switcher */}
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="inline-flex items-center p-1 rounded-xl bg-slate-100 border border-slate-200">
-                      <button
-                        type="button"
-                        onClick={() => setDesignerMode('bpmn')}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition ${
-                          designerMode === 'bpmn'
-                            ? 'bg-indigo-600 text-white shadow-xs'
-                            : 'text-slate-600 hover:text-slate-900'
-                        }`}
-                      >
-                        <LayoutGrid className="w-3.5 h-3.5" />
-                        <span>بوم بصری BPMN (چسباندن مسیرها)</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDesignerMode('list')}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition ${
-                          designerMode === 'list'
-                            ? 'bg-indigo-600 text-white shadow-xs'
-                            : 'text-slate-600 hover:text-slate-900'
-                        }`}
-                      >
-                        <List className="w-3.5 h-3.5" />
-                        <span>نمای لیستی ترتیب مراحل</span>
-                      </button>
-                    </div>
+                {/* Organizational Positions Palette */}
+                <div className="p-3 border-b border-slate-200 space-y-2">
+                  <div className="text-[11px] font-black text-slate-800 flex items-center gap-1.5">
+                    <FolderTree className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>سمت‌های سازمانی (بکشید به بوم)</span>
                   </div>
-
-                  {designerMode === 'bpmn' ? (
-                    <BpmnWorkflowCanvas
-                      steps={steps}
-                      selectedStepIdx={selectedStepIdx}
-                      diagram={diagramLayout}
-                      onSelectStep={(idx) => setSelectedStepIdx(idx)}
-                      onDiagramChange={(next) => setDiagramLayout(next)}
-                      onUpdateStepPos={handleUpdateStepPos}
-                      onUpdateStepConfig={handleUpdateStepConfigPatch}
-                      onConnectBranch={handleConnectBpmnBranch}
-                      onDeleteStep={removeStep}
-                      onAddBlankStepAt={(pos) => {
-                        const newIdx = steps.length;
-                        insertStepAt(
-                          newIdx,
-                          createDefaultStep({
-                            config: {
-                              approvalMode: 'SINGLE',
-                              voteCollectionMode: 'EARLY_DECIDE',
-                              revisionMode: 'SINGLE',
-                              rejectMode: 'SINGLE',
-                              tieBreaker: 'REVISION',
-                              approveTarget: 'NEXT_STEP',
-                              onRevisionAction: 'RETURN_PREV',
-                              onRejectAction: 'REJECT_PROJECT',
-                              nodePosition: pos || getDefaultNodePosition(newIdx),
-                            },
-                          })
-                        );
-                      }}
-                      onAutoLayout={handleAutoLayoutBpmn}
-                      getPositionTitle={(pid, structId) => getPositionDetails(pid, structId).title}
-                      getStepAssigneeCount={(st) =>
-                        getStepUniqueAssignees(st.positionIds, st.structureId, st.config.userIds).count
-                      }
-                      dragPayload={dragPayload}
-                      onDropPositionAtCanvas={(positionId, posTitle, pos) => {
-                        const newIdx = steps.length;
-                        insertStepAt(
-                          newIdx,
-                          createDefaultStep({
-                            title: `بررسی در ${posTitle}`,
-                            structureId: null,
-                            positionIds: [positionId],
-                            config: {
-                              approvalMode: 'SINGLE',
-                              voteCollectionMode: 'EARLY_DECIDE',
-                              revisionMode: 'SINGLE',
-                              rejectMode: 'SINGLE',
-                              tieBreaker: 'REVISION',
-                              approveTarget: 'NEXT_STEP',
-                              onRevisionAction: 'RETURN_PREV',
-                              onRejectAction: 'REJECT_PROJECT',
-                              nodePosition: pos,
-                            },
-                          })
-                        );
-                      }}
-                      onDropPositionOnStep={(targetIdx, positionId) =>
-                        addParallelPositionToStep(targetIdx, positionId, null)
-                      }
-                      onClearDrag={clearDragState}
+                  <select
+                    value={toolboxStructureId}
+                    onChange={(e) => setToolboxStructureId(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-300 text-[11px] font-bold text-indigo-950 focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="">همه سمت‌ها (چارت عمومی سازمان)</option>
+                    {structures.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        ساختار: {s.title}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={toolboxSearch}
+                      onChange={(e) => setToolboxSearch(e.target.value)}
+                      placeholder="جستجوی نام سمت..."
+                      className="w-full rounded-lg bg-slate-50 border border-slate-200 px-2.5 py-1.5 pr-7 text-[11px] text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white"
                     />
-                  ) : (
-                  <div className="p-4 rounded-2xl bg-slate-50/90 border border-slate-200 space-y-3">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2 top-2 pointer-events-none" />
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5">
+                  {(toolboxStructureId && filteredStructPositions.length > 0
+                    ? filteredStructPositions.map((sp) => ({
+                        id: sp.id,
+                        positionId: sp.positionId,
+                        title: sp.title,
+                        userCount: sp.users?.length || 0,
+                        userNames:
+                          sp.users?.length > 0 ? sp.users.map((u) => u.name).join('، ') : 'بدون متصدی',
+                      }))
+                    : filteredGeneralPositions.map((pos) => {
+                        const pd = getPositionDetails(pos.id, null);
+                        return {
+                          id: pos.id,
+                          positionId: pos.id,
+                          title: pos.title,
+                          userCount: pd.userCount,
+                          userNames: pd.userNames,
+                        };
+                      })
+                  ).map((item) => (
+                    <div
+                      key={item.id}
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.effectAllowed = 'copy';
+                        e.dataTransfer.setData('text/plain', item.positionId);
+                        setDragPayload({
+                          kind: 'toolbox-position',
+                          structureId: toolboxStructureId || null,
+                          positionId: item.positionId,
+                          title: item.title,
+                        });
+                      }}
+                      onDragEnd={clearDragState}
+                      className="p-2 rounded-lg bg-slate-50/70 border border-slate-200 hover:border-indigo-400 hover:bg-white text-[11px] flex flex-col gap-1.5 cursor-grab active:cursor-grabbing transition"
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <GripVertical className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <div className="font-bold text-slate-900 truncate">{item.title}</div>
+                          <div className="text-[10px] text-slate-500 truncate tabular-nums">
+                            {item.userCount} نفر: {item.userNames}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 justify-end">
+                        {selectedStep && selectedStep.config.assigneeMode !== 'CREATOR' && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              addParallelPositionToStep(selectedStepIdx, item.positionId, null)
+                            }
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-600 hover:text-white font-bold cursor-pointer transition"
+                          >
+                            + به گام {selectedStepIdx + 1}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            insertStepAt(
+                              steps.length,
+                              createDefaultStep({
+                                title: `بررسی در ${item.title}`,
+                                structureId: null,
+                                positionIds: [item.positionId],
+                              })
+                            )
+                          }
+                          className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-800 border border-indigo-200 hover:bg-indigo-600 hover:text-white font-bold cursor-pointer transition"
+                        >
+                          + گام جدید
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </aside>
+
+              {/* CENTER WORKSPACE: FULL-HEIGHT VISIO CANVAS OR LIST VIEW */}
+              <main className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
+                {designerMode === 'bpmn' ? (
+                  <BpmnWorkflowCanvas
+                    steps={steps}
+                    selectedStepIdx={selectedStepIdx}
+                    selection={selection}
+                    diagram={diagramLayout}
+                    onSelectStep={(idx) => setSelectedStepIdx(idx)}
+                    onSelectElement={(sel) => {
+                      setSelection(sel);
+                      if (sel.kind === 'step' || sel.kind === 'gateway') {
+                        setSelectedStepIdx(sel.idx);
+                      }
+                    }}
+                    onDiagramChange={(next) => setDiagramLayout(next)}
+                    onUpdateStepPos={handleUpdateStepPos}
+                    onUpdateStepConfig={handleUpdateStepConfigPatch}
+                    onConnectBranch={handleConnectBpmnBranch}
+                    onDeleteStep={removeStep}
+                    onAddBlankStepAt={(pos, mode) => {
+                      const newIdx = steps.length;
+                      const nodePos = pos || getDefaultNodePosition(newIdx);
+                      insertStepAt(
+                        newIdx,
+                        createDefaultStep(
+                          {
+                            config: {
+                              assigneeMode: mode === 'CREATOR' ? 'CREATOR' : 'POSITIONS',
+                              taskTitle: mode === 'CREATOR' ? 'آماده ارسال به گردش کار' : '',
+                              allowedActions: mode === 'CREATOR' ? ['APPROVE'] : ['APPROVE', 'REVISION', 'REJECT'],
+                              actionLabels: mode === 'CREATOR' ? { APPROVE: 'ارسال به گردش کار' } : {},
+                              showVotesInStatusHistory: true,
+                              removeFromCartableAfterVote: false,
+                              returnCreatorTaskTitle: 'نیاز به اصلاح',
+                              hasGateway: mode !== 'CREATOR',
+                              gatewayTitle: mode === 'CREATOR' ? '' : `تصمیم گام ${newIdx + 1}`,
+                              gatewayPos: getDefaultGatewayPosition(nodePos),
+                              approveBehavior: 'ROUTE',
+                              revisionBehavior: 'ROUTE',
+                              rejectBehavior: 'ROUTE',
+                              approvalMode: 'SINGLE',
+                              voteCollectionMode: 'EARLY_DECIDE',
+                              revisionMode: 'SINGLE',
+                              rejectMode: 'SINGLE',
+                              tieBreaker: 'REVISION',
+                              approveTarget: 'NEXT_STEP',
+                              onRevisionAction: 'RETURN_PREV',
+                              onRejectAction: 'REJECT_PROJECT',
+                              nodePosition: nodePos,
+                            },
+                          },
+                          mode || 'POSITIONS'
+                        )
+                      );
+                    }}
+                    onAutoLayout={handleAutoLayoutBpmn}
+                    getPositionTitle={(pid, structId) => getPositionDetails(pid, structId).title}
+                    getStepAssigneeCount={(st) =>
+                      getStepUniqueAssignees(
+                        st.positionIds,
+                        st.structureId,
+                        st.config.userIds,
+                        st.config.assigneeMode
+                      ).count
+                    }
+                    dragPayload={dragPayload}
+                    onDropPositionAtCanvas={(positionId, posTitle, pos) => {
+                      const newIdx = steps.length;
+                      insertStepAt(
+                        newIdx,
+                        createDefaultStep({
+                          title: `بررسی در ${posTitle}`,
+                          structureId: null,
+                          positionIds: [positionId],
+                          config: {
+                            assigneeMode: 'POSITIONS',
+                            allowedActions: ['APPROVE', 'REVISION', 'REJECT'],
+                            actionLabels: {},
+                            showVotesInStatusHistory: true,
+                            removeFromCartableAfterVote: false,
+                            returnCreatorTaskTitle: 'نیاز به اصلاح',
+                            hasGateway: true,
+                            gatewayTitle: `تصمیم ${posTitle}`,
+                            gatewayPos: getDefaultGatewayPosition(pos),
+                            approveBehavior: 'ROUTE',
+                            revisionBehavior: 'ROUTE',
+                            rejectBehavior: 'ROUTE',
+                            approvalMode: 'SINGLE',
+                            voteCollectionMode: 'EARLY_DECIDE',
+                            revisionMode: 'SINGLE',
+                            rejectMode: 'SINGLE',
+                            tieBreaker: 'REVISION',
+                            approveTarget: 'NEXT_STEP',
+                            onRevisionAction: 'RETURN_PREV',
+                            onRejectAction: 'REJECT_PROJECT',
+                            nodePosition: pos,
+                          },
+                        })
+                      );
+                    }}
+                    onDropPositionOnStep={(targetIdx, positionId) =>
+                      addParallelPositionToStep(targetIdx, positionId, null)
+                    }
+                    onClearDrag={clearDragState}
+                  />
+                ) : (
+                  <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <Move className="w-4 h-4 text-indigo-600" />
@@ -1543,19 +1745,16 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                       </button>
                     </div>
 
-                    <div className="text-[11px] text-slate-500 bg-white px-3 py-2 rounded-xl border border-slate-200/80 flex items-center gap-2">
-                      <Info className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                      <span>
-                        برای <strong>ساخت گام جدید یا تغییر ترتیب</strong> بین کارت‌ها رها کنید؛ برای <strong>ارسال هم‌زمان به چند سمت</strong>، سمت را مستقیماً روی کارت یک گام رها کنید.
-                      </span>
-                    </div>
-
-                    {/* Visual Connected Steps Canvas */}
-                    <div className="space-y-1.5 max-h-[340px] overflow-y-auto p-1">
+                    <div className="space-y-1.5">
                       {steps.map((st, idx) => {
                         const isSelected = idx === selectedStepIdx;
                         const isFirst = idx === 0;
-                        const assignees = getStepUniqueAssignees(st.positionIds, st.structureId, st.config.userIds);
+                        const assignees = getStepUniqueAssignees(
+                          st.positionIds,
+                          st.structureId,
+                          st.config.userIds,
+                          st.config.assigneeMode
+                        );
                         const isBeingDragged =
                           dragPayload?.kind === 'step-reorder' && dragPayload.fromIndex === idx;
                         const isParallelDropActive =
@@ -1563,7 +1762,6 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
 
                         return (
                           <React.Fragment key={st.localKey}>
-                            {/* Drop Slot BEFORE step idx */}
                             <div
                               onDragOver={(e) => {
                                 if (!dragPayload) return;
@@ -1583,10 +1781,9 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                                   : 'h-1'
                               }`}
                             >
-                              {dropSlotIndex === idx && `رها کنید تا گام جدید / جابجا شده در ردیف ${idx + 1} قرار گیرد`}
+                              {dropSlotIndex === idx && `رها کنید تا گام در ردیف ${idx + 1} قرار گیرد`}
                             </div>
 
-                            {/* Visual Step Card (ALSO accepts drops for Parallel Multi-Position routing!) */}
                             <div
                               draggable
                               onDragStart={(e) => {
@@ -1609,105 +1806,39 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                                 if (dropParallelStepIdx === idx) setDropParallelStepIdx(null);
                               }}
                               onDrop={(e) => handleDropOnStepCard(e, idx)}
-                              onClick={() => setSelectedStepIdx(idx)}
-                              className={`p-3.5 rounded-2xl border transition cursor-pointer flex items-start justify-between gap-3 ${
+                              onClick={() => {
+                                setSelectedStepIdx(idx);
+                                setSelection({ kind: 'step', idx });
+                              }}
+                              className={`p-3.5 rounded-xl border transition cursor-pointer flex items-start justify-between gap-3 ${
                                 isBeingDragged
                                   ? 'opacity-40 border-dashed border-indigo-400 bg-indigo-50'
                                   : isParallelDropActive
-                                  ? 'bg-emerald-50 border-2 border-dashed border-emerald-500 ring-2 ring-emerald-500/20'
+                                  ? 'bg-emerald-50 border-2 border-dashed border-emerald-500'
                                   : isSelected
                                   ? 'bg-white border-indigo-500 ring-2 ring-indigo-500/20 shadow-sm'
                                   : 'bg-white border-slate-200 hover:border-indigo-300'
                               }`}
                             >
                               <div className="flex items-start gap-2.5 min-w-0 flex-1">
-                                <span
-                                  className="mt-0.5 p-1.5 rounded-lg bg-slate-100 text-slate-400 hover:text-indigo-600 cursor-grab active:cursor-grabbing shrink-0"
-                                  title="برای تغییر ترتیب بکشید"
-                                >
+                                <span className="mt-0.5 p-1 rounded bg-slate-100 text-slate-400 cursor-grab shrink-0">
                                   <GripVertical className="w-4 h-4" />
                                 </span>
                                 <span
-                                  className={`mt-0.5 w-7 h-7 rounded-xl font-black text-xs flex items-center justify-center shrink-0 tabular-nums ${
-                                    isFirst
-                                      ? 'bg-emerald-600 text-white'
-                                      : idx === steps.length - 1
-                                      ? 'bg-indigo-600 text-white'
-                                      : 'bg-slate-800 text-white'
+                                  className={`mt-0.5 w-7 h-7 rounded-lg font-black text-xs flex items-center justify-center shrink-0 tabular-nums ${
+                                    isFirst ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-white'
                                   }`}
                                 >
                                   {idx + 1}
                                 </span>
-
-                                <div className="min-w-0 flex-1 space-y-1.5">
-                                  <div className="flex flex-wrap items-center gap-1.5">
-                                    <span className="text-xs font-black text-slate-900 truncate">
-                                      {st.title || `گام ${idx + 1}`}
-                                    </span>
-                                    <span className="text-[10px] px-2 py-0.5 rounded-md bg-violet-50 text-violet-800 border border-violet-200 font-semibold">
-                                      {getApprovalSummaryText(st.config.approvalMode, assignees.count)}
-                                    </span>
-                                    {st.positionIds.length > 1 && (
-                                      <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold">
-                                        ارسال هم‌زمان ({st.positionIds.length} سمت)
-                                      </span>
-                                    )}
-                                    {st.config.conditionLabel && (
-                                      <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200">
-                                        شرط: {st.config.conditionLabel}
-                                      </span>
-                                    )}
+                                <div className="min-w-0 flex-1 space-y-1">
+                                  <div className="text-xs font-black text-slate-900 truncate">
+                                    {st.title || `گام ${idx + 1}`}
                                   </div>
-
-                                  {isParallelDropActive && (
-                                    <div className="text-[11px] font-bold text-emerald-700 bg-white/80 px-2.5 py-1 rounded-lg border border-emerald-300">
-                                      رها کنید تا سمت «{dragPayload.title}» هم‌زمان به این مرحله اضافه شود
-                                    </div>
-                                  )}
-
-                                  {/* Parallel Positions Chips */}
-                                  <div className="flex flex-wrap items-center gap-1.5">
-                                    {st.positionIds.map((pid) => {
-                                      const posInfo = getPositionDetails(pid, st.structureId);
-                                      return (
-                                        <span
-                                          key={pid}
-                                          className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-800 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-lg"
-                                        >
-                                          <Briefcase className="w-3 h-3 text-indigo-600 shrink-0" />
-                                          <span>{posInfo.title}</span>
-                                          <span className="text-[10px] text-slate-500 tabular-nums">
-                                            ({posInfo.userCount} نفر)
-                                          </span>
-                                          {st.positionIds.length > 1 && (
-                                            <button
-                                              type="button"
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                removeParallelPositionFromStep(idx, pid);
-                                              }}
-                                              className="mr-0.5 text-slate-400 hover:text-rose-600 cursor-pointer"
-                                              title="حذف این سمت از گام"
-                                            >
-                                              <X className="w-3 h-3" />
-                                            </button>
-                                          )}
-                                        </span>
-                                      );
-                                    })}
-                                  </div>
-
-                                  <div className="text-[10px] text-slate-500 flex flex-wrap items-center gap-2">
-                                    {st.structureId && (
-                                      <span className="flex items-center gap-1 text-indigo-700 font-semibold">
-                                        <FolderTree className="w-3 h-3" />
-                                        {getStructureTitle(st.structureId)}
-                                      </span>
-                                    )}
-                                    <span className="flex items-center gap-1">
-                                      <Users className="w-3 h-3 text-slate-400" />
-                                      کارتابل ({assignees.count} نفر): {assignees.namesText}
-                                    </span>
+                                  <div className="text-[11px] text-slate-600">
+                                    {st.config.assigneeMode === 'CREATOR'
+                                      ? 'ثبت‌کننده اولیه پروژه'
+                                      : `${st.positionIds.map((pid) => getPositionDetails(pid, st.structureId).title).join('، ')} (${assignees.count} نفر)`}
                                   </div>
                                 </div>
                               </div>
@@ -1718,7 +1849,6 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                                   onClick={() => moveStepUp(idx)}
                                   disabled={idx === 0}
                                   className="p-1 rounded-lg bg-slate-50 border border-slate-200 text-slate-500 hover:text-slate-900 disabled:opacity-30 cursor-pointer"
-                                  title="انتقال به بالا"
                                 >
                                   <ArrowUp className="w-3.5 h-3.5" />
                                 </button>
@@ -1727,7 +1857,6 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                                   onClick={() => moveStepDown(idx)}
                                   disabled={idx === steps.length - 1}
                                   className="p-1 rounded-lg bg-slate-50 border border-slate-200 text-slate-500 hover:text-slate-900 disabled:opacity-30 cursor-pointer"
-                                  title="انتقال به پایین"
                                 >
                                   <ArrowDown className="w-3.5 h-3.5" />
                                 </button>
@@ -1735,7 +1864,6 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                                   type="button"
                                   onClick={() => removeStep(idx)}
                                   className="p-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-600 hover:bg-rose-100 cursor-pointer mr-1"
-                                  title="حذف گام"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>
@@ -1744,538 +1872,1041 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                           </React.Fragment>
                         );
                       })}
-
-                      {/* Final Drop Slot at END of list */}
-                      <div
-                        onDragOver={(e) => {
-                          if (!dragPayload) return;
-                          e.preventDefault();
-                          setDropSlotIndex(steps.length);
-                          if (dropParallelStepIdx !== null) setDropParallelStepIdx(null);
-                        }}
-                        onDragLeave={() => {
-                          if (dropSlotIndex === steps.length) setDropSlotIndex(null);
-                        }}
-                        onDrop={(e) => handleDropAtSlot(e, steps.length)}
-                        className={`transition-all rounded-xl text-center text-[11px] font-bold flex items-center justify-center ${
-                          dropSlotIndex === steps.length
-                            ? 'h-10 bg-emerald-100 border-2 border-dashed border-emerald-500 text-emerald-800 mt-1'
-                            : dragPayload
-                            ? 'h-8 bg-slate-100 border border-dashed border-slate-300 text-slate-500 mt-1'
-                            : 'h-2'
-                        }`}
-                      >
-                        {dragPayload ? 'برای افزودن به عنوان گام جدید در انتهای مسیر اینجا رها کنید' : ''}
-                      </div>
                     </div>
                   </div>
-                  )}
+                )}
+              </main>
 
-                  {/* Step Inspector Panel (Full Customization for Selected Step) */}
-                  {selectedStep && (() => {
-                    const inspectorAssignees = getStepUniqueAssignees(
-                      selectedStep.positionIds,
-                      selectedStep.structureId,
-                      selectedStep.config.userIds
-                    );
-                    const availableToAddParallel = stepCandidatePositions.filter(
-                      (p) => !selectedStep.positionIds.includes(p.id)
-                    );
+              {/* LEFT CONTEXTUAL INSPECTOR IN RTL (Visio Properties Pane) */}
+              <aside className="w-80 xl:w-96 shrink-0 bg-white border-r border-slate-200 flex flex-col overflow-hidden">
+                {/* Inspector Header */}
+                <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex items-center justify-between gap-2 shrink-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-200 shrink-0">
+                      {selection.kind === 'start' ? (
+                        <Zap className="w-4 h-4 text-emerald-600" />
+                      ) : selection.kind === 'gateway' ? (
+                        <Diamond className="w-4 h-4 text-amber-600" />
+                      ) : selection.kind === 'creator_return' ? (
+                        <UserCheck className="w-4 h-4 text-amber-600" />
+                      ) : (
+                        <SlidersHorizontal className="w-4 h-4" />
+                      )}
+                    </span>
+                    <h4 className="text-xs font-black text-slate-900 truncate">
+                      {selection.kind === 'start'
+                        ? 'تنظیمات رویداد شروع گردش کار'
+                        : selection.kind === 'gateway' && selectedStep
+                        ? `دروازه لوزی (شروط) — گام ${selectedStepIdx + 1}`
+                        : selection.kind === 'creator_return'
+                        ? 'کارتابل عودت ثبت‌کننده پروژه'
+                        : selection.kind === 'end_approved'
+                        ? 'نقطه پایان: تایید نهایی'
+                        : selection.kind === 'end_rejected'
+                        ? 'نقطه پایان: رد طرح'
+                        : selectedStep
+                        ? `تنظیمات گام ${selectedStepIdx + 1}: ${selectedStep.title || ''}`
+                        : 'ویژگی‌های المان'}
+                    </h4>
+                  </div>
+
+                  {(selection.kind === 'step' || selection.kind === 'gateway') && selectedStep && (
+                    <div className="inline-flex rounded-lg bg-slate-200/70 p-0.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setSelection({ kind: 'step', idx: selectedStepIdx })}
+                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold cursor-pointer ${
+                          selection.kind === 'step'
+                            ? 'bg-white text-indigo-700 shadow-2xs'
+                            : 'text-slate-600'
+                        }`}
+                      >
+                        گام
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelection({ kind: 'gateway', idx: selectedStepIdx })}
+                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold cursor-pointer ${
+                          selection.kind === 'gateway'
+                            ? 'bg-white text-amber-800 shadow-2xs'
+                            : 'text-slate-600'
+                        }`}
+                      >
+                        لوزی شرط
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Inspector Scrollable Body */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {/* 1. START TRIGGER INSPECTOR */}
+                  {selection.kind === 'start' && (() => {
+                    const trig: WorkflowStartTrigger = diagramLayout.startTrigger || {
+                      event: 'PROJECT_CREATED',
+                    };
+                    const updateTrig = (patch: Partial<WorkflowStartTrigger>) => {
+                      setDiagramLayout((prev) => ({
+                        ...prev,
+                        startTrigger: {
+                          ...(prev.startTrigger || { event: 'PROJECT_CREATED' }),
+                          ...patch,
+                        },
+                      }));
+                    };
 
                     return (
-                      <div className="p-4 sm:p-5 rounded-2xl bg-white border-2 border-indigo-100 shadow-xs space-y-4">
-                        <div className="flex items-center justify-between pb-2.5 border-b border-slate-100">
-                          <div className="flex items-center gap-2">
-                            <span className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600">
-                              <SlidersHorizontal className="w-4 h-4" />
-                            </span>
-                            <h4 className="text-xs sm:text-sm font-black text-slate-900">
-                              تنظیمات گام {selectedStepIdx + 1}: «{selectedStep.title || 'بدون عنوان'}»
-                            </h4>
-                          </div>
-                          <span className="text-[11px] text-emerald-700 font-bold flex items-center gap-1">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            ذخیره زنده در بوم
-                          </span>
+                      <div className="space-y-4">
+                        <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 text-[11px] text-emerald-950 leading-relaxed">
+                          تعیین کنید این گردش کار دقیقاً با وقوع چه رویدادی در سامانه به صورت خودکار یا دستی شروع شود.
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {/* Step Title */}
-                          <div>
-                            <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                              عنوان مرحله *
-                            </label>
-                            <input
-                              type="text"
-                              value={selectedStep.title}
-                              onChange={(e) => handleStepChange(selectedStepIdx, 'title', e.target.value)}
-                              className="w-full rounded-xl bg-slate-50 border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white"
-                              required
-                            />
-                          </div>
-
-                          {/* Optional Structure Filter */}
-                          <div>
-                            <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                              محدودیت ساختار (اختیاری)
-                            </label>
-                            <select
-                              value={selectedStep.structureId || ''}
-                              onChange={(e) =>
-                                handleStepChange(selectedStepIdx, 'structureId', e.target.value || null)
-                              }
-                              className="w-full rounded-xl bg-slate-50 border border-slate-300 px-3 py-2 text-xs font-bold text-indigo-900 focus:outline-none focus:border-indigo-500 focus:bg-white cursor-pointer"
+                        <div className="space-y-2">
+                          <label className="block text-[11px] font-bold text-slate-800">
+                            رویداد آغازگر گردش کار:
+                          </label>
+                          {[
+                            {
+                              val: 'PROJECT_CREATED' as const,
+                              title: 'ثبت پروژه جدید',
+                              desc: 'به‌محض ثبت پروژه جدید توسط کاربر، وارد گام ۱ این گردش می‌شود.',
+                            },
+                            {
+                              val: 'PROJECT_APPROVED' as const,
+                              title: 'تایید شدن پروژه (زنجیره‌ای)',
+                              desc: 'وقتی پروژه‌ای در گردش کار قبلی تایید نهایی شد، خودکار به این گردش کار وارد شود.',
+                            },
+                            {
+                              val: 'MANUAL' as const,
+                              title: 'انتخاب دستی هنگام ثبت پروژه',
+                              desc: 'فقط زمانی اجرا می‌شود که کاربر هنگام ثبت پروژه آن را انتخاب کند.',
+                            },
+                          ].map((opt) => (
+                            <label
+                              key={opt.val}
+                              className={`block p-3 rounded-xl border cursor-pointer transition ${
+                                trig.event === opt.val
+                                  ? 'bg-indigo-50/80 border-indigo-500 ring-1 ring-indigo-500/20'
+                                  : 'bg-white border-slate-200 hover:border-indigo-300'
+                              }`}
                             >
-                              <option value="">همه ساختارها (بدون محدودیت — پیش‌فرض)</option>
-                              {structures.map((s) => (
-                                <option key={s.id} value={s.id}>
-                                  فقط در ساختار: {s.title}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
-
-                        {/* Parallel Positions Recipient Panel */}
-                        <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/90 space-y-2.5">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <label className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
-                              <Users className="w-3.5 h-3.5 text-indigo-600" />
-                              <span>سمت‌های دریافت‌کننده هم‌زمان در این مرحله ({selectedStep.positionIds.length} سمت — {inspectorAssignees.count} نفر):</span>
-                            </label>
-                          </div>
-
-                          <div className="flex flex-wrap gap-1.5">
-                            {selectedStep.positionIds.map((pid) => {
-                              const posD = getPositionDetails(pid, selectedStep.structureId);
-                              return (
-                                <span
-                                  key={pid}
-                                  className="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-xl bg-white border border-indigo-200 text-slate-800 shadow-2xs"
-                                >
-                                  <Briefcase className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                                  <span>{posD.title}</span>
-                                  <span className="text-[10px] font-semibold text-indigo-600 tabular-nums">
-                                    ({posD.userCount} نفر: {posD.userNames})
-                                  </span>
-                                  {selectedStep.positionIds.length > 1 && (
-                                    <button
-                                      type="button"
-                                      onClick={() => removeParallelPositionFromStep(selectedStepIdx, pid)}
-                                      className="p-0.5 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer"
-                                      title="حذف سمت"
-                                    >
-                                      <X className="w-3.5 h-3.5" />
-                                    </button>
-                                  )}
-                                </span>
-                              );
-                            })}
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-2 pt-1">
-                            <select
-                              value=""
-                              onChange={(e) => {
-                                if (e.target.value) {
-                                  addParallelPositionToStep(
-                                    selectedStepIdx,
-                                    e.target.value,
-                                    selectedStep.structureId
-                                  );
-                                }
-                              }}
-                              disabled={availableToAddParallel.length === 0}
-                              className="flex-1 min-w-[200px] rounded-xl bg-white border border-slate-300 px-3 py-1.5 text-xs font-semibold text-indigo-700 focus:outline-none focus:border-indigo-500 cursor-pointer disabled:opacity-50"
-                            >
-                              <option value="">
-                                {availableToAddParallel.length > 0
-                                  ? '+ افزودن سمت هم‌زمان دیگر به کارتابل این گام...'
-                                  : 'همه سمت‌های موجود به این گام اضافه شده‌اند'}
-                              </option>
-                              {availableToAddParallel.map((p) => {
-                                const pd = getPositionDetails(p.id, selectedStep.structureId);
-                                return (
-                                  <option key={p.id} value={p.id}>
-                                    {p.title} ({pd.userCount} نفر)
-                                  </option>
-                                );
-                              })}
-                            </select>
-                            <span className="text-[10px] text-slate-500">
-                              یا سمت مورد نظر را مستقیماً روی کارت همین گام در بوم بکشید.
-                            </span>
-                          </div>
-
-                          {/* Optional Direct Individual Users Selection */}
-                          <div className="pt-2.5 mt-2 border-t border-slate-200/80 space-y-2">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <span className="text-[11px] font-bold text-slate-700">
-                                افزودن مستقیم کاربران خاص به این گام (اختیاری — علاوه بر سمت‌ها):
-                              </span>
-                              <span className="text-[10px] text-slate-500">
-                                مجموع کل افراد این گام: <strong className="text-indigo-700">{inspectorAssignees.count} نفر</strong>
-                              </span>
-                            </div>
-
-                            {Array.isArray(selectedStep.config.userIds) && selectedStep.config.userIds.length > 0 && (
-                              <div className="flex flex-wrap gap-1.5">
-                                {selectedStep.config.userIds.map((uid) => {
-                                  const usr = users.find((u) => u.id === uid);
-                                  if (!usr) return null;
-                                  return (
-                                    <span
-                                      key={uid}
-                                      className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900"
-                                    >
-                                      <span>{usr.name} (@{usr.username})</span>
-                                      <button
-                                        type="button"
-                                        onClick={() => removeDirectUserFromStep(selectedStepIdx, uid)}
-                                        className="p-0.5 rounded text-emerald-700 hover:text-rose-600 cursor-pointer"
-                                        title="حذف کاربر از این گام"
-                                      >
-                                        <X className="w-3 h-3" />
-                                      </button>
-                                    </span>
-                                  );
-                                })}
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="radio"
+                                  name="startTriggerEvent"
+                                  checked={trig.event === opt.val}
+                                  onChange={() => updateTrig({ event: opt.val })}
+                                  className="text-indigo-600"
+                                />
+                                <span className="text-xs font-bold text-slate-900">{opt.title}</span>
                               </div>
-                            )}
+                              <p className="text-[10px] text-slate-500 mt-1 pr-5 leading-relaxed">
+                                {opt.desc}
+                              </p>
+                            </label>
+                          ))}
+                        </div>
 
+                        {trig.event === 'PROJECT_APPROVED' && (
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-800 mb-1">
+                              پس از تایید در کدام گردش کار مبدا؟
+                            </label>
                             <select
-                              value=""
-                              onChange={(e) => {
-                                if (e.target.value) {
-                                  addDirectUserToStep(selectedStepIdx, e.target.value);
-                                }
-                              }}
-                              className="w-full sm:w-auto min-w-[240px] rounded-xl bg-white border border-slate-300 px-3 py-1.5 text-xs font-semibold text-emerald-800 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                              value={trig.sourceWorkflowId || ''}
+                              onChange={(e) => updateTrig({ sourceWorkflowId: e.target.value || null })}
+                              className="w-full rounded-lg bg-slate-50 border border-slate-300 px-2.5 py-2 text-xs text-slate-900"
                             >
-                              <option value="">+ انتخاب مستقیم کاربر خاص (مثلاً Usertest1..4 یا مدیر)...</option>
-                              {users
-                                .filter((u) => !(selectedStep.config.userIds || []).includes(u.id))
-                                .map((u) => (
-                                  <option key={u.id} value={u.id}>
-                                    {u.name} (@{u.username}){u.positionTitle ? ` — ${u.positionTitle}` : ''}
+                              <option value="">همه گردش کارهای تاییدشده</option>
+                              {workflows
+                                .filter((w) => !editingWorkflow || w.id !== editingWorkflow.id)
+                                .map((w) => (
+                                  <option key={w.id} value={w.id}>
+                                    {w.title}
                                   </option>
                                 ))}
                             </select>
                           </div>
-                        </div>
+                        )}
 
-                        {/* BPMN Gateway Voting & Branch Routing Panel (Per-Action Quorum Matrix) */}
-                        <div className="p-3.5 rounded-2xl bg-indigo-50/40 border border-indigo-200/80 space-y-3.5">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="text-xs font-black text-indigo-950 flex items-center gap-1.5">
-                              <GitBranch className="w-4 h-4 text-indigo-600" />
-                              <span>قوانین دروازه تصمیم‌گیری، نصاب مستقل هر اقدام و مسیرهای BPMN</span>
-                            </div>
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-white border border-indigo-200 text-indigo-700 tabular-nums">
-                              اعضای فعلی این گام: {inspectorAssignees.count} نفر
-                            </span>
-                          </div>
-
-                          {/* 3-Column Independent Per-Action Decision Matrix */}
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-                            {/* Green Branch: Approve */}
-                            <div className="p-3 rounded-xl bg-emerald-50/80 border border-emerald-200 space-y-2">
-                              <div className="text-[11px] font-black text-emerald-900 flex items-center gap-1.5">
-                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                <span>اقدام تایید (سبز)</span>
-                              </div>
-
-                              <div>
-                                <label className="block text-[10px] font-bold text-emerald-900/80 mb-1">
-                                  نصاب لازم برای تایید:
-                                </label>
-                                <select
-                                  value={selectedStep.config.approvalMode || 'SINGLE'}
-                                  onChange={(e) =>
-                                    handleStepConfigChange(selectedStepIdx, 'approvalMode', e.target.value)
-                                  }
-                                  className="w-full rounded-lg bg-white border border-emerald-300 px-2 py-1.5 text-[11px] font-semibold text-slate-900 cursor-pointer"
-                                >
-                                  {APPROVAL_MODE_OPTIONS.map((opt) => (
-                                    <option key={opt.value} value={opt.value}>
-                                      {opt.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-
-                              <div>
-                                <label className="block text-[10px] font-bold text-emerald-900/80 mb-1">
-                                  مسیر خروجی پس از تایید:
-                                </label>
-                                <select
-                                  value={selectedStep.config.approveTarget || 'NEXT_STEP'}
-                                  onChange={(e) =>
-                                    handleStepConfigChange(selectedStepIdx, 'approveTarget', e.target.value)
-                                  }
-                                  className="w-full rounded-lg bg-white border border-emerald-300 px-2 py-1.5 text-[11px] font-semibold text-slate-800 cursor-pointer"
-                                >
-                                  <option value="NEXT_STEP">گام بعدی (یا تصویب نهایی)</option>
-                                  <option value="CUSTOM_STEP">انتقال به گام دلخواه</option>
-                                  <option value="END_APPROVED">تصویب نهایی مستقیم</option>
-                                </select>
-                              </div>
-
-                              {selectedStep.config.approveTarget === 'CUSTOM_STEP' && (
-                                <select
-                                  value={selectedStep.config.onApproveStepOrder || 1}
-                                  onChange={(e) =>
-                                    handleStepConfigChange(
-                                      selectedStepIdx,
-                                      'onApproveStepOrder',
-                                      parseInt(e.target.value, 10)
-                                    )
-                                  }
-                                  className="w-full rounded-lg bg-white border border-emerald-300 px-2 py-1.5 text-[11px] text-slate-900"
-                                >
-                                  {steps.map((targetSt, tIdx) => (
-                                    <option key={targetSt.localKey} value={tIdx + 1}>
-                                      گام {tIdx + 1}: {targetSt.title}
-                                    </option>
-                                  ))}
-                                </select>
-                              )}
-
-                              <div className="text-[10px] text-emerald-900/90 bg-white/80 rounded-lg p-1.5 border border-emerald-200/70 leading-relaxed">
-                                {getApprovalSummaryText(selectedStep.config.approvalMode, inspectorAssignees.count)}
-                              </div>
-                            </div>
-
-                            {/* Amber Branch: Revision */}
-                            <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-200 space-y-2">
-                              <div className="text-[11px] font-black text-amber-950 flex items-center gap-1.5">
-                                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                                <span>اقدام اصلاح (زرد)</span>
-                              </div>
-
-                              <div>
-                                <label className="block text-[10px] font-bold text-amber-950/80 mb-1">
-                                  نصاب لازم برای بازگشت / اصلاح:
-                                </label>
-                                <select
-                                  value={normalizeBranchMode(
-                                    selectedStep.config.revisionMode,
-                                    selectedStep.config.approvalMode,
-                                    'revision'
-                                  )}
-                                  onChange={(e) =>
-                                    handleStepConfigChange(selectedStepIdx, 'revisionMode', e.target.value)
-                                  }
-                                  className="w-full rounded-lg bg-white border border-amber-300 px-2 py-1.5 text-[11px] font-semibold text-slate-900 cursor-pointer"
-                                >
-                                  <option value="SINGLE">فوری با رای ۱ نفر (تک‌نفره)</option>
-                                  <option value="MAJORITY">اکثریت افراد این مرحله (&gt;۵۰٪)</option>
-                                  <option value="ALL">اجماع تمام افراد این مرحله (۱۰۰٪)</option>
-                                </select>
-                              </div>
-
-                              <div>
-                                <label className="block text-[10px] font-bold text-amber-950/80 mb-1">
-                                  مسیر عودت هنگام نیاز به اصلاح:
-                                </label>
-                                <select
-                                  value={selectedStep.config.onRevisionAction || 'RETURN_PREV'}
-                                  onChange={(e) =>
-                                    handleStepConfigChange(selectedStepIdx, 'onRevisionAction', e.target.value)
-                                  }
-                                  className="w-full rounded-lg bg-white border border-amber-300 px-2 py-1.5 text-[11px] font-semibold text-slate-800 cursor-pointer"
-                                >
-                                  <option value="RETURN_CREATOR">کارتابل ثبت‌کننده پروژه (نیازمند اصلاح)</option>
-                                  <option value="RETURN_PREV">بازگشت به گام قبلی</option>
-                                  <option value="RETURN_STEP_1">بازگشت به گام ۱ گردش کار</option>
-                                  <option value="CUSTOM_STEP">ارجاع به گام دلخواه</option>
-                                  <option value="REJECT_PROJECT">رد و مختومه شدن طرح</option>
-                                </select>
-                              </div>
-
-                              {selectedStep.config.onRevisionAction === 'CUSTOM_STEP' && (
-                                <select
-                                  value={selectedStep.config.onRevisionStepOrder || 1}
-                                  onChange={(e) =>
-                                    handleStepConfigChange(
-                                      selectedStepIdx,
-                                      'onRevisionStepOrder',
-                                      parseInt(e.target.value, 10)
-                                    )
-                                  }
-                                  className="w-full rounded-lg bg-white border border-amber-300 px-2 py-1.5 text-[11px] text-slate-900"
-                                >
-                                  {steps.map((targetSt, tIdx) => (
-                                    <option key={targetSt.localKey} value={tIdx + 1}>
-                                      گام {tIdx + 1}: {targetSt.title}
-                                    </option>
-                                  ))}
-                                </select>
-                              )}
-                            </div>
-
-                            {/* Rose Branch: Reject */}
-                            <div className="p-3 rounded-xl bg-rose-50/80 border border-rose-200 space-y-2">
-                              <div className="text-[11px] font-black text-rose-950 flex items-center gap-1.5">
-                                <CornerDownLeft className="w-3.5 h-3.5 text-rose-600 shrink-0" />
-                                <span>اقدام رد طرح (قرمز)</span>
-                              </div>
-
-                              <div>
-                                <label className="block text-[10px] font-bold text-rose-950/80 mb-1">
-                                  نصاب لازم برای رد شدن پروژه:
-                                </label>
-                                <select
-                                  value={normalizeBranchMode(
-                                    selectedStep.config.rejectMode,
-                                    selectedStep.config.approvalMode,
-                                    'reject'
-                                  )}
-                                  onChange={(e) =>
-                                    handleStepConfigChange(selectedStepIdx, 'rejectMode', e.target.value)
-                                  }
-                                  className="w-full rounded-lg bg-white border border-rose-300 px-2 py-1.5 text-[11px] font-semibold text-slate-900 cursor-pointer"
-                                >
-                                  <option value="SINGLE">فوری با رای ۱ نفر (تک‌نفره)</option>
-                                  <option value="MAJORITY">اکثریت افراد این مرحله (&gt;۵۰٪)</option>
-                                  <option value="ALL">اجماع تمام افراد این مرحله (۱۰۰٪)</option>
-                                </select>
-                              </div>
-
-                              <div>
-                                <label className="block text-[10px] font-bold text-rose-950/80 mb-1">
-                                  مسیر خروجی پس از رد:
-                                </label>
-                                <select
-                                  value={selectedStep.config.onRejectAction || 'REJECT_PROJECT'}
-                                  onChange={(e) =>
-                                    handleStepConfigChange(selectedStepIdx, 'onRejectAction', e.target.value)
-                                  }
-                                  className="w-full rounded-lg bg-white border border-rose-300 px-2 py-1.5 text-[11px] font-semibold text-slate-800 cursor-pointer"
-                                >
-                                  <option value="REJECT_PROJECT">رد و مختومه شدن طرح</option>
-                                  <option value="RETURN_CREATOR">کارتابل ثبت‌کننده پروژه (نیازمند اصلاح)</option>
-                                  <option value="RETURN_PREV">بازگشت به گام قبلی</option>
-                                  <option value="RETURN_STEP_1">بازگشت به گام ۱ گردش کار</option>
-                                  <option value="CUSTOM_STEP">ارجاع به گام دلخواه</option>
-                                </select>
-                              </div>
-
-                              {selectedStep.config.onRejectAction === 'CUSTOM_STEP' && (
-                                <select
-                                  value={selectedStep.config.onRejectStepOrder || 1}
-                                  onChange={(e) =>
-                                    handleStepConfigChange(
-                                      selectedStepIdx,
-                                      'onRejectStepOrder',
-                                      parseInt(e.target.value, 10)
-                                    )
-                                  }
-                                  className="w-full rounded-lg bg-white border border-rose-300 px-2 py-1.5 text-[11px] text-slate-900"
-                                >
-                                  {steps.map((targetSt, tIdx) => (
-                                    <option key={targetSt.localKey} value={tIdx + 1}>
-                                      گام {tIdx + 1}: {targetSt.title}
-                                    </option>
-                                  ))}
-                                </select>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Wait Strategy + Tie Breaker + Condition Note */}
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-indigo-200/70">
+                        {trig.event !== 'MANUAL' && (
+                          <div className="space-y-3 pt-2 border-t border-slate-200">
                             <div>
-                              <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                                سیاست انتظار برای جمع‌آوری آرا
+                              <label className="block text-[11px] font-bold text-slate-800 mb-1">
+                                فیلتر نوع پروژه (اختیاری):
                               </label>
                               <select
-                                value={selectedStep.config.voteCollectionMode || 'EARLY_DECIDE'}
-                                onChange={(e) =>
-                                  handleStepConfigChange(
-                                    selectedStepIdx,
-                                    'voteCollectionMode',
-                                    e.target.value
-                                  )
-                                }
-                                className="w-full rounded-xl bg-white border border-slate-300 px-2.5 py-2 text-[11px] font-semibold text-slate-900 focus:outline-none focus:border-indigo-500 cursor-pointer"
+                                value={trig.projectTypeId || ''}
+                                onChange={(e) => updateTrig({ projectTypeId: e.target.value || null })}
+                                className="w-full rounded-lg bg-slate-50 border border-slate-300 px-2.5 py-2 text-xs text-slate-900"
                               >
-                                <option value="EARLY_DECIDE">تصمیم‌گیری به محض تحقق نصاب</option>
-                                <option value="WAIT_ALL">صبر اجباری تا اقدام تمام اعضا</option>
+                                <option value="">همه انواع پروژه</option>
+                                {loadedProjectTypes.map((pt) => (
+                                  <option key={pt.id} value={pt.id}>
+                                    {pt.title}
+                                  </option>
+                                ))}
                               </select>
                             </div>
 
                             <div>
-                              <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                                در صورت تساوی آرا (یا نرسیدن به حدنصاب)
+                              <label className="block text-[11px] font-bold text-slate-800 mb-1">
+                                شرط سمت ثبت‌کننده اولیه (اختیاری):
                               </label>
                               <select
-                                value={selectedStep.config.tieBreaker || 'REVISION'}
-                                onChange={(e) =>
-                                  handleStepConfigChange(selectedStepIdx, 'tieBreaker', e.target.value)
-                                }
-                                className="w-full rounded-xl bg-white border border-slate-300 px-2.5 py-2 text-[11px] font-semibold text-slate-800 focus:outline-none focus:border-indigo-500 cursor-pointer"
+                                value={trig.creatorPositionId || ''}
+                                onChange={(e) => updateTrig({ creatorPositionId: e.target.value || null })}
+                                className="w-full rounded-lg bg-slate-50 border border-slate-300 px-2.5 py-2 text-xs text-slate-900"
                               >
-                                <option value="REVISION">اجرای مسیر اصلاح</option>
-                                <option value="REJECT">اجرای مسیر رد</option>
-                                <option value="APPROVE">اجرای مسیر تایید</option>
+                                <option value="">همه سمت‌های ثبت‌کننده</option>
+                                {positions.map((pos) => (
+                                  <option key={pos.id} value={pos.id}>
+                                    {pos.title}
+                                  </option>
+                                ))}
                               </select>
                             </div>
-
-                            <div>
-                              <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                                برچسب شرط یا یادداشت مرحله (اختیاری)
-                              </label>
-                              <input
-                                type="text"
-                                value={selectedStep.config.conditionLabel || ''}
-                                onChange={(e) =>
-                                  handleStepConfigChange(selectedStepIdx, 'conditionLabel', e.target.value)
-                                }
-                                placeholder="مثلاً: برای طرح‌های بالای ۱۰۰ میلیون..."
-                                className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500"
-                              />
-                            </div>
                           </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* 2. STEP INSPECTOR */}
+                  {selection.kind === 'step' && selectedStep && (() => {
+                    const isCreatorStep = selectedStep.config.assigneeMode === 'CREATOR';
+                    const inspectorAssignees = getStepUniqueAssignees(
+                      selectedStep.positionIds,
+                      selectedStep.structureId,
+                      selectedStep.config.userIds,
+                      selectedStep.config.assigneeMode
+                    );
+                    const availableToAddParallel = stepCandidatePositions.filter(
+                      (p) => !selectedStep.positionIds.includes(p.id)
+                    );
+                    const allowedActions: WorkflowActionKey[] =
+                      Array.isArray(selectedStep.config.allowedActions) &&
+                      selectedStep.config.allowedActions.length > 0
+                        ? selectedStep.config.allowedActions
+                        : ['APPROVE', 'REVISION', 'REJECT'];
+
+                    const toggleAction = (key: WorkflowActionKey) => {
+                      const has = allowedActions.includes(key);
+                      if (has && allowedActions.length <= 1) return;
+                      const next = has
+                        ? allowedActions.filter((k) => k !== key)
+                        : [...allowedActions, key];
+                      handleStepConfigChange(selectedStepIdx, 'allowedActions', next);
+                    };
+
+                    const setActionLabel = (key: WorkflowActionKey, val: string) => {
+                      handleStepConfigChange(selectedStepIdx, 'actionLabels', {
+                        ...(selectedStep.config.actionLabels || {}),
+                        [key]: val,
+                      });
+                    };
+
+                    return (
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                            عنوان مرحله در نقشه *
+                          </label>
+                          <input
+                            type="text"
+                            value={selectedStep.title}
+                            onChange={(e) => handleStepChange(selectedStepIdx, 'title', e.target.value)}
+                            className="w-full rounded-lg bg-slate-50 border border-slate-300 px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white"
+                            required
+                          />
                         </div>
 
                         <div>
                           <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                            دستورالعمل و توضیحات راهنما برای افراد این مرحله
+                            عنوان کار در کارتابل (اختیاری)
+                          </label>
+                          <input
+                            type="text"
+                            value={selectedStep.config.taskTitle || ''}
+                            onChange={(e) =>
+                              handleStepConfigChange(selectedStepIdx, 'taskTitle', e.target.value)
+                            }
+                            placeholder="مثلاً: آماده ارسال به لایه ۲ / بررسی تخصصی..."
+                            className="w-full rounded-lg bg-slate-50 border border-slate-300 px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white"
+                          />
+                        </div>
+
+                        {/* Assignee Mode Toggle */}
+                        <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
+                          <label className="block text-[11px] font-bold text-slate-800">
+                            دریافت‌کننده کارتابل این گام:
+                          </label>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const fallbackPos =
+                                  selectedStep.positionIds.length > 0
+                                    ? selectedStep.positionIds
+                                    : positions[0]?.id
+                                    ? [positions[0].id]
+                                    : [];
+                                setSteps((prev) => {
+                                  const copy = [...prev];
+                                  copy[selectedStepIdx] = {
+                                    ...copy[selectedStepIdx],
+                                    positionIds: fallbackPos,
+                                    config: {
+                                      ...copy[selectedStepIdx].config,
+                                      assigneeMode: 'POSITIONS',
+                                    },
+                                  };
+                                  return copy;
+                                });
+                              }}
+                              className={`py-1.5 px-2 rounded-lg border text-[11px] font-bold cursor-pointer transition ${
+                                !isCreatorStep
+                                  ? 'bg-indigo-600 text-white border-indigo-600'
+                                  : 'bg-white text-slate-700 border-slate-300'
+                              }`}
+                            >
+                              سمت / کاربر سازمانی
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleStepConfigChange(selectedStepIdx, 'assigneeMode', 'CREATOR')
+                              }
+                              className={`py-1.5 px-2 rounded-lg border text-[11px] font-bold cursor-pointer transition ${
+                                isCreatorStep
+                                  ? 'bg-amber-600 text-white border-amber-600'
+                                  : 'bg-white text-slate-700 border-slate-300'
+                              }`}
+                            >
+                              ثبت‌کننده اولیه پروژه
+                            </button>
+                          </div>
+
+                          {isCreatorStep ? (
+                            <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-950 leading-relaxed">
+                              این گام به‌صورت خودکار فقط در کارتابل کاربری که پروژه را ثبت کرده قرار می‌گیرد.
+                            </div>
+                          ) : (
+                            <div className="space-y-2.5 pt-1">
+                              <div>
+                                <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                                  محدودیت ساختار (اختیاری):
+                                </label>
+                                <select
+                                  value={selectedStep.structureId || ''}
+                                  onChange={(e) =>
+                                    handleStepChange(selectedStepIdx, 'structureId', e.target.value || null)
+                                  }
+                                  className="w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-[11px] font-bold text-indigo-900"
+                                >
+                                  <option value="">همه ساختارها (چارت اصلی و ساختارها)</option>
+                                  {structures.map((s) => (
+                                    <option key={s.id} value={s.id}>
+                                      فقط ساختار: {s.title}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div className="flex flex-wrap gap-1">
+                                {selectedStep.positionIds.map((pid) => {
+                                  const posD = getPositionDetails(pid, selectedStep.structureId);
+                                  return (
+                                    <span
+                                      key={pid}
+                                      className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-lg bg-white border border-indigo-200 text-slate-800"
+                                    >
+                                      <Briefcase className="w-3 h-3 text-indigo-600 shrink-0" />
+                                      <span>{posD.title}</span>
+                                      <span className="text-[10px] text-indigo-600 tabular-nums">
+                                        ({posD.userCount})
+                                      </span>
+                                      {selectedStep.positionIds.length > 1 && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            removeParallelPositionFromStep(selectedStepIdx, pid)
+                                          }
+                                          className="text-slate-400 hover:text-rose-600 cursor-pointer"
+                                        >
+                                          <X className="w-3 h-3" />
+                                        </button>
+                                      )}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+
+                              <select
+                                value=""
+                                onChange={(e) => {
+                                  if (e.target.value) {
+                                    addParallelPositionToStep(
+                                      selectedStepIdx,
+                                      e.target.value,
+                                      selectedStep.structureId
+                                    );
+                                  }
+                                }}
+                                disabled={availableToAddParallel.length === 0}
+                                className="w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-700 disabled:opacity-50"
+                              >
+                                <option value="">+ افزودن سمت هم‌زمان به این گام...</option>
+                                {availableToAddParallel.map((p) => {
+                                  const pd = getPositionDetails(p.id, selectedStep.structureId);
+                                  return (
+                                    <option key={p.id} value={p.id}>
+                                      {p.title} ({pd.userCount} نفر)
+                                    </option>
+                                  );
+                                })}
+                              </select>
+
+                              <div className="pt-1 border-t border-slate-200 space-y-1.5">
+                                <span className="block text-[10px] font-bold text-slate-600">
+                                  افزودن کاربر خاص (علاوه بر سمت‌ها — مجموع {inspectorAssignees.count} نفر):
+                                </span>
+                                {Array.isArray(selectedStep.config.userIds) &&
+                                  selectedStep.config.userIds.length > 0 && (
+                                    <div className="flex flex-wrap gap-1">
+                                      {selectedStep.config.userIds.map((uid) => {
+                                        const usr = users.find((u) => u.id === uid);
+                                        if (!usr) return null;
+                                        return (
+                                          <span
+                                            key={uid}
+                                            className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900"
+                                          >
+                                            <span>{usr.name}</span>
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                removeDirectUserFromStep(selectedStepIdx, uid)
+                                              }
+                                              className="text-emerald-700 hover:text-rose-600 cursor-pointer"
+                                            >
+                                              <X className="w-3 h-3" />
+                                            </button>
+                                          </span>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                <select
+                                  value=""
+                                  onChange={(e) => {
+                                    if (e.target.value) {
+                                      addDirectUserToStep(selectedStepIdx, e.target.value);
+                                    }
+                                  }}
+                                  className="w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-[11px] text-slate-800"
+                                >
+                                  <option value="">+ انتخاب مستقیم کاربر...</option>
+                                  {users
+                                    .filter((u) => !(selectedStep.config.userIds || []).includes(u.id))
+                                    .map((u) => (
+                                      <option key={u.id} value={u.id}>
+                                        {u.name} (@{u.username})
+                                      </option>
+                                    ))}
+                                </select>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Allowed Actions & Custom Button Titles */}
+                        <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
+                          <label className="block text-[11px] font-bold text-slate-800">
+                            اقدامات مجاز در کارتابل کاربر و عنوان دکمه‌ها:
+                          </label>
+                          {(
+                            [
+                              {
+                                key: 'APPROVE' as WorkflowActionKey,
+                                title: 'تایید / ارسال',
+                                placeholder: 'ارسال به گردش کار / تایید',
+                                tone: 'emerald',
+                              },
+                              {
+                                key: 'REVISION' as WorkflowActionKey,
+                                title: 'اصلاح',
+                                placeholder: 'نیاز به اصلاح',
+                                tone: 'amber',
+                              },
+                              {
+                                key: 'REJECT' as WorkflowActionKey,
+                                title: 'رد طرح',
+                                placeholder: 'رد طرح',
+                                tone: 'rose',
+                              },
+                            ] as const
+                          ).map((item) => {
+                            const checked = allowedActions.includes(item.key);
+                            return (
+                              <div
+                                key={item.key}
+                                className="p-2 rounded-lg bg-white border border-slate-200 space-y-1.5"
+                              >
+                                <label className="flex items-center justify-between gap-2 cursor-pointer">
+                                  <span className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => toggleAction(item.key)}
+                                      className="rounded text-indigo-600"
+                                    />
+                                    <span>{item.title}</span>
+                                  </span>
+                                  <span className="text-[10px] text-slate-400">
+                                    {checked ? 'فعال در کارتابل' : 'غیرفعال'}
+                                  </span>
+                                </label>
+                                {checked && (
+                                  <input
+                                    type="text"
+                                    value={selectedStep.config.actionLabels?.[item.key] || ''}
+                                    onChange={(e) => setActionLabel(item.key, e.target.value)}
+                                    placeholder={`عنوان دکمه (پیش‌فرض: ${item.placeholder})`}
+                                    className="w-full rounded-md bg-slate-50 border border-slate-200 px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:border-indigo-500 focus:bg-white"
+                                  />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Cartable & Status History Visibility */}
+                        <div className="p-3 rounded-xl bg-indigo-50/50 border border-indigo-200/80 space-y-2.5">
+                          <label className="flex items-start gap-2 cursor-pointer text-[11px] text-slate-800">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(
+                                selectedStep.config.removeFromCartableAfterVote ??
+                                  (selectedStep.config.voteCollectionMode === 'WAIT_ALL')
+                              )}
+                              onChange={(e) =>
+                                handleStepConfigChange(
+                                  selectedStepIdx,
+                                  'removeFromCartableAfterVote',
+                                  e.target.checked
+                                )
+                              }
+                              className="mt-0.5 rounded text-indigo-600"
+                            />
+                            <span className="leading-relaxed">
+                              <strong className="flex items-center gap-1 text-indigo-950">
+                                <LogOut className="w-3 h-3 text-indigo-600" />
+                                خروج از کارتابل کاربر بلافاصله پس از ثبت رای
+                              </strong>
+                              <span className="text-[10px] text-slate-500 block">
+                                پروژه از کارتابل این کاربر خارج شده اما برای بقیه نفرات این سمت باز می‌ماند.
+                              </span>
+                            </span>
+                          </label>
+
+                          <label className="flex items-start gap-2 cursor-pointer text-[11px] text-slate-800">
+                            <input
+                              type="checkbox"
+                              checked={selectedStep.config.showVotesInStatusHistory !== false}
+                              onChange={(e) =>
+                                handleStepConfigChange(
+                                  selectedStepIdx,
+                                  'showVotesInStatusHistory',
+                                  e.target.checked
+                                )
+                              }
+                              className="mt-0.5 rounded text-indigo-600"
+                            />
+                            <span className="leading-relaxed">
+                              <strong className="flex items-center gap-1 text-indigo-950">
+                                <Eye className="w-3 h-3 text-indigo-600" />
+                                ثبت رای و توضیحات هر کاربر در تاریخچه وضعیت پروژه
+                              </strong>
+                            </span>
+                          </label>
+                        </div>
+
+                        {/* Gateway Link */}
+                        <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200 flex items-center justify-between gap-2">
+                          <label className="flex items-center gap-2 cursor-pointer text-[11px] font-bold text-amber-950">
+                            <input
+                              type="checkbox"
+                              checked={selectedStep.config.hasGateway !== false}
+                              onChange={(e) =>
+                                handleStepConfigChange(selectedStepIdx, 'hasGateway', e.target.checked)
+                              }
+                              className="rounded text-amber-600"
+                            />
+                            <span>دارای لوزی شرط تصمیم‌گیری (Gateway)</span>
+                          </label>
+                          {selectedStep.config.hasGateway !== false && (
+                            <button
+                              type="button"
+                              onClick={() => setSelection({ kind: 'gateway', idx: selectedStepIdx })}
+                              className="px-2 py-1 rounded-lg bg-amber-600 text-white text-[10px] font-bold cursor-pointer"
+                            >
+                              تنظیم شروط لوزی
+                            </button>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                            راهنمای مرحله برای کاربران:
                           </label>
                           <input
                             type="text"
                             value={selectedStep.description || ''}
-                            onChange={(e) => handleStepChange(selectedStepIdx, 'description', e.target.value)}
-                            placeholder="توضیحات راهنما برای متصدیان این مرحله..."
-                            className="w-full rounded-xl bg-slate-50 border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white"
+                            onChange={(e) =>
+                              handleStepChange(selectedStepIdx, 'description', e.target.value)
+                            }
+                            placeholder="توضیحات راهنما..."
+                            className="w-full rounded-lg bg-slate-50 border border-slate-300 px-3 py-1.5 text-xs text-slate-900"
                           />
                         </div>
                       </div>
                     );
                   })()}
-                </div>
-              </div>
 
-              {/* Action Buttons */}
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
-                >
-                  انصراف
-                </button>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer disabled:opacity-50"
-                >
-                  {loading ? 'در حال ذخیره‌سازی...' : editingWorkflow ? 'ذخیره گردش کار' : 'ایجاد گردش کار'}
-                </button>
-              </div>
-            </form>
-          </div>
+                  {/* 3. VISIO DIAMOND GATEWAY INSPECTOR */}
+                  {selection.kind === 'gateway' && selectedStep && (() => {
+                    const allowedActions: WorkflowActionKey[] =
+                      Array.isArray(selectedStep.config.allowedActions) &&
+                      selectedStep.config.allowedActions.length > 0
+                        ? selectedStep.config.allowedActions
+                        : ['APPROVE', 'REVISION', 'REJECT'];
+                    const revMode = normalizeBranchMode(
+                      selectedStep.config.revisionMode,
+                      selectedStep.config.approvalMode,
+                      'revision'
+                    );
+                    const rejMode = normalizeBranchMode(
+                      selectedStep.config.rejectMode,
+                      selectedStep.config.approvalMode,
+                      'reject'
+                    );
+
+                    return (
+                      <div className="space-y-3.5">
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                            عنوان لوزی شرط (اختیاری)
+                          </label>
+                          <input
+                            type="text"
+                            value={selectedStep.config.gatewayTitle || ''}
+                            onChange={(e) =>
+                              handleStepConfigChange(selectedStepIdx, 'gatewayTitle', e.target.value)
+                            }
+                            placeholder="مثلاً: جمع‌بندی آرای لایه ۲"
+                            className="w-full rounded-lg bg-slate-50 border border-slate-300 px-3 py-1.5 text-xs text-slate-900"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200">
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-700 mb-1">
+                              سیاست جمع‌آوری آرا در این دروازه:
+                            </label>
+                            <select
+                              value={selectedStep.config.voteCollectionMode || 'EARLY_DECIDE'}
+                              onChange={(e) =>
+                                handleStepConfigChange(
+                                  selectedStepIdx,
+                                  'voteCollectionMode',
+                                  e.target.value
+                                )
+                              }
+                              className="w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-[11px] font-bold text-slate-900"
+                            >
+                              <option value="WAIT_ALL">
+                                صبر تا اقدام همه اعضای سمت (سپس اعمال اکثریت/نتیجه)
+                              </option>
+                              <option value="EARLY_DECIDE">
+                                به‌محض رسیدن به حدنصاب اقدام (در صورت «ارسال به مسیر»)
+                              </option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-700 mb-1">
+                              نتیجه در صورت تساوی آرا:
+                            </label>
+                            <select
+                              value={selectedStep.config.tieBreaker || 'REVISION'}
+                              onChange={(e) =>
+                                handleStepConfigChange(selectedStepIdx, 'tieBreaker', e.target.value)
+                              }
+                              className="w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-[11px] font-semibold text-slate-800"
+                            >
+                              <option value="REVISION">مسیر اصلاح (نیاز به اصلاح)</option>
+                              <option value="REJECT">مسیر رد (رد اکثریت)</option>
+                              <option value="APPROVE">مسیر تایید (تایید اکثریت)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* APPROVE CONDITION */}
+                        {allowedActions.includes('APPROVE') && (
+                          <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-2">
+                            <div className="text-[11px] font-black text-emerald-950 flex items-center gap-1.5">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>شرط اقدام تایید ({selectedStep.config.actionLabels?.APPROVE || 'تایید'})</span>
+                            </div>
+
+                            <select
+                              value={selectedStep.config.approveBehavior || 'ROUTE'}
+                              onChange={(e) =>
+                                handleStepConfigChange(
+                                  selectedStepIdx,
+                                  'approveBehavior',
+                                  e.target.value
+                                )
+                              }
+                              className="w-full rounded-lg bg-white border border-emerald-300 px-2 py-1.5 text-[11px] font-bold text-slate-800"
+                            >
+                              <option value="ROUTE">هدایت به مسیر مقصد با تحقق نصاب</option>
+                              <option value="RECORD_AND_WAIT">
+                                فقط ثبت در وضعیت پروژه + صبر تا رای بقیه
+                              </option>
+                            </select>
+
+                            <select
+                              value={selectedStep.config.approvalMode || 'SINGLE'}
+                              onChange={(e) =>
+                                handleStepConfigChange(
+                                  selectedStepIdx,
+                                  'approvalMode',
+                                  e.target.value
+                                )
+                              }
+                              className="w-full rounded-lg bg-white border border-emerald-300 px-2 py-1.5 text-[11px] font-semibold text-slate-900"
+                            >
+                              <option value="SINGLE">تک‌نفره (۱ نفر)</option>
+                              <option value="MAJORITY">اکثریت اعضا (&gt;۵۰٪ — تایید اکثریت)</option>
+                              <option value="ALL">اجماع تمام اعضا (۱۰۰٪)</option>
+                              <option value="NOTIFY_ONLY">اطلاع‌رسانی و عبور</option>
+                            </select>
+
+                            <select
+                              value={selectedStep.config.approveTarget || 'NEXT_STEP'}
+                              onChange={(e) =>
+                                handleStepConfigChange(
+                                  selectedStepIdx,
+                                  'approveTarget',
+                                  e.target.value
+                                )
+                              }
+                              className="w-full rounded-lg bg-white border border-emerald-300 px-2 py-1.5 text-[11px] font-semibold text-slate-800"
+                            >
+                              <option value="NEXT_STEP">مقصد: گام بعدی (یا پایان تایید)</option>
+                              <option value="CUSTOM_STEP">مقصد: ارسال به گام دلخواه</option>
+                              <option value="END_APPROVED">مقصد: پایان با «تایید اکثریت / نهایی»</option>
+                            </select>
+
+                            {selectedStep.config.approveTarget === 'CUSTOM_STEP' && (
+                              <select
+                                value={selectedStep.config.onApproveStepOrder || 1}
+                                onChange={(e) =>
+                                  handleStepConfigChange(
+                                    selectedStepIdx,
+                                    'onApproveStepOrder',
+                                    parseInt(e.target.value, 10)
+                                  )
+                                }
+                                className="w-full rounded-lg bg-white border border-emerald-300 px-2 py-1.5 text-[11px] text-slate-900"
+                              >
+                                {steps.map((t, i) => (
+                                  <option key={t.localKey} value={i + 1}>
+                                    گام {i + 1}: {t.title}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
+                        )}
+
+                        {/* REVISION CONDITION */}
+                        {allowedActions.includes('REVISION') && (
+                          <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200 space-y-2">
+                            <div className="text-[11px] font-black text-amber-950 flex items-center gap-1.5">
+                              <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                              <span>شرط اقدام اصلاح ({selectedStep.config.actionLabels?.REVISION || 'اصلاح'})</span>
+                            </div>
+
+                            <select
+                              value={selectedStep.config.revisionBehavior || 'ROUTE'}
+                              onChange={(e) =>
+                                handleStepConfigChange(
+                                  selectedStepIdx,
+                                  'revisionBehavior',
+                                  e.target.value
+                                )
+                              }
+                              className="w-full rounded-lg bg-white border border-amber-300 px-2 py-1.5 text-[11px] font-bold text-slate-800"
+                            >
+                              <option value="ROUTE">هدایت به مسیر مقصد با تحقق نصاب</option>
+                              <option value="RECORD_AND_WAIT">
+                                فقط ثبت در وضعیت پروژه + صبر تا رای بقیه
+                              </option>
+                            </select>
+
+                            <select
+                              value={revMode}
+                              onChange={(e) =>
+                                handleStepConfigChange(selectedStepIdx, 'revisionMode', e.target.value)
+                              }
+                              className="w-full rounded-lg bg-white border border-amber-300 px-2 py-1.5 text-[11px] font-semibold text-slate-900"
+                            >
+                              <option value="SINGLE">تک‌نفره (۱ نفر)</option>
+                              <option value="MAJORITY">اکثریت اعضا (&gt;۵۰٪)</option>
+                              <option value="ALL">اجماع تمام اعضا (۱۰۰٪)</option>
+                            </select>
+
+                            <select
+                              value={selectedStep.config.onRevisionAction || 'RETURN_PREV'}
+                              onChange={(e) =>
+                                handleStepConfigChange(
+                                  selectedStepIdx,
+                                  'onRevisionAction',
+                                  e.target.value
+                                )
+                              }
+                              className="w-full rounded-lg bg-white border border-amber-300 px-2 py-1.5 text-[11px] font-semibold text-slate-800"
+                            >
+                              <option value="RETURN_CREATOR">
+                                مقصد: کارتابل ثبت‌کننده اولیه پروژه
+                              </option>
+                              <option value="RETURN_PREV">مقصد: بازگشت به گام قبلی</option>
+                              <option value="RETURN_STEP_1">مقصد: بازگشت به گام ۱</option>
+                              <option value="CUSTOM_STEP">مقصد: ارجاع به گام دلخواه</option>
+                              <option value="REJECT_PROJECT">مقصد: پایان و رد طرح</option>
+                            </select>
+
+                            {selectedStep.config.onRevisionAction === 'RETURN_CREATOR' && (
+                              <input
+                                type="text"
+                                value={selectedStep.config.returnCreatorTaskTitle || 'نیاز به اصلاح'}
+                                onChange={(e) =>
+                                  handleStepConfigChange(
+                                    selectedStepIdx,
+                                    'returnCreatorTaskTitle',
+                                    e.target.value
+                                  )
+                                }
+                                placeholder="عنوان کار در کارتابل ثبت‌کننده (مثلاً: نیاز به اصلاح)"
+                                className="w-full rounded-lg bg-white border border-amber-300 px-2.5 py-1.5 text-[11px] font-bold text-amber-950"
+                              />
+                            )}
+
+                            {selectedStep.config.onRevisionAction === 'CUSTOM_STEP' && (
+                              <select
+                                value={selectedStep.config.onRevisionStepOrder || 1}
+                                onChange={(e) =>
+                                  handleStepConfigChange(
+                                    selectedStepIdx,
+                                    'onRevisionStepOrder',
+                                    parseInt(e.target.value, 10)
+                                  )
+                                }
+                                className="w-full rounded-lg bg-white border border-amber-300 px-2 py-1.5 text-[11px] text-slate-900"
+                              >
+                                {steps.map((t, i) => (
+                                  <option key={t.localKey} value={i + 1}>
+                                    گام {i + 1}: {t.title}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
+                        )}
+
+                        {/* REJECT CONDITION */}
+                        {allowedActions.includes('REJECT') && (
+                          <div className="p-3 rounded-xl bg-rose-50/70 border border-rose-200 space-y-2">
+                            <div className="text-[11px] font-black text-rose-950 flex items-center gap-1.5">
+                              <XCircle className="w-3.5 h-3.5 text-rose-600" />
+                              <span>شرط اقدام رد ({selectedStep.config.actionLabels?.REJECT || 'رد'})</span>
+                            </div>
+
+                            <select
+                              value={selectedStep.config.rejectBehavior || 'ROUTE'}
+                              onChange={(e) =>
+                                handleStepConfigChange(
+                                  selectedStepIdx,
+                                  'rejectBehavior',
+                                  e.target.value
+                                )
+                              }
+                              className="w-full rounded-lg bg-white border border-rose-300 px-2 py-1.5 text-[11px] font-bold text-slate-800"
+                            >
+                              <option value="ROUTE">هدایت به مسیر مقصد با تحقق نصاب</option>
+                              <option value="RECORD_AND_WAIT">
+                                فقط ثبت در وضعیت پروژه + صبر تا رای بقیه
+                              </option>
+                            </select>
+
+                            <select
+                              value={rejMode}
+                              onChange={(e) =>
+                                handleStepConfigChange(selectedStepIdx, 'rejectMode', e.target.value)
+                              }
+                              className="w-full rounded-lg bg-white border border-rose-300 px-2 py-1.5 text-[11px] font-semibold text-slate-900"
+                            >
+                              <option value="SINGLE">تک‌نفره (۱ نفر)</option>
+                              <option value="MAJORITY">اکثریت اعضا (&gt;۵۰٪ — رد اکثریت)</option>
+                              <option value="ALL">اجماع تمام اعضا (۱۰۰٪)</option>
+                            </select>
+
+                            <select
+                              value={selectedStep.config.onRejectAction || 'REJECT_PROJECT'}
+                              onChange={(e) =>
+                                handleStepConfigChange(
+                                  selectedStepIdx,
+                                  'onRejectAction',
+                                  e.target.value
+                                )
+                              }
+                              className="w-full rounded-lg bg-white border border-rose-300 px-2 py-1.5 text-[11px] font-semibold text-slate-800"
+                            >
+                              <option value="REJECT_PROJECT">مقصد: پایان با «رد اکثریت / مختومه»</option>
+                              <option value="RETURN_CREATOR">
+                                مقصد: کارتابل ثبت‌کننده اولیه پروژه
+                              </option>
+                              <option value="RETURN_PREV">مقصد: بازگشت به گام قبلی</option>
+                              <option value="RETURN_STEP_1">مقصد: بازگشت به گام ۱</option>
+                              <option value="CUSTOM_STEP">مقصد: ارجاع به گام دلخواه</option>
+                            </select>
+
+                            {selectedStep.config.onRejectAction === 'RETURN_CREATOR' && (
+                              <input
+                                type="text"
+                                value={selectedStep.config.returnCreatorTaskTitle || 'نیاز به اصلاح'}
+                                onChange={(e) =>
+                                  handleStepConfigChange(
+                                    selectedStepIdx,
+                                    'returnCreatorTaskTitle',
+                                    e.target.value
+                                  )
+                                }
+                                placeholder="عنوان کار در کارتابل ثبت‌کننده"
+                                className="w-full rounded-lg bg-white border border-rose-300 px-2.5 py-1.5 text-[11px] font-bold text-rose-950"
+                              />
+                            )}
+
+                            {selectedStep.config.onRejectAction === 'CUSTOM_STEP' && (
+                              <select
+                                value={selectedStep.config.onRejectStepOrder || 1}
+                                onChange={(e) =>
+                                  handleStepConfigChange(
+                                    selectedStepIdx,
+                                    'onRejectStepOrder',
+                                    parseInt(e.target.value, 10)
+                                  )
+                                }
+                                className="w-full rounded-lg bg-white border border-rose-300 px-2 py-1.5 text-[11px] text-slate-900"
+                              >
+                                {steps.map((t, i) => (
+                                  <option key={t.localKey} value={i + 1}>
+                                    گام {i + 1}: {t.title}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* 4. CREATOR RETURN / END TERMINATOR INSPECTORS */}
+                  {selection.kind === 'creator_return' && (
+                    <div className="space-y-3">
+                      <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-950 leading-relaxed">
+                        وقتی نتیجه مرحله‌ای به «کارتابل ثبت‌کننده اولیه پروژه» ارجاع داده شود، پروژه با وضعیت «نیازمند اصلاح» در کارتابل ثبت‌کننده نمایش داده می‌شود.
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          عنوان گره در بوم:
+                        </label>
+                        <input
+                          type="text"
+                          value={diagramLayout.creatorLabel || 'کارتابل ثبت‌کننده اولیه'}
+                          onChange={(e) =>
+                            setDiagramLayout((prev) => ({
+                              ...prev,
+                              creatorLabel: e.target.value,
+                            }))
+                          }
+                          className="w-full rounded-lg bg-slate-50 border border-slate-300 px-3 py-1.5 text-xs text-slate-900"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {selection.kind === 'end_approved' && (
+                    <div className="space-y-3">
+                      <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-950 leading-relaxed flex items-center gap-2">
+                        <Flag className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>
+                          پروژه‌هایی که به این گره برسند با نتیجه نهایی تایید مختومه می‌شوند (و در صورت تعریف گردش کار زنجیره‌ای روی «پس از تایید پروژه»، خودکار وارد گردش بعدی می‌شوند).
+                        </span>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          برچسب گره پایان تایید:
+                        </label>
+                        <input
+                          type="text"
+                          value={diagramLayout.endApprovedLabel || 'تایید اکثریت'}
+                          onChange={(e) =>
+                            setDiagramLayout((prev) => ({
+                              ...prev,
+                              endApprovedLabel: e.target.value,
+                            }))
+                          }
+                          className="w-full rounded-lg bg-slate-50 border border-slate-300 px-3 py-1.5 text-xs text-slate-900"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {selection.kind === 'end_rejected' && (
+                    <div className="space-y-3">
+                      <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-[11px] text-rose-950 leading-relaxed flex items-center gap-2">
+                        <XCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                        <span>
+                          پروژه‌هایی که به این گره برسند با وضعیت «رد شده / رد اکثریت» در تاریخچه وضعیت پروژه ثبت و بسته می‌شوند.
+                        </span>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          برچسب گره پایان رد:
+                        </label>
+                        <input
+                          type="text"
+                          value={diagramLayout.endRejectedLabel || 'رد اکثریت'}
+                          onChange={(e) =>
+                            setDiagramLayout((prev) => ({
+                              ...prev,
+                              endRejectedLabel: e.target.value,
+                            }))
+                          }
+                          className="w-full rounded-lg bg-slate-50 border border-slate-300 px-3 py-1.5 text-xs text-slate-900"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </aside>
+            </div>
+          </form>
         </div>
       )}
     </div>

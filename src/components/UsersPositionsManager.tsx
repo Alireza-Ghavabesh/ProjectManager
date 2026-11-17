@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { User, Position } from '../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { User, Position, StructurePositionSummary } from '../types';
 import { api } from '../services/api';
 import { PermissionsTreeModal } from './PermissionsTreeModal';
 import { hasPerm, hasAnyPerm } from '../utils/permissions';
@@ -11,16 +11,12 @@ import {
   Edit3, 
   Shield, 
   UserCheck, 
-  Key, 
   X, 
-  Sparkles, 
   Phone, 
-  CheckCircle2, 
   Lock, 
   Search, 
-  Check, 
-  AlertCircle,
-  Crown
+  Crown,
+  FolderTree
 } from 'lucide-react';
 
 interface UsersPositionsManagerProps {
@@ -78,7 +74,54 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
 
   // Selected for permissions modal
   const [selectedUserForPerms, setSelectedUserForPerms] = useState<User | null>(null);
-  const [selectedPosForPerms, setSelectedPosForPerms] = useState<Position | null>(null);
+  const [selectedSpForPerms, setSelectedSpForPerms] = useState<{
+    id: string;
+    positionTitle: string;
+    structureTitle?: string;
+    structureId?: string;
+  } | null>(null);
+
+  // Scoped structure-positions catalog for Permissions Matrix tab
+  const [structurePositions, setStructurePositions] = useState<StructurePositionSummary[]>([]);
+  const [structFilterId, setStructFilterId] = useState<string>('ALL');
+  const [searchSpQuery, setSearchSpQuery] = useState('');
+
+  const loadStructurePositions = async () => {
+    try {
+      const list = await api.getAllStructurePositions();
+      setStructurePositions(list);
+    } catch (err) {
+      console.error('Error loading structure positions:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (canManagePerms && subTab === 'permissions') {
+      loadStructurePositions();
+    }
+  }, [subTab, canManagePerms, users, positions]);
+
+  const uniqueStructuresForFilter = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const sp of structurePositions) {
+      if (!map.has(sp.structureId)) {
+        map.set(sp.structureId, sp.structureTitle);
+      }
+    }
+    return Array.from(map.entries()).map(([id, title]) => ({ id, title }));
+  }, [structurePositions]);
+
+  const filteredStructurePositions = useMemo(() => {
+    const q = searchSpQuery.trim().toLowerCase();
+    return structurePositions.filter((sp) => {
+      if (structFilterId !== 'ALL' && sp.structureId !== structFilterId) return false;
+      if (!q) return true;
+      return (
+        sp.positionTitle.toLowerCase().includes(q) ||
+        sp.structureTitle.toLowerCase().includes(q)
+      );
+    });
+  }, [structurePositions, structFilterId, searchSpQuery]);
 
   // Search filter
   const [searchUserQuery, setSearchUserQuery] = useState('');
@@ -504,151 +547,115 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
             )}
           </div>
 
+          <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
+            سمت‌ها به عنوان نقش‌های سازمانی در سیستم تعریف می‌شوند، اما <strong>اختیارات و دسترسی هر سمت به‌طور مجزا درون هر ساختار</strong> (در بخش مدیریت ساختار سازمانی یا ماتریس دسترسی‌ها) تعیین می‌گردد.
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredPositions.map((p) => {
-              const posPermCount = p.permissions?.length || 0;
-              return (
-                <div
-                  key={p.id}
-                  className="p-5 rounded-2xl bg-white border border-slate-200/90 hover:border-slate-300 shadow-2xs hover:shadow-xs transition flex flex-col justify-between text-slate-800"
-                >
-                  <div>
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                        <Briefcase className="w-4 h-4 text-indigo-600 shrink-0" />
-                        <span>{p.title}</span>
-                      </h3>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 shrink-0">
-                        {p.userCount || 0} نفر منتصب
-                      </span>
-                    </div>
+            {filteredPositions.map((p) => (
+              <div
+                key={p.id}
+                className="p-5 rounded-2xl bg-white border border-slate-200 hover:border-slate-300 transition flex flex-col justify-between text-slate-800"
+              >
+                <div>
+                  <div className="flex items-start justify-between gap-2 mb-3">
+                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                      <Briefcase className="w-4 h-4 text-indigo-600 shrink-0" />
+                      <span>{p.title}</span>
+                    </h3>
+                    <span className="text-[11px] font-semibold text-slate-500 tabular-nums shrink-0">
+                      {p.userCount || 0} نفر
+                    </span>
+                  </div>
 
-                    {/* Permissions summary */}
-                    <div className="flex items-center justify-between text-[11px] px-3 py-1.5 rounded-xl bg-indigo-50/50 border border-indigo-100 text-indigo-900 mb-2">
-                      <span className="flex items-center gap-1.5">
-                        <Lock className="w-3.5 h-3.5 text-indigo-600" />
-                        <span>مجوزهای پیش‌فرض سمت:</span>
-                      </span>
-                      <span className="font-bold">{posPermCount} مجوز</span>
-                    </div>
-
-                    {/* Structures usage (standalone position reusable across multiple structures) */}
-                    <div className="flex flex-wrap items-center gap-1 mb-2.5 text-[10px]">
-                      <span className="text-slate-500 font-semibold">ساختارها:</span>
-                      {p.structures && p.structures.length > 0 ? (
-                        p.structures.map((st) => (
-                          <span
-                            key={st.id}
-                            className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold"
-                          >
-                            {st.title}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="text-slate-400">مستقل (قابل استفاده در چندین ساختار)</span>
-                      )}
-                    </div>
-
-                    {p.description && (
-                      <p className="text-xs text-slate-600 leading-relaxed mt-1 bg-slate-50 p-2.5 rounded-xl border border-slate-200 line-clamp-3">
-                        {p.description}
-                      </p>
+                  <div className="flex flex-wrap items-center gap-1.5 mb-2.5 text-[11px]">
+                    <span className="text-slate-500">ساختارهای فعال:</span>
+                    {p.structures && p.structures.length > 0 ? (
+                      p.structures.map((st) => (
+                        <span
+                          key={st.id}
+                          className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200 font-medium"
+                        >
+                          {st.title}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-slate-400">هنوز در ساختاری قرار نگرفته است</span>
                     )}
                   </div>
 
-                  {(canManagePerms || canEditPos || canDeletePos) && (
-                    <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2 mt-4">
-                      {canManagePerms ? (
-                        <button
-                          onClick={() => setSelectedPosForPerms(p)}
-                          className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                          title="تنظیم درخت مجوزهای این سمت"
-                        >
-                          <Shield className="w-3.5 h-3.5 text-indigo-600" />
-                          <span>دسترسی‌های سمت</span>
-                        </button>
-                      ) : <span />}
-
-                      <div className="flex items-center gap-1">
-                        {canEditPos && (
-                          <button
-                            onClick={() => openPosModal(p)}
-                            className="px-2.5 py-1.5 rounded-xl text-xs text-slate-700 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                            <span>ویرایش</span>
-                          </button>
-                        )}
-                        {canDeletePos && (
-                          <button
-                            onClick={() => handleDeletePosition(p.id, p.title)}
-                            className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
-                            title="حذف سمت"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
+                  {p.description && (
+                    <p className="text-xs text-slate-600 leading-relaxed mt-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200 line-clamp-3">
+                      {p.description}
+                    </p>
                   )}
                 </div>
-              );
-            })}
+
+                {(canEditPos || canDeletePos) && (
+                  <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-1.5 mt-4">
+                    {canEditPos && (
+                      <button
+                        onClick={() => openPosModal(p)}
+                        className="px-2.5 py-1.5 rounded-xl text-xs text-slate-700 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        <span>ویرایش</span>
+                      </button>
+                    )}
+                    {canDeletePos && (
+                      <button
+                        onClick={() => handleDeletePosition(p.id, p.title)}
+                        className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                        title="حذف سمت"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         </div>
       )}
 
       {/* ======================= TAB 3: PERMISSIONS MATRIX OVERVIEW ======================= */}
       {subTab === 'permissions' && (
-        <div className="space-y-6">
-          <div className="p-5 rounded-3xl bg-indigo-50/60 border border-indigo-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-sm">
-                <Shield className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">
-                  سامانه مدیریت یکپارچه و سلسله‌مراتبی سطوح دسترسی
-                </h3>
-                <p className="text-xs text-slate-600 mt-1 max-w-2xl leading-relaxed">
-                  هر سمت سازمانی دارای یک بسته مجوز پایه است. همچنین می‌توانید برای هر عضو شورا به صورت تفکیک‌شده، مجوزهای شخصی‌سازی‌شده اعمال نمایید یا هر زمان که نیاز بود، آن را به پیش‌فرض سمت بازنشانی فرمایید.
-                </p>
-              </div>
+        <div className="space-y-5">
+          <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0">
+              <Shield className="w-5 h-5" />
             </div>
-
-            <div className="flex items-center gap-2 self-stretch sm:self-auto">
-              <button
-                onClick={() => {
-                  if (positions.length > 0) setSelectedPosForPerms(positions[0]);
-                }}
-                className="flex-1 sm:flex-none px-4 py-2.5 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-xs font-bold text-indigo-700 shadow-2xs transition cursor-pointer flex items-center justify-center gap-1.5"
-              >
-                <Lock className="w-4 h-4 text-indigo-600" />
-                <span>دسترسی‌های سمت‌ها</span>
-              </button>
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">
+                ماتریس دسترسی کاربران و سمت‌های منتصب در ساختارها
+              </h3>
+              <p className="text-xs text-slate-600 mt-1 max-w-3xl leading-relaxed">
+                مجوزها یا مستقیماً به <strong>کاربر</strong> داده می‌شوند یا به یک <strong>سمت داخل یک ساختار مشخص</strong>. اگر یک سمت (مثلاً «مدیر») در چند ساختار قرار گرفته باشد، دسترسی‌های آن در هر ساختار کاملاً مستقل است.
+              </p>
             </div>
           </div>
 
-          {/* Quick Selection Grid for Users & Positions */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Quick Selection Grid for Users & Structure Positions */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             {/* Box 1: User Permissions Access */}
-            <div className="p-5 rounded-3xl bg-white border border-slate-200 shadow-xs space-y-4">
+            <div className="p-5 rounded-2xl bg-white border border-slate-200 space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                   <UserCheck className="w-4 h-4 text-indigo-600" />
-                  <span>دسترسی‌های اختصاصی پرسنل و اعضا</span>
+                  <span>دسترسی‌های مستقیم کاربران</span>
                 </h3>
-                <span className="text-[11px] text-slate-500">{users.length} کاربر</span>
+                <span className="text-xs text-slate-500 tabular-nums">{users.length} کاربر</span>
               </div>
 
-              <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+              <div className="space-y-2 max-h-[440px] overflow-y-auto pl-1">
                 {users.map((u) => (
                   <div
                     key={u.id}
-                    className="p-3 rounded-2xl border border-slate-200/90 hover:border-indigo-300 bg-slate-50/50 hover:bg-indigo-50/30 transition flex items-center justify-between gap-3"
+                    className="p-3 rounded-xl border border-slate-200 hover:border-indigo-300 bg-slate-50/50 hover:bg-indigo-50/30 transition flex items-center justify-between gap-3"
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center shrink-0">
+                      <div className="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center shrink-0">
                         {u.name.charAt(0)}
                       </div>
                       <div className="min-w-0">
@@ -656,15 +663,18 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                           <span>{u.name}</span>
                           {u.role === 'ADMIN' && <Crown className="w-3 h-3 text-amber-600" />}
                         </div>
-                        <div className="text-[10px] text-slate-500 truncate">
-                          {u.positionTitle || 'بدون سمت'} • <span className="font-mono">@{u.username}</span>
+                        <div className="text-[11px] text-slate-500 truncate">
+                          <span className="font-mono">@{u.username}</span>
+                          {u.structurePositions && u.structurePositions.length > 0
+                            ? ` • ${u.structurePositions.length} سمت در ساختارها`
+                            : ' • بدون انتصاب در ساختار'}
                         </div>
                       </div>
                     </div>
 
                     <button
                       onClick={() => setSelectedUserForPerms(u)}
-                      className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-2xs transition flex items-center gap-1.5 cursor-pointer shrink-0"
+                      className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shrink-0"
                     >
                       <Shield className="w-3.5 h-3.5" />
                       <span>تنظیم مجوزها</span>
@@ -674,50 +684,88 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
               </div>
             </div>
 
-            {/* Box 2: Position Permissions Access */}
-            <div className="p-5 rounded-3xl bg-white border border-slate-200 shadow-xs space-y-4">
+            {/* Box 2: Structure-Scoped Position Permissions Access */}
+            <div className="p-5 rounded-2xl bg-white border border-slate-200 space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <Briefcase className="w-4 h-4 text-indigo-600" />
-                  <span>دسترسی‌های پایه سمت‌های سازمانی</span>
+                  <FolderTree className="w-4 h-4 text-indigo-600" />
+                  <span>دسترسی‌های سمت در هر ساختار</span>
                 </h3>
-                <span className="text-[11px] text-slate-500">{positions.length} سمت</span>
+                <span className="text-xs text-slate-500 tabular-nums">{filteredStructurePositions.length} شاخه</span>
               </div>
 
-              <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
-                {positions.map((p) => (
-                  <div
-                    key={p.id}
-                    className="p-3 rounded-2xl border border-slate-200/90 hover:border-indigo-300 bg-slate-50/50 hover:bg-indigo-50/30 transition flex items-center justify-between gap-3"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 font-bold text-xs flex items-center justify-center border border-indigo-200 shrink-0">
-                        <Briefcase className="w-4 h-4" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-xs font-bold text-slate-900 truncate">{p.title}</div>
-                        <div className="text-[10px] text-slate-500 truncate">
-                          {p.userCount || 0} کاربر منتصب • {p.permissions?.length || 0} مجوز فعال
+              <div className="flex flex-col sm:flex-row gap-2">
+                <select
+                  value={structFilterId}
+                  onChange={(e) => setStructFilterId(e.target.value)}
+                  className="px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-800 focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="ALL">همه ساختارها</option>
+                  {uniqueStructuresForFilter.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.title}
+                    </option>
+                  ))}
+                </select>
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    value={searchSpQuery}
+                    onChange={(e) => setSearchSpQuery(e.target.value)}
+                    placeholder="جستجوی سمت یا ساختار..."
+                    className="w-full rounded-xl bg-slate-50 border border-slate-200 pr-8 pl-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-indigo-500"
+                  />
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-2 pointer-events-none" />
+                </div>
+              </div>
+
+              <div className="space-y-2 max-h-[380px] overflow-y-auto pl-1">
+                {filteredStructurePositions.length === 0 ? (
+                  <div className="py-10 text-center text-xs text-slate-400 border border-dashed border-slate-200 rounded-xl">
+                    سمتی در ساختارها یافت نشد. ابتدا در بخش «مدیریت ساختار سازمانی» سمت را به درخت ساختار اضافه کنید.
+                  </div>
+                ) : (
+                  filteredStructurePositions.map((sp) => (
+                    <div
+                      key={sp.id}
+                      className="p-3 rounded-xl border border-slate-200 hover:border-indigo-300 bg-slate-50/50 hover:bg-indigo-50/30 transition flex items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 font-bold text-xs flex items-center justify-center border border-indigo-200 shrink-0">
+                          <Briefcase className="w-4 h-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-slate-900 truncate">
+                            {sp.positionTitle}
+                          </div>
+                          <div className="text-[11px] text-slate-500 truncate tabular-nums">
+                            ساختار: <span className="font-semibold text-indigo-700">{sp.structureTitle}</span> • {sp.userCount} نفر • {sp.permissionCount} مجوز
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <button
-                      onClick={() => setSelectedPosForPerms(p)}
-                      className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 text-xs font-bold shadow-2xs transition flex items-center gap-1.5 cursor-pointer shrink-0"
-                    >
-                      <Lock className="w-3.5 h-3.5 text-indigo-600" />
-                      <span>ویرایش مجوزها</span>
-                    </button>
-                  </div>
-                ))}
+                      <button
+                        onClick={() =>
+                          setSelectedSpForPerms({
+                            id: sp.id,
+                            positionTitle: sp.positionTitle,
+                            structureTitle: sp.structureTitle,
+                            structureId: sp.structureId,
+                          })
+                        }
+                        className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shrink-0"
+                      >
+                        <Lock className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>مجوزها</span>
+                      </button>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
         </div>
       )}
-
-
 
       {/* ===================== PERMISSIONS TREE MODAL ===================== */}
       {selectedUserForPerms && (
@@ -726,16 +774,18 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
           onClose={() => setSelectedUserForPerms(null)}
           onSuccess={() => {
             onRefresh();
+            loadStructurePositions();
           }}
         />
       )}
 
-      {selectedPosForPerms && (
+      {selectedSpForPerms && (
         <PermissionsTreeModal
-          position={selectedPosForPerms}
-          onClose={() => setSelectedPosForPerms(null)}
+          structurePosition={selectedSpForPerms}
+          onClose={() => setSelectedSpForPerms(null)}
           onSuccess={() => {
             onRefresh();
+            loadStructurePositions();
           }}
         />
       )}

@@ -6,6 +6,7 @@ export interface WorkflowActionMeta {
 
 export const WORKFLOW_ACTION_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'PROJECT_CREATED', label: 'ثبت اولیه پروژه' },
+  { value: 'WORKFLOW_AUTO_STARTED', label: 'آغاز خودکار گردش کار جدید' },
   { value: 'STEP_APPROVED', label: 'تایید عضو در مرحله' },
   { value: 'STEP_REVISION', label: 'درخواست اصلاح عضو در مرحله' },
   { value: 'STEP_REJECTED', label: 'مخالفت عضو در مرحله' },
@@ -29,6 +30,12 @@ export function getActionBadgeMeta(action: string): WorkflowActionMeta {
         label: 'ثبت اولیه پروژه',
         badgeClass: 'bg-sky-50 text-sky-800 border-sky-200',
         dotClass: 'bg-sky-500',
+      };
+    case 'WORKFLOW_AUTO_STARTED':
+      return {
+        label: 'آغاز خودکار گردش کار',
+        badgeClass: 'bg-indigo-50 text-indigo-800 border-indigo-200',
+        dotClass: 'bg-indigo-500',
       };
     case 'STEP_APPROVED':
       return {

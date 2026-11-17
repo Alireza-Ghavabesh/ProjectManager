@@ -15,12 +15,13 @@ import {
   FolderTree, 
   Settings,
   Key,
-  Bell
+  Bell,
+  FolderKanban
 } from 'lucide-react';
 
 interface HeaderProps {
   currentUser: User;
-  activeTab: 'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings' | 'smstest';
+  activeTab: 'projects' | 'project_list' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings' | 'smstest';
   onOpenMobileMenu: () => void;
 }
 
@@ -34,7 +35,9 @@ export const Header: React.FC<HeaderProps> = ({
   const getTabInfo = () => {
     switch (activeTab) {
       case 'projects':
-        return { title: 'کارتابل و پروژه‌های شورا', icon: Layers, desc: 'ارزیابی مستقیم تمام طرح‌ها، رای‌گیری ۳ حالته اعضا و تجمیع آرا' };
+        return { title: 'کارتابل پروژه‌های من', icon: Layers, desc: 'فقط پروژه‌هایی که در گردش کار یا رای‌گیری به شما ارجاع شده و نیازمند اقدام شما هستند' };
+      case 'project_list':
+        return { title: 'فهرست جامع پروژه‌ها', icon: FolderKanban, desc: 'مشاهده کل پروژه‌های ثبت‌شده در سامانه، جستجو، فیلتر وضعیت و مدیریت پرونده‌ها' };
       case 'structures':
         return { title: 'مدیریت ساختار سازمانی', icon: FolderTree, desc: 'تعریف ساختارها (مانند ماموریت، مرخصی، مالی)، چیدمان درختی سمت‌ها و انتصاب پرسنل' };
       case 'workflows':

@@ -83,13 +83,34 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   );
   const canManualApprove = hasPerm(currentUser, 'projects.manual_approve');
   
+  const findPreferredWorkflowId = (wfs: Workflow[], ptId?: string | null): string => {
+    if (ptId && ptId !== '__CUSTOM__') {
+      const pt = activeProjectTypes.find((p) => p.id === ptId);
+      if (pt?.defaultWorkflowId && wfs.some((w) => w.id === pt.defaultWorkflowId)) {
+        return pt.defaultWorkflowId;
+      }
+    }
+    const createdMatches = wfs.filter((w) => w.diagram?.startTrigger?.event === 'PROJECT_CREATED');
+    if (createdMatches.length > 0) {
+      const scored = createdMatches.find((w) => {
+        const trig = w.diagram?.startTrigger;
+        const ptMatch = !trig?.projectTypeId || trig.projectTypeId === ptId;
+        const posMatch =
+          !trig?.creatorPositionId ||
+          trig.creatorPositionId === currentUser?.positionId;
+        return ptMatch && posMatch;
+      });
+      if (scored) return scored.id;
+    }
+    const def = wfs.find((w) => w.isDefault);
+    return def?.id || wfs[0]?.id || '';
+  };
+
   // Workflow selector state
   const [availableWorkflows, setAvailableWorkflows] = useState<Workflow[]>(workflows);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string>(() => {
     if (editProject?.workflowId) return editProject.workflowId;
-    if (activeProjectTypes[0]?.defaultWorkflowId) return activeProjectTypes[0].defaultWorkflowId;
-    const def = workflows.find((w) => w.isDefault);
-    return def?.id || (workflows[0]?.id) || '';
+    return findPreferredWorkflowId(workflows, selectedProjectTypeId);
   });
 
   useEffect(() => {
@@ -115,15 +136,17 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       api.getWorkflows().then((wfs) => {
         setAvailableWorkflows(wfs);
         if (!selectedWorkflowId) {
-          const def = wfs.find((w) => w.isDefault);
-          setSelectedWorkflowId(editProject?.workflowId || def?.id || wfs[0]?.id || '');
+          setSelectedWorkflowId(
+            editProject?.workflowId || findPreferredWorkflowId(wfs, selectedProjectTypeId)
+          );
         }
       }).catch(console.error);
     } else {
       setAvailableWorkflows(workflows);
       if (!selectedWorkflowId) {
-        const def = workflows.find((w) => w.isDefault);
-        setSelectedWorkflowId(editProject?.workflowId || def?.id || workflows[0]?.id || '');
+        setSelectedWorkflowId(
+          editProject?.workflowId || findPreferredWorkflowId(workflows, selectedProjectTypeId)
+        );
       }
     }
   }, [workflows, editProject?.workflowId]);
@@ -141,8 +164,13 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     const found = activeProjectTypes.find((pt) => pt.id === nextTypeId);
     if (found) {
       setProductionType(found.title);
-      if (!editProject && found.defaultWorkflowId && availableWorkflows.some((w) => w.id === found.defaultWorkflowId)) {
-        setSelectedWorkflowId(found.defaultWorkflowId);
+      if (!editProject) {
+        if (found.defaultWorkflowId && availableWorkflows.some((w) => w.id === found.defaultWorkflowId)) {
+          setSelectedWorkflowId(found.defaultWorkflowId);
+        } else {
+          const preferred = findPreferredWorkflowId(availableWorkflows, nextTypeId);
+          if (preferred) setSelectedWorkflowId(preferred);
+        }
       }
     }
   };
@@ -531,11 +559,20 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                     onChange={(e) => setSelectedWorkflowId(e.target.value)}
                     className="w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2 text-xs sm:text-sm font-bold text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-2xs cursor-pointer"
                   >
-                    {availableWorkflows.map((wf) => (
-                      <option key={wf.id} value={wf.id}>
-                        {wf.title} {wf.isDefault ? '⭐ (پیش‌فرض سیستم)' : ''} — ({wf.steps.length} مرحله سازمانی)
-                      </option>
-                    ))}
+                    {availableWorkflows.map((wf) => {
+                      const trigEvent = wf.diagram?.startTrigger?.event;
+                      const trigText =
+                        trigEvent === 'PROJECT_CREATED'
+                          ? ' · شروع با ثبت پروژه'
+                          : trigEvent === 'PROJECT_APPROVED'
+                          ? ' · زنجیره‌ای پس از تایید'
+                          : '';
+                      return (
+                        <option key={wf.id} value={wf.id}>
+                          {wf.title} {wf.isDefault ? '★ (پیش‌فرض سیستم)' : ''} — ({wf.steps.length} مرحله{trigText})
+                        </option>
+                      );
+                    })}
                   </select>
 
                   {selectedWf && (
@@ -547,7 +584,9 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                           {selectedWf.steps
                             .map((s) => {
                               const posLabel =
-                                s.positions && s.positions.length > 0
+                                s.config?.assigneeMode === 'CREATOR'
+                                  ? 'ثبت‌کننده اولیه پروژه'
+                                  : s.positions && s.positions.length > 0
                                   ? s.positions.map((p) => p.title).join(' + ')
                                   : s.positionTitle;
                               return posLabel ? `${s.title} (${posLabel})` : s.title;

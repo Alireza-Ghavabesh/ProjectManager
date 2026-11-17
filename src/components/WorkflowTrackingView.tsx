@@ -692,6 +692,17 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2 flex-wrap">
+                    {!isFinished && item.currentTaskTitle && (
+                      <span
+                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-[10px] font-bold border ${
+                          isCreatorRevisionTurn
+                            ? 'bg-amber-50 text-amber-900 border-amber-300'
+                            : 'bg-blue-50 text-blue-800 border-blue-200'
+                        }`}
+                      >
+                        کار فعلی: {item.currentTaskTitle}
+                      </span>
+                    )}
                     {item.isDeadlineExpired && (
                       <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-800 border border-rose-200">
                         <Lock className="w-3 h-3" />
@@ -718,7 +729,7 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                       <span className="text-slate-500 font-medium">مرحله فعلی:</span>
                       <span className={`font-bold ${isCreatorRevisionTurn ? 'text-amber-700' : 'text-indigo-700'}`}>
                         {isCreatorRevisionTurn
-                          ? 'کارتابل ثبت‌کننده پروژه (نیازمند اصلاح)'
+                          ? `کارتابل ثبت‌کننده (${item.currentTaskTitle || 'نیاز به اصلاح'})`
                           : item.totalSteps > 0
                           ? `گام ${item.currentStepOrder} از ${item.totalSteps}${item.currentStepTitle ? ` (${item.currentStepTitle})` : ''}`
                           : 'بدون گام تعریف‌شده'}
@@ -728,10 +739,11 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                     <div className="flex items-start justify-between gap-2">
                       <span className="text-slate-500 font-medium shrink-0">سمت(های) متصدی فعلی:</span>
                       <div className="flex flex-wrap justify-end gap-1">
-                        {isCreatorRevisionTurn ? (
+                        {isCreatorRevisionTurn ||
+                        item.steps.find((s) => s.stepOrder === item.currentStepOrder)?.config?.assigneeMode === 'CREATOR' ? (
                           <span className="inline-flex items-center gap-1 font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-300">
                             <UserIcon className="w-3 h-3 text-amber-600" />
-                            ثبت‌کننده: {item.creatorName}
+                            ثبت‌کننده اولیه: {item.creatorName}
                           </span>
                         ) : item.currentPositions && item.currentPositions.length > 0 ? (
                           item.currentPositions.map((p) => (
@@ -963,7 +975,10 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                   </button>
 
                   {!isFinished &&
-                    (canForwardWorkflow || (isCreatorRevisionTurn && item.creatorId === currentUser.id)) &&
+                    (canForwardWorkflow ||
+                      ((isCreatorRevisionTurn ||
+                        item.steps.find((s) => s.stepOrder === item.currentStepOrder)?.config?.assigneeMode === 'CREATOR') &&
+                        item.creatorId === currentUser.id)) &&
                     onOpenWorkflowModalByProjectId &&
                     (item.currentAssignees.some((a) => a.id === currentUser.id) || currentUser.role === 'ADMIN') && (
                       <button
@@ -1026,7 +1041,12 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                                 </div>
 
                                 <div className="flex flex-wrap gap-1">
-                                  {st.positions && st.positions.length > 0 ? (
+                                  {st.config?.assigneeMode === 'CREATOR' ? (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded-md border border-amber-200">
+                                      <UserIcon className="w-2.5 h-2.5 shrink-0" />
+                                      ثبت‌کننده اولیه پروژه
+                                    </span>
+                                  ) : st.positions && st.positions.length > 0 ? (
                                     st.positions.map((p) => (
                                       <span
                                         key={p.id}
@@ -1039,7 +1059,7 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                                   ) : (
                                     <div className="text-[11px] font-semibold text-indigo-700 flex items-center gap-1">
                                       <Briefcase className="w-3 h-3 shrink-0" />
-                                      <span className="truncate">{st.positionTitle}</span>
+                                      <span className="truncate">{st.positionTitle || 'سمت نامشخص'}</span>
                                     </div>
                                   )}
                                 </div>
@@ -1055,6 +1075,10 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                                         {u.name}
                                       </span>
                                     ))
+                                  ) : st.config?.assigneeMode === 'CREATOR' ? (
+                                    <span className="text-[10px] text-amber-700 font-medium">
+                                      {item.creatorName}
+                                    </span>
                                   ) : (
                                     <span className="text-[10px] text-slate-400">
                                       بدون شخص منتسب
@@ -1069,7 +1093,7 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                     )}
 
                     {/* Full Project Status & Operations Audit Timeline */}
-                    {canViewHistory && (
+                    {(canViewHistory || item.logs.length > 0) && (
                       <div className="space-y-3">
                         <div className="flex items-center justify-between gap-2">
                           <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">

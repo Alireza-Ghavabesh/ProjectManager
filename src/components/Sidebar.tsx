@@ -14,16 +14,18 @@ import {
   FolderTree,
   GitBranch,
   Settings,
-  Radio
+  Radio,
+  FolderKanban
 } from 'lucide-react';
 
 interface SidebarProps {
   currentUser: User;
-  activeTab: 'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings' | 'smstest';
-  setActiveTab: (tab: 'projects' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings' | 'smstest') => void;
+  activeTab: 'projects' | 'project_list' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings' | 'smstest';
+  setActiveTab: (tab: 'projects' | 'project_list' | 'fields' | 'structures' | 'workflows' | 'users' | 'org' | 'chat' | 'stats' | 'settings' | 'smstest') => void;
   onLogout: () => void;
   pendingVotesCount?: number;
   myTurnCount?: number;
+  allProjectsCount?: number;
   mobileOpen: boolean;
   setMobileOpen: (open: boolean) => void;
   collapsed: boolean;
@@ -42,6 +44,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onLogout,
   pendingVotesCount = 0,
   myTurnCount = 0,
+  allProjectsCount = 0,
   mobileOpen,
   setMobileOpen,
   collapsed,
@@ -67,12 +70,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
       items: [
         {
           id: 'projects' as const,
-          title: 'کارتابل و پروژه‌های شورا',
+          title: 'کارتابل پروژه‌ها',
           shortTitle: 'کارتابل',
           icon: Layers,
           badge: myTurnCount > 0 ? `${myTurnCount} نوبت شما` : pendingVotesCount > 0 ? `${pendingVotesCount} در انتظار` : null,
           badgeColor: myTurnCount > 0 ? 'bg-blue-500/15 text-blue-700 border-blue-300' : 'bg-amber-500/20 text-amber-700 border-amber-300',
           permission: ['projects.view', 'projects.cartable.view', 'projects.create', 'projects.edit', 'projects.delete', 'workflow.forward', 'voting.cast', 'voting.confidential.view_all'],
+        },
+        {
+          id: 'project_list' as const,
+          title: 'فهرست پروژه‌ها',
+          shortTitle: 'فهرست پروژه‌ها',
+          icon: FolderKanban,
+          badge: allProjectsCount > 0 ? `${allProjectsCount}` : null,
+          badgeColor: 'bg-indigo-500/15 text-indigo-700 border-indigo-200',
+          permission: ['project_list.view', 'project_list.create', 'project_list.edit', 'project_list.delete'],
         },
       ],
     },

@@ -163,7 +163,7 @@ export function initDatabase() {
       stepOrder INTEGER NOT NULL,
       title TEXT NOT NULL,
       structureId TEXT REFERENCES project_structures(id) ON DELETE SET NULL,
-      positionId TEXT NOT NULL REFERENCES positions(id) ON DELETE CASCADE,
+      positionId TEXT REFERENCES positions(id) ON DELETE SET NULL,
       positionIdsJson TEXT DEFAULT '[]',
       actionType TEXT DEFAULT 'REVIEW', -- 'REVIEW', 'TECHNICAL_APPROVE', 'BUDGET_APPROVE', 'CONTENT_APPROVE', 'FINAL_COUNCIL_VOTE', 'CUSTOM'
       description TEXT,
@@ -267,6 +267,12 @@ export function initDatabase() {
       structurePositionId TEXT NOT NULL REFERENCES structure_positions(id) ON DELETE CASCADE,
       userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       PRIMARY KEY (structurePositionId, userId)
+    );
+
+    CREATE TABLE IF NOT EXISTS structure_position_permissions (
+      structurePositionId TEXT NOT NULL REFERENCES structure_positions(id) ON DELETE CASCADE,
+      permissionCode TEXT NOT NULL REFERENCES permissions(code) ON DELETE CASCADE,
+      PRIMARY KEY (structurePositionId, permissionCode)
     );
 
     CREATE TABLE IF NOT EXISTS votes (
@@ -424,6 +430,38 @@ export function initDatabase() {
   try {
     db.prepare('ALTER TABLE workflows ADD COLUMN diagramJson TEXT').run();
   } catch (e) {}
+  try {
+    db.prepare('ALTER TABLE projects ADD COLUMN currentTaskTitle TEXT').run();
+  } catch (e) {}
+
+  try {
+    const wfStepsTbl = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='workflow_steps'").get() as { sql?: string } | undefined;
+    if (wfStepsTbl?.sql && /positionId\s+TEXT\s+NOT\s+NULL/i.test(wfStepsTbl.sql)) {
+      const migrateStepsTx = db.transaction(() => {
+        rawDb.exec(`
+          CREATE TABLE workflow_steps_migrated (
+            id TEXT PRIMARY KEY,
+            workflowId TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+            stepOrder INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            structureId TEXT REFERENCES project_structures(id) ON DELETE SET NULL,
+            positionId TEXT REFERENCES positions(id) ON DELETE SET NULL,
+            positionIdsJson TEXT DEFAULT '[]',
+            actionType TEXT DEFAULT 'REVIEW',
+            description TEXT,
+            configJson TEXT DEFAULT '{}'
+          );
+          INSERT INTO workflow_steps_migrated (id, workflowId, stepOrder, title, structureId, positionId, positionIdsJson, actionType, description, configJson)
+          SELECT id, workflowId, stepOrder, title, structureId, positionId, positionIdsJson, actionType, description, configJson FROM workflow_steps;
+          DROP TABLE workflow_steps;
+          ALTER TABLE workflow_steps_migrated RENAME TO workflow_steps;
+        `);
+      });
+      migrateStepsTx();
+    }
+  } catch (e) {
+    console.warn('Warning during workflow_steps nullable positionId migration:', e);
+  }
 
   try {
     seedInitialData();
@@ -441,17 +479,25 @@ function seedInitialData() {
 
   // 1. Seed & Synchronize Full Entity-Based CRUD Permissions Tree
   const isFirstCrudMigration = !db.prepare("SELECT 1 FROM permissions WHERE code = 'projects.view'").get();
+  const isProjectListMigration = !db.prepare("SELECT 1 FROM permissions WHERE code = 'project_list.view'").get();
 
   const permissionsData: Array<[string, string, string, string, string | null, string, number]> = [
-    // Entity 1: پروژه‌ها و مصوبات
-    ['p-12', 'projects', 'پروژه‌ها و کارتابل مصوبات', 'پروژه‌ها', null, 'کنترل نمایش، ثبت، ویرایش، حذف و تصویب نهایی پروژه‌ها', 0],
-    ['p-29', 'projects.view', 'نمایش همه پروژه‌های سامانه', 'پروژه‌ها', 'projects', 'مشاهده لیست کامل همه پروژه‌های سامانه (حتی پروژه‌هایی که در نوبت کارتابل شما نیستند)', 0],
-    ['p-57', 'projects.cartable.view', 'نمایش فقط پروژه‌های کارتابل من', 'پروژه‌ها', 'projects', 'کاربر فقط پروژه‌هایی را می‌بیند که هم‌اکنون در گردش کار به نوبت او ارجاع شده است', 0],
-    ['p-14', 'projects.create', 'ثبت پروژه جدید', 'پروژه‌ها', 'projects', 'تعریف پروژه جدید و ارسال به گردش کار و کارتابل', 0],
-    ['p-15', 'projects.edit', 'ویرایش پروژه و فایل‌ها', 'پروژه‌ها', 'projects', 'ویرایش مشخصات، بودجه و مدیریت فایل‌های پیوست پروژه', 0],
-    ['p-16', 'projects.delete', 'حذف پروژه', 'پروژه‌ها', 'projects', 'حذف کامل پروژه و سوابق آن از سامانه', 1],
-    ['p-17', 'projects.finalize', 'تصویب نهایی و صدور ابلاغیه', 'پروژه‌ها', 'projects', 'خاتمه گردش کار و صدور مصوبه رسمی شورا', 1],
-    ['p-56', 'projects.manual_approve', 'تایید نهایی دستی (خارج از گردش کار)', 'پروژه‌ها', 'projects', 'امکان تایید نهایی دستی پروژه بدون طی مراحل گردش کار (به طور پیش‌فرض حتی برای مدیران غیرفعال است)', 1],
+    // Entity 1: کارتابل پروژه‌ها
+    ['p-12', 'projects', 'کارتابل پروژه‌ها (امور مرتبط با کاربر)', 'کارتابل', null, 'کنترل کارتابل شخصی، ثبت پروژه، ویرایش، حذف و تصویب نهایی پروژه‌های مرتبط', 0],
+    ['p-29', 'projects.view', 'نمایش پروژه‌های کارتابل', 'کارتابل', 'projects', 'مشاهده پروژه‌های مرتبط با کاربر در بخش کارتابل', 0],
+    ['p-57', 'projects.cartable.view', 'نمایش فقط پروژه‌های کارتابل من', 'کارتابل', 'projects', 'کاربر فقط پروژه‌هایی را می‌بیند که هم‌اکنون در گردش کار به نوبت او ارجاع شده است', 0],
+    ['p-14', 'projects.create', 'ثبت پروژه جدید', 'کارتابل', 'projects', 'تعریف پروژه جدید و ارسال به گردش کار و کارتابل', 0],
+    ['p-15', 'projects.edit', 'ویرایش پروژه و فایل‌ها', 'کارتابل', 'projects', 'ویرایش مشخصات، بودجه و مدیریت فایل‌های پیوست پروژه', 0],
+    ['p-16', 'projects.delete', 'حذف پروژه', 'کارتابل', 'projects', 'حذف کامل پروژه و سوابق آن از سامانه', 1],
+    ['p-17', 'projects.finalize', 'تصویب نهایی و صدور ابلاغیه', 'کارتابل', 'projects', 'خاتمه گردش کار و صدور مصوبه رسمی شورا', 1],
+    ['p-56', 'projects.manual_approve', 'تایید نهایی دستی (خارج از گردش کار)', 'کارتابل', 'projects', 'امکان تایید نهایی دستی پروژه بدون طی مراحل گردش کار (به طور پیش‌فرض حتی برای مدیران غیرفعال است)', 1],
+
+    // Entity 1.5: فهرست پروژه‌ها (نمای کل پروژه‌های سامانه)
+    ['p-58', 'project_list', 'فهرست پروژه‌ها (نمای کل پروژه‌ها)', 'فهرست پروژه‌ها', null, 'دسترسی به بخش فهرست پروژه‌ها در سایدبار برای مشاهده و مدیریت همه پروژه‌های سامانه', 0],
+    ['p-59', 'project_list.view', 'نمایش فهرست کامل پروژه‌ها', 'فهرست پروژه‌ها', 'project_list', 'مشاهده بخش فهرست پروژه‌ها و دسترسی به لیست تمام پروژه‌های سامانه', 0],
+    ['p-60', 'project_list.create', 'ثبت پروژه جدید در فهرست', 'فهرست پروژه‌ها', 'project_list', 'امکان ثبت پروژه جدید از طریق بخش فهرست پروژه‌ها', 0],
+    ['p-61', 'project_list.edit', 'ویرایش پروژه در فهرست', 'فهرست پروژه‌ها', 'project_list', 'امکان ویرایش مشخصات و فایل‌های پیوست پروژه‌ها از بخش فهرست پروژه‌ها', 0],
+    ['p-62', 'project_list.delete', 'حذف پروژه از فهرست', 'فهرست پروژه‌ها', 'project_list', 'امکان حذف کامل پروژه از بخش فهرست پروژه‌ها', 1],
 
     // Entity 2: فیلدهای پویا و ویژگی‌های پروژه
     ['p-30', 'fields', 'فیلدهای پویای پروژه', 'فیلدهای پویا', null, 'مدیریت فیلدها و ویژگی‌های سلسله‌مراتبی فرم پروژه', 0],
@@ -638,15 +684,35 @@ function seedInitialData() {
       }
     }
 
-    // Any other existing non-admin position that had voting/chat also retains view access to projects & chat on migration
-    if (isFirstCrudMigration) {
-      const voterPositions = db.prepare("SELECT DISTINCT positionId FROM position_permissions WHERE permissionCode IN ('voting.cast', 'chat.group.send')").all() as { positionId: string }[];
-      for (const vp of voterPositions) {
-        for (const viewCode of ['projects', 'projects.view', 'chat', 'chat.view']) {
-          try { insertPosPerm.run(vp.positionId, viewCode); } catch (e) {}
+      if (isFirstCrudMigration) {
+        const voterPositions = db.prepare("SELECT DISTINCT positionId FROM position_permissions WHERE permissionCode IN ('voting.cast', 'chat.group.send')").all() as { positionId: string }[];
+        for (const vp of voterPositions) {
+          for (const viewCode of ['projects', 'projects.view', 'chat', 'chat.view']) {
+            try { insertPosPerm.run(vp.positionId, viewCode); } catch (e) {}
+          }
         }
       }
     }
+
+  // One-time migration for project_list permissions: grant full project_list CRUD to admin positions & existing admin users
+  if (isProjectListMigration) {
+    const projectListCodes = ['project_list', 'project_list.view', 'project_list.create', 'project_list.edit', 'project_list.delete'];
+    for (const posId of ['pos-1', 'pos-root']) {
+      if (existingPosSet.has(posId)) {
+        for (const code of projectListCodes) {
+          try { insertPosPerm.run(posId, code); } catch (e) {}
+        }
+      }
+    }
+    try {
+      const existingAdmins = db.prepare("SELECT id FROM users WHERE role = 'ADMIN'").all() as { id: string }[];
+      const insertUsrPerm = db.prepare('INSERT OR IGNORE INTO user_permissions (userId, permissionCode) VALUES (?, ?)');
+      for (const adm of existingAdmins) {
+        for (const code of projectListCodes) {
+          try { insertUsrPerm.run(adm.id, code); } catch (e) {}
+        }
+      }
+    } catch (e) {}
   }
 
   // 3. Seed Users
@@ -905,6 +971,48 @@ function seedInitialData() {
 
     // Structure 4: ساختار مالی و بودجه (pstr-finance)
     safeInsertNode('sp-fin-root', 'pstr-finance', 'pos-fin', null, 1, 'usr-hoseini');
+  }
+
+  // One-time safe migration: seed/copy existing position_permissions into structure_position_permissions
+  // so every position node inside every existing structure has its own independent permission set.
+  try {
+    const migratedFlag = db.prepare("SELECT value FROM system_settings WHERE key = 'migrated_sp_perms_v1'").get() as { value?: string } | undefined;
+    if (!migratedFlag) {
+      const insertSpp = db.prepare('INSERT OR IGNORE INTO structure_position_permissions (structurePositionId, permissionCode) VALUES (?, ?)');
+      const allSps = db.prepare('SELECT id, positionId FROM structure_positions').all() as Array<{ id: string; positionId: string }>;
+      const legacyPosPerms = db.prepare('SELECT positionId, permissionCode FROM position_permissions').all() as Array<{ positionId: string; permissionCode: string }>;
+
+      const permsByPos = new Map<string, string[]>();
+      for (const row of legacyPosPerms) {
+        const list = permsByPos.get(row.positionId) || [];
+        list.push(row.permissionCode);
+        permsByPos.set(row.positionId, list);
+      }
+
+      const migrateSppTx = db.transaction(() => {
+        for (const sp of allSps) {
+          const codes = permsByPos.get(sp.positionId) || [];
+          for (const code of codes) {
+            if (code === 'projects.manual_approve') continue;
+            insertSpp.run(sp.id, code);
+          }
+        }
+        // Ensure root council structure node gets project_list permissions if missing
+        const hasOrgRoot = db.prepare("SELECT 1 FROM structure_positions WHERE id = 'sp-org-root'").get();
+        if (hasOrgRoot) {
+          for (const code of ['project_list', 'project_list.view', 'project_list.create', 'project_list.edit', 'project_list.delete']) {
+            insertSpp.run('sp-org-root', code);
+          }
+        }
+        db.prepare(`
+          INSERT OR REPLACE INTO system_settings (key, value, description, updatedAt)
+          VALUES ('migrated_sp_perms_v1', '1', 'Structure-position scoped permissions migration flag', ?)
+        `).run(now);
+      });
+      migrateSppTx();
+    }
+  } catch (e) {
+    console.warn('Warning during structure_position_permissions migration:', e);
   }
 
   // 9. Seed Sample Project Attachments

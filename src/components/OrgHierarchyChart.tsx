@@ -9,7 +9,6 @@ import {
   Users, 
   Edit3, 
   Trash2, 
-  Lock, 
   X,
   Briefcase
 } from 'lucide-react';
@@ -27,7 +26,6 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
   currentUser,
   onRefresh,
 }) => {
-  const [selectedPosForPerms, setSelectedPosForPerms] = useState<Position | null>(null);
   const [selectedUserForPerms, setSelectedUserForPerms] = useState<User | null>(null);
   const [showAddEditModal, setShowAddEditModal] = useState(false);
   const [editingPosition, setEditingPosition] = useState<Position | null>(null);
@@ -171,20 +169,6 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
 
             {/* Actions for this node */}
             <div className="flex items-center gap-1.5">
-              {/* Permission Tree Button */}
-              {canManagePerms && (
-                <button
-                  onClick={() => setSelectedPosForPerms(node)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 text-slate-700 hover:text-blue-700 text-xs font-medium transition cursor-pointer"
-                  title="مشاهده و ویرایش درخت دسترسی‌های این سمت"
-                >
-                  <Lock className="w-3.5 h-3.5 text-blue-600" />
-                  <span className="hidden sm:inline">درخت دسترسی‌ها</span>
-                  <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded-md font-bold">
-                    {node.permissions?.length || 0}
-                  </span>
-                </button>
-              )}
 
               {canCreatePos && (
                 <button
@@ -319,15 +303,6 @@ export const OrgHierarchyChart: React.FC<OrgHierarchyChartProps> = ({
 
         {treeData.map((rootNode) => renderTreeNode(rootNode, 0))}
       </div>
-
-      {/* Permissions Modal */}
-      {selectedPosForPerms && (
-        <PermissionsTreeModal
-          position={selectedPosForPerms}
-          onClose={() => setSelectedPosForPerms(null)}
-          onSuccess={onRefresh}
-        />
-      )}
 
       {selectedUserForPerms && (
         <PermissionsTreeModal

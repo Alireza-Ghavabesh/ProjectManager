@@ -44,6 +44,7 @@ interface ProjectCardProps {
   onEditProject?: (project: Project) => void;
   onDeleteProject?: (projectId: string) => void;
   onRefreshData?: () => void;
+  viewContext?: 'cartable' | 'project_list';
 }
 
 export const ProjectCard: React.FC<ProjectCardProps> = ({
@@ -57,6 +58,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   onEditProject,
   onDeleteProject,
   onRefreshData,
+  viewContext = 'cartable',
 }) => {
   const [internalExpanded, setInternalExpanded] = useState(false);
   const [showAdminVotes, setShowAdminVotes] = useState(false);
@@ -73,9 +75,16 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
     }
   };
 
-  const canEditProject = hasPerm(currentUser, 'projects.edit');
-  const canDeleteProject = hasPerm(currentUser, 'projects.delete');
-  const canCreateProject = hasPerm(currentUser, 'projects.create');
+  const isListContext = viewContext === 'project_list';
+  const canEditProject = isListContext
+    ? hasPerm(currentUser, 'project_list.edit')
+    : hasPerm(currentUser, 'projects.edit');
+  const canDeleteProject = isListContext
+    ? hasPerm(currentUser, 'project_list.delete')
+    : hasPerm(currentUser, 'projects.delete');
+  const canCreateProject = isListContext
+    ? hasPerm(currentUser, 'project_list.create')
+    : hasPerm(currentUser, 'projects.create');
   const canManualApprove = hasPerm(currentUser, 'projects.manual_approve');
   const canViewConfidential = hasPerm(currentUser, 'voting.confidential.view_all');
   const canViewWorkflowHistory = hasPerm(currentUser, ['workflow.history.view', 'voting.confidential.view_all']);
@@ -258,13 +267,28 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
     (project.isMyWorkflowTurn ??
       (isCreatorRevisionTurn
         ? project.createdById === currentUser.id
+        : currentStep?.config?.assigneeMode === 'CREATOR'
+        ? project.createdById === currentUser.id
         : Boolean(currentUser.positionId && currentPosIds.includes(currentUser.positionId))));
+  const isCreatorAssignedStep =
+    !isCreatorRevisionTurn &&
+    currentStep?.config?.assigneeMode === 'CREATOR' &&
+    project.createdById === currentUser.id;
   const canEditEffective =
     canEditProject || (isCreatorRevisionTurn && project.createdById === currentUser.id);
   const canForwardEffective =
-    canForwardWorkflow || (isCreatorRevisionTurn && project.createdById === currentUser.id);
+    canForwardWorkflow ||
+    (isCreatorRevisionTurn && project.createdById === currentUser.id) ||
+    isCreatorAssignedStep;
   const canManageAttachmentsEffective =
     canManageAttachments || (isCreatorRevisionTurn && project.createdById === currentUser.id);
+  const singleStepActionLabel =
+    !isCreatorRevisionTurn &&
+    currentStep?.config?.allowedActions?.length === 1 &&
+    currentStep.config.allowedActions[0] === 'APPROVE' &&
+    currentStep.config.actionLabels?.APPROVE?.trim()
+      ? currentStep.config.actionLabels.APPROVE.trim()
+      : null;
   const hasCurrentUserApproved = Boolean(project.currentStepApprovalProgress?.hasCurrentUserApproved);
   const hasCurrentUserRequestedRevision = Boolean(
     project.currentStepApprovalProgress?.hasCurrentUserRequestedRevision
@@ -382,20 +406,24 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             {isCreatorRevisionTurn ? (
               <>
                 <span className="font-semibold text-amber-800 truncate max-w-full">
-                  کارتابل ثبت‌کننده (نیازمند اصلاح)
+                  {project.currentTaskTitle || 'نیاز به اصلاح'}
                 </span>
                 <span className="text-[11px] text-amber-700 truncate max-w-full">
-                  عودت جهت ویرایش و ارسال مجدد
+                  کارتابل ثبت‌کننده اولیه پروژه
                 </span>
               </>
             ) : steps.length > 0 ? (
               <>
                 <span className="font-semibold text-slate-800 truncate max-w-full">
-                  {currentStep?.title || project.workflowTitle || 'گردش کار'}
+                  {project.currentTaskTitle || currentStep?.title || project.workflowTitle || 'گردش کار'}
                 </span>
                 <span className="text-[11px] text-slate-500 tabular-nums truncate max-w-full">
                   گام {rawStepOrder} از {steps.length}
-                  {project.currentPositionTitle ? ` · ${project.currentPositionTitle}` : ''}
+                  {currentStep?.config?.assigneeMode === 'CREATOR'
+                    ? ' · ثبت‌کننده اولیه'
+                    : project.currentPositionTitle
+                    ? ` · ${project.currentPositionTitle}`
+                    : ''}
                 </span>
               </>
             ) : (
@@ -410,7 +438,10 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               <span>{primaryStatusMeta.label}</span>
             </span>
             {hasWorkflow ? (
-              <span className="text-[11px] text-slate-500 tabular-nums">
+              <span className="text-[11px] text-slate-500 tabular-nums truncate max-w-full">
+                {(project.majorityResult === 'APPROVED' || project.majorityResult === 'REJECTED')
+                  ? `${majorityMeta.label} · `
+                  : ''}
                 مشارکت: {participatedCount} نفر
                 {totalWfParticipants > 0 ? ` از ${totalWfParticipants}` : ''}
               </span>
@@ -521,7 +552,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   title={isCreatorRevisionTurn ? 'ارسال مجدد پروژه اصلاح‌شده به گردش کار' : 'تایید و ارجاع مرحله'}
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>{isCreatorRevisionTurn ? 'ارسال مجدد' : 'ارجاع'}</span>
+                  <span>{isCreatorRevisionTurn ? 'ارسال مجدد' : singleStepActionLabel || 'ارجاع'}</span>
                 </button>
               )}
 
@@ -573,6 +604,24 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                 {primaryStatusMeta.icon}
                 {primaryStatusMeta.fullLabel}
               </span>
+              {hasWorkflow &&
+                (project.majorityResult === 'APPROVED' || project.majorityResult === 'REJECTED') && (
+                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border ${majorityMeta.bgClass}`}>
+                    {majorityMeta.icon}
+                    {majorityMeta.fullLabel}
+                  </span>
+                )}
+              {project.currentTaskTitle && !isCompletedOrRejected && (
+                <span
+                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border ${
+                    isCreatorRevisionTurn
+                      ? 'bg-amber-50 border-amber-300 text-amber-900'
+                      : 'bg-blue-50 border-blue-200 text-blue-800'
+                  }`}
+                >
+                  کار فعلی: {project.currentTaskTitle}
+                </span>
+              )}
             </div>
 
             {(canEditEffective || canDeleteProject) && (
@@ -707,7 +756,9 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                       className="text-blue-800 font-bold hover:text-blue-900 bg-blue-100/80 hover:bg-blue-100 px-2.5 py-1 rounded-lg border border-blue-300 flex items-center gap-1 cursor-pointer transition"
                     >
                       <ArrowLeft className="w-3 h-3 text-blue-700" />
-                      {isCreatorRevisionTurn ? 'ارسال مجدد به گردش کار' : 'ثبت اقدام گردش کار'}
+                      {isCreatorRevisionTurn
+                        ? 'ارسال مجدد به گردش کار'
+                        : singleStepActionLabel || 'ثبت اقدام گردش کار'}
                     </button>
                   ) : (
                     <span className="text-slate-500 font-medium">
@@ -1006,7 +1057,11 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                     }`}
                   >
                     <ArrowLeft className="w-3.5 h-3.5" />
-                    <span>{isCreatorRevisionTurn ? 'ارسال مجدد اصلاحات به گردش کار' : 'تایید و ارجاع گردش کار'}</span>
+                    <span>
+                      {isCreatorRevisionTurn
+                        ? 'ارسال مجدد اصلاحات به گردش کار'
+                        : singleStepActionLabel || 'تایید و ارجاع گردش کار'}
+                    </span>
                   </button>
                 ) : !isCompletedOrRejected && isMyTurnInWorkflow && !canForwardEffective ? (
                   <span className="text-[11px] font-bold text-amber-800 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-300">
@@ -1021,14 +1076,14 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             </div>
           )}
 
-          {/* Admin / Authorized Workflow Detailed Audit Section */}
-          {hasWorkflow && canViewWorkflowHistory && (
+          {/* Project Status History & Workflow Audit Section */}
+          {hasWorkflow && (canViewWorkflowHistory || (project.workflowLogs && project.workflowLogs.length > 0)) && (
             <div className="p-4 rounded-2xl bg-slate-50/90 border border-slate-200/90 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2 flex-wrap">
                   <History className="w-4 h-4 text-indigo-600 shrink-0" />
                   <span className="text-xs font-extrabold text-slate-900">
-                    جزئیات کامل گردش کار، اقدامات و توضیحات اعضا
+                    وضعیت پروژه، تاریخچه آرا و اقدامات گردش کار
                   </span>
                   <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-white text-indigo-700 border border-indigo-200 tabular-nums">
                     {(project.workflowLogs || []).length} رویداد ثبت‌شده
@@ -1115,7 +1170,9 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                                   </span>
                                 )}
                                 <span className="truncate">
-                                  {st.positions && st.positions.length > 0
+                                  {st.config?.assigneeMode === 'CREATOR'
+                                    ? 'ثبت‌کننده اولیه پروژه'
+                                    : st.positions && st.positions.length > 0
                                     ? st.positions.map((p) => p.title).join('، ')
                                     : st.positionTitle || 'سمت نامشخص'}
                                 </span>
@@ -1140,7 +1197,8 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   )}
 
                   {/* 2. Live current step per-assignee status & comment */}
-                  {!isCompletedOrRejected &&
+                  {canViewWorkflowHistory &&
+                    !isCompletedOrRejected &&
                     ((project.currentAssignees && project.currentAssignees.length > 0) ||
                       (project.currentStepApprovalProgress &&
                         (project.currentStepApprovalProgress.approvedUsers.length > 0 ||
