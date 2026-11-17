@@ -22,11 +22,15 @@ import {
   Copy,
   Check,
   Paperclip,
+  History,
+  MessageSquare,
+  UserCheck,
 } from 'lucide-react';
 
 import { ProjectAttachments } from './ProjectAttachments';
 import { formatBudgetDisplay, isDeadlineExpired } from '../utils/formatters';
 import { hasPerm } from '../utils/permissions';
+import { getActionBadgeMeta } from '../utils/workflowActions';
 import { api } from '../services/api';
 
 interface ProjectCardProps {
@@ -56,6 +60,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
 }) => {
   const [internalExpanded, setInternalExpanded] = useState(false);
   const [showAdminVotes, setShowAdminVotes] = useState(false);
+  const [showWorkflowDetails, setShowWorkflowDetails] = useState(true);
   const [copiedTrackingCode, setCopiedTrackingCode] = useState(false);
   const [manualApproving, setManualApproving] = useState(false);
 
@@ -73,6 +78,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   const canCreateProject = hasPerm(currentUser, 'projects.create');
   const canManualApprove = hasPerm(currentUser, 'projects.manual_approve');
   const canViewConfidential = hasPerm(currentUser, 'voting.confidential.view_all');
+  const canViewWorkflowHistory = hasPerm(currentUser, ['workflow.history.view', 'voting.confidential.view_all']);
   const canCastVote = hasPerm(currentUser, 'voting.cast');
   const canForwardWorkflow = hasPerm(currentUser, 'workflow.forward');
   const canManageAttachments = canEditProject || (canCreateProject && currentUser.id === project.createdById);
@@ -923,6 +929,286 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   </span>
                 ) : null}
               </div>
+            </div>
+          )}
+
+          {/* Admin / Authorized Workflow Detailed Audit Section */}
+          {hasWorkflow && canViewWorkflowHistory && (
+            <div className="p-4 rounded-2xl bg-slate-50/90 border border-slate-200/90 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <History className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <span className="text-xs font-extrabold text-slate-900">
+                    جزئیات کامل گردش کار، اقدامات و توضیحات اعضا
+                  </span>
+                  <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-white text-indigo-700 border border-indigo-200 tabular-nums">
+                    {(project.workflowLogs || []).length} رویداد ثبت‌شده
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowWorkflowDetails((prev) => !prev)}
+                  className="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-800 transition cursor-pointer"
+                >
+                  {showWorkflowDetails ? (
+                    <>
+                      <span>بستن جزئیات</span>
+                      <ChevronUp className="w-4 h-4" />
+                    </>
+                  ) : (
+                    <>
+                      <span>مشاهده جزئیات و تاریخچه</span>
+                      <ChevronDown className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {showWorkflowDetails && (
+                <div className="space-y-4 pt-1">
+                  {/* 1. Steps roadmap with assignees & approval mode */}
+                  {steps.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+                        <GitBranch className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>مراحل گردش کار و مسئولان هر مرحله:</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                        {steps.map((st) => {
+                          const isPast =
+                            project.status === 'APPROVED' || (project.currentStepOrder || 1) > st.stepOrder;
+                          const isCurrent =
+                            !isCompletedOrRejected && (project.currentStepOrder || 1) === st.stepOrder;
+                          const stepMode = st.config?.approvalMode || 'SINGLE';
+                          const modeLabel =
+                            stepMode === 'ALL'
+                              ? 'اجماع همه'
+                              : stepMode === 'MAJORITY'
+                              ? 'رای اکثریت'
+                              : stepMode === 'NOTIFY_ONLY'
+                              ? 'اطلاع‌رسانی'
+                              : 'تک‌نفره';
+
+                          return (
+                            <div
+                              key={st.id}
+                              className={`p-2.5 rounded-xl border space-y-1.5 ${
+                                isCurrent
+                                  ? 'bg-blue-50/70 border-blue-300'
+                                  : isPast
+                                  ? 'bg-emerald-50/60 border-emerald-200'
+                                  : 'bg-white border-slate-200'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-1.5">
+                                <span className="text-xs font-bold text-slate-900 truncate tabular-nums">
+                                  گام {st.stepOrder}: {st.title}
+                                </span>
+                                <span
+                                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md shrink-0 ${
+                                    isCurrent
+                                      ? 'bg-blue-600 text-white'
+                                      : isPast
+                                      ? 'bg-emerald-600 text-white'
+                                      : 'bg-slate-100 text-slate-500'
+                                  }`}
+                                >
+                                  {isCurrent ? 'مرحله فعلی' : isPast ? 'تکمیل شده' : 'در انتظار'}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-1 text-[10px] text-slate-600">
+                                <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-semibold text-indigo-700">
+                                  {modeLabel}
+                                </span>
+                                <span className="truncate">
+                                  {st.positions && st.positions.length > 0
+                                    ? st.positions.map((p) => p.title).join('، ')
+                                    : st.positionTitle || 'سمت نامشخص'}
+                                </span>
+                              </div>
+                              {st.assignees && st.assignees.length > 0 && (
+                                <div className="flex flex-wrap gap-1 pt-1 border-t border-slate-200/70">
+                                  {st.assignees.map((u) => (
+                                    <span
+                                      key={u.id}
+                                      className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-white border border-slate-200 text-slate-700"
+                                    >
+                                      {u.name}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 2. Live current step per-assignee status & comment */}
+                  {!isCompletedOrRejected &&
+                    ((project.currentAssignees && project.currentAssignees.length > 0) ||
+                      (project.currentStepApprovalProgress &&
+                        (project.currentStepApprovalProgress.approvedUsers.length > 0 ||
+                          (project.currentStepApprovalProgress.rejectedUsers?.length || 0) > 0))) && (
+                      <div className="space-y-2">
+                        <div className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+                          <UserCheck className="w-3.5 h-3.5 text-blue-600" />
+                          <span>وضعیت لحظه‌ای افراد در مرحله فعلی (گام {project.currentStepOrder || 1}):</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {(project.currentAssignees || []).map((assignee) => {
+                            const approvedEntry = project.currentStepApprovalProgress?.approvedUsers.find(
+                              (au) => au.userId === assignee.id
+                            );
+                            const rejectedEntry = project.currentStepApprovalProgress?.rejectedUsers?.find(
+                              (ru) => ru.userId === assignee.id
+                            );
+
+                            return (
+                              <div
+                                key={assignee.id}
+                                className={`p-2.5 rounded-xl border space-y-1.5 ${
+                                  approvedEntry
+                                    ? 'bg-emerald-50/70 border-emerald-200'
+                                    : rejectedEntry
+                                    ? 'bg-rose-50/70 border-rose-200'
+                                    : 'bg-white border-slate-200'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <span className="text-xs font-bold text-slate-900 truncate block">
+                                      {assignee.name}
+                                    </span>
+                                    <span className="text-[10px] text-slate-500 truncate block">
+                                      {assignee.positionTitle || assignee.sources.join(' • ')}
+                                    </span>
+                                  </div>
+                                  {approvedEntry ? (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-800 border border-emerald-300 shrink-0">
+                                      <CheckCircle2 className="w-3 h-3" />
+                                      تایید کرده
+                                    </span>
+                                  ) : rejectedEntry ? (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg bg-rose-100 text-rose-800 border border-rose-300 shrink-0">
+                                      <XCircle className="w-3 h-3" />
+                                      رای مخالف
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 shrink-0">
+                                      <Clock className="w-3 h-3" />
+                                      در انتظار اقدام
+                                    </span>
+                                  )}
+                                </div>
+                                {(approvedEntry || rejectedEntry) && (
+                                  <div className="text-[11px] text-slate-700 bg-white/90 px-2.5 py-1.5 rounded-lg border border-slate-200/80 flex items-start justify-between gap-2">
+                                    <span className="leading-relaxed">
+                                      {(approvedEntry || rejectedEntry)?.comment ? (
+                                        <>
+                                          <strong className="text-indigo-700 ml-1">توضیح:</strong>
+                                          {(approvedEntry || rejectedEntry)?.comment}
+                                        </>
+                                      ) : (
+                                        <span className="text-slate-400">بدون توضیح تکمیلی</span>
+                                      )}
+                                    </span>
+                                    <span className="text-[10px] text-slate-400 shrink-0 tabular-nums">
+                                      {new Date((approvedEntry || rejectedEntry)!.createdAt).toLocaleTimeString('fa-IR', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                      })}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                  {/* 3. Chronological timeline of all user decisions & comments across steps */}
+                  <div className="space-y-2">
+                    <div className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+                      <MessageSquare className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>تاریخچه کامل انتخاب‌ها و توضیحات افراد در تمام مراحل:</span>
+                    </div>
+                    {project.workflowLogs && project.workflowLogs.length > 0 ? (
+                      <div className="space-y-2">
+                        {project.workflowLogs.map((log, idx) => {
+                          const actionMeta = getActionBadgeMeta(log.action);
+                          return (
+                            <div
+                              key={log.id}
+                              className="p-3 rounded-xl bg-white border border-slate-200 text-xs space-y-1.5"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="text-[10px] font-mono font-bold text-slate-400 tabular-nums">
+                                    #{idx + 1}
+                                  </span>
+                                  <span
+                                    className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${actionMeta.badgeClass}`}
+                                  >
+                                    <span className={`w-1.5 h-1.5 rounded-full ${actionMeta.dotClass}`} />
+                                    {actionMeta.label}
+                                  </span>
+                                  {log.stepOrder > 0 && (
+                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200 tabular-nums">
+                                      گام {log.stepOrder}
+                                    </span>
+                                  )}
+                                  <span className="font-bold text-slate-900">
+                                    {log.fromUserName || 'کاربر'}
+                                  </span>
+                                  {log.fromUsername && (
+                                    <span className="text-[10px] font-mono text-slate-400" dir="ltr">
+                                      @{log.fromUsername}
+                                    </span>
+                                  )}
+                                  {log.fromUserPosition && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-50 border border-slate-200 text-slate-600">
+                                      {log.fromUserPosition}
+                                    </span>
+                                  )}
+                                  {log.toPositionTitle &&
+                                    ['FORWARD', 'NEEDS_REVISION', 'REJECTED', 'FINAL_APPROVED'].includes(log.action) && (
+                                      <span className="text-[11px] text-slate-600">
+                                        ← به: <strong>{log.toPositionTitle}</strong>
+                                      </span>
+                                    )}
+                                </div>
+                                <span className="text-[10px] text-slate-400 tabular-nums shrink-0">
+                                  {new Date(log.createdAt).toLocaleDateString('fa-IR')} •{' '}
+                                  {new Date(log.createdAt).toLocaleTimeString('fa-IR', {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })}
+                                </span>
+                              </div>
+                              {log.comment ? (
+                                <p className="text-xs text-slate-700 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200/80 leading-relaxed whitespace-pre-wrap">
+                                  {log.comment}
+                                </p>
+                              ) : (
+                                <p className="text-[11px] text-slate-400">
+                                  بدون توضیح تکمیلی
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="p-3 rounded-xl bg-white border border-slate-200 text-xs text-slate-500 text-center">
+                        هنوز رویدادی در گردش کار این پروژه ثبت نشده است.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

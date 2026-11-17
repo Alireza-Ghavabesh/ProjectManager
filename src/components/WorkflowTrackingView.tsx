@@ -73,7 +73,7 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
   const canForwardWorkflow = hasPerm(currentUser, 'workflow.forward');
-  const canViewHistory = hasPerm(currentUser, ['workflow.history.view', 'workflow.view', 'workflow.edit', 'workflow.forward']);
+  const canViewHistory = hasPerm(currentUser, ['workflow.history.view', 'voting.confidential.view_all']);
 
   const loadTracking = async () => {
     setLoading(true);
@@ -806,27 +806,64 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                       </div>
                     ) : item.currentAssignees.length > 0 ? (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {item.currentAssignees.map((assignee) => (
-                          <div
-                            key={assignee.id}
-                            className="p-2.5 rounded-xl bg-white border border-indigo-200/80 flex items-center gap-2.5 shadow-2xs"
-                          >
-                            <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 font-black text-xs flex items-center justify-center border border-indigo-200 shrink-0">
-                              {assignee.name.charAt(0)}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="text-xs font-bold text-slate-900 truncate flex items-center gap-1">
-                                <span className="truncate">{assignee.name}</span>
-                                <span className="text-[10px] font-mono text-slate-400 shrink-0" dir="ltr">
-                                  @{assignee.username}
-                                </span>
+                        {item.currentAssignees.map((assignee) => {
+                          const approvedEntry = item.currentStepApprovalProgress?.approvedUsers.find(
+                            (au) => au.userId === assignee.id
+                          );
+                          const rejectedEntry = item.currentStepApprovalProgress?.rejectedUsers?.find(
+                            (ru) => ru.userId === assignee.id
+                          );
+                          const canSeeEntry = canViewHistory || assignee.id === currentUser.id;
+
+                          return (
+                            <div
+                              key={assignee.id}
+                              className={`p-2.5 rounded-xl border space-y-1.5 shadow-2xs ${
+                                canSeeEntry && approvedEntry
+                                  ? 'bg-emerald-50/70 border-emerald-200'
+                                  : canSeeEntry && rejectedEntry
+                                  ? 'bg-rose-50/70 border-rose-200'
+                                  : 'bg-white border-indigo-200/80'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2.5">
+                                <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 font-black text-xs flex items-center justify-center border border-indigo-200 shrink-0">
+                                  {assignee.name.charAt(0)}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-xs font-bold text-slate-900 truncate flex items-center gap-1">
+                                    <span className="truncate">{assignee.name}</span>
+                                    <span className="text-[10px] font-mono text-slate-400 shrink-0" dir="ltr">
+                                      @{assignee.username}
+                                    </span>
+                                  </div>
+                                  <div className="text-[10px] text-indigo-600 truncate mt-0.5">
+                                    {assignee.sources.join(' • ')}
+                                  </div>
+                                </div>
+                                {canSeeEntry && approvedEntry ? (
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-800 border border-emerald-300 shrink-0">
+                                    تایید کرده
+                                  </span>
+                                ) : canSeeEntry && rejectedEntry ? (
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-rose-100 text-rose-800 border border-rose-300 shrink-0">
+                                    رای مخالف
+                                  </span>
+                                ) : canViewHistory ? (
+                                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 shrink-0">
+                                    در انتظار
+                                  </span>
+                                ) : null}
                               </div>
-                              <div className="text-[10px] text-indigo-600 truncate mt-0.5">
-                                {assignee.sources.join(' • ')}
-                              </div>
+                              {canSeeEntry && (approvedEntry?.comment || rejectedEntry?.comment) && (
+                                <div className="text-[11px] text-slate-700 bg-white/90 px-2.5 py-1.5 rounded-lg border border-slate-200/80 leading-relaxed">
+                                  <span className="font-bold text-indigo-700 ml-1">توضیح:</span>
+                                  {(approvedEntry || rejectedEntry)?.comment}
+                                </div>
+                              )}
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     ) : (
                       <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-2">

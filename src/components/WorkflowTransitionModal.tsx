@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Project, User } from '../types';
 import { api } from '../services/api';
+import { hasPerm } from '../utils/permissions';
 import { getActionBadgeMeta } from '../utils/workflowActions';
 import { 
   GitBranch, 
@@ -55,6 +56,10 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
   const canSubmitAction =
     !isCompletedOrRejected &&
     (isAssignee || (currentUser.role === 'ADMIN' && adminOverride));
+  const canViewWorkflowHistory = hasPerm(currentUser, [
+    'workflow.history.view',
+    'voting.confidential.view_all',
+  ]);
   const showQuorumBar =
     Boolean(stepProgress) &&
     (currentApprovalMode === 'MAJORITY' || currentApprovalMode === 'ALL') &&
@@ -197,32 +202,46 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
               </div>
 
               {stepProgress.approvedUsers.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                  <span className="text-slate-500">رای موافق تاکنون:</span>
-                  {stepProgress.approvedUsers.map((au) => (
-                    <span
-                      key={au.userId}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold"
-                    >
-                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                      {au.userName}
-                    </span>
-                  ))}
+                <div className="space-y-1 text-[11px]">
+                  <span className="text-slate-500 block">رای موافق تاکنون:</span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {stepProgress.approvedUsers.map((au) => (
+                      <span
+                        key={au.userId}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold"
+                      >
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                        <span>{au.userName}</span>
+                        {(canViewWorkflowHistory || au.userId === currentUser.id) && au.comment && (
+                          <span className="text-[10px] font-normal text-emerald-700">
+                            («{au.comment}»)
+                          </span>
+                        )}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               )}
 
               {stepProgress.rejectedUsers && stepProgress.rejectedUsers.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                  <span className="text-slate-500">رای مخالف تاکنون:</span>
-                  {stepProgress.rejectedUsers.map((ru) => (
-                    <span
-                      key={ru.userId}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-rose-50 text-rose-800 border border-rose-200 font-semibold"
-                    >
-                      <XCircle className="w-3 h-3 text-rose-600" />
-                      {ru.userName}
-                    </span>
-                  ))}
+                <div className="space-y-1 text-[11px]">
+                  <span className="text-slate-500 block">رای مخالف تاکنون:</span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {stepProgress.rejectedUsers.map((ru) => (
+                      <span
+                        key={ru.userId}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-rose-50 text-rose-800 border border-rose-200 font-semibold"
+                      >
+                        <XCircle className="w-3 h-3 text-rose-600 shrink-0" />
+                        <span>{ru.userName}</span>
+                        {(canViewWorkflowHistory || ru.userId === currentUser.id) && ru.comment && (
+                          <span className="text-[10px] font-normal text-rose-700">
+                            («{ru.comment}»)
+                          </span>
+                        )}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               )}
 

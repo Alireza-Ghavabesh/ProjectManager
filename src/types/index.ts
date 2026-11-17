@@ -137,6 +137,7 @@ export interface WorkflowStepApprovalProgress {
     userId: string;
     userName: string;
     positionTitle?: string;
+    comment?: string;
     createdAt: string;
   }>;
   rejectedUserIds?: string[];
@@ -144,6 +145,7 @@ export interface WorkflowStepApprovalProgress {
     userId: string;
     userName: string;
     positionTitle?: string;
+    comment?: string;
     createdAt: string;
   }>;
   totalAssignees: number;
@@ -169,6 +171,7 @@ export interface WorkflowStep {
   description?: string;
   configJson?: string;
   config?: WorkflowStepConfig;
+  assignees?: WorkflowTrackingAssignee[];
 }
 
 export interface Workflow {

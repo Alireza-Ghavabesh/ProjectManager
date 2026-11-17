@@ -205,9 +205,13 @@ function recordProjectHistory(params: {
   }
 }
 
-// Mask confidential vote choice inside history logs when viewer lacks voting.confidential.view_all
+// Mask confidential vote choices & workflow step comments when viewer lacks inspection permissions
 function sanitizeWorkflowLogsForViewer(logs: any[], viewer: any) {
   const canInspectConfidential = hasPermission(viewer, 'voting.confidential.view_all');
+  const canInspectWorkflowHistory = hasPermission(viewer, [
+    'workflow.history.view',
+    'voting.confidential.view_all',
+  ]);
   return logs.map((l) => {
     if (
       !canInspectConfidential &&
@@ -217,6 +221,24 @@ function sanitizeWorkflowLogsForViewer(logs: any[], viewer: any) {
       return {
         ...l,
         comment: 'ثبت / بروزرسانی رای تخصصی در کارتابل (محتوای رای محرمانه است)',
+      };
+    }
+    if (
+      !canInspectWorkflowHistory &&
+      viewer?.id !== l.fromUserId &&
+      [
+        'STEP_APPROVED',
+        'STEP_REJECTED',
+        'FORWARD',
+        'FINAL_APPROVED',
+        'MANUAL_APPROVED',
+        'REJECTED',
+        'STATUS_CHANGED',
+      ].includes(l.action)
+    ) {
+      return {
+        ...l,
+        comment: 'جزئیات و توضیحات این اقدام محرمانه است (نیازمند دسترسی مشاهده جزئیات گردش کار)',
       };
     }
     return l;
@@ -1040,20 +1062,41 @@ function buildStepApprovalProgress(
   stepOrder: number,
   approvalMode: string | undefined,
   assignees: any[],
-  viewerUserId?: string
+  viewerUserId?: string,
+  canInspectHistory = true
 ) {
   const mode = (approvalMode || 'SINGLE') as 'SINGLE' | 'MAJORITY' | 'ALL' | 'NOTIFY_ONLY';
   const rows = db.prepare(`
-    SELECT wsa.userId, wsa.createdAt, COALESCE(wsa.decision, 'APPROVE') as decision, u.name as userName, p.title as positionTitle
+    SELECT wsa.userId, wsa.createdAt, COALESCE(wsa.decision, 'APPROVE') as decision,
+           COALESCE(wsa.comment, '') as comment,
+           u.name as userName, p.title as positionTitle
     FROM workflow_step_approvals wsa
     JOIN users u ON wsa.userId = u.id
     LEFT JOIN positions p ON u.positionId = p.id
     WHERE wsa.projectId = ? AND wsa.stepOrder = ?
     ORDER BY wsa.createdAt ASC
-  `).all(projectId, stepOrder) as Array<{ userId: string; userName: string; positionTitle?: string; decision: string; createdAt: string }>;
+  `).all(projectId, stepOrder) as Array<{
+    userId: string;
+    userName: string;
+    positionTitle?: string;
+    decision: string;
+    comment: string;
+    createdAt: string;
+  }>;
 
   const approvedRows = rows.filter((r) => r.decision !== 'REJECT');
   const rejectedRows = rows.filter((r) => r.decision === 'REJECT');
+
+  const visibleApprovedUsers = canInspectHistory
+    ? approvedRows
+    : viewerUserId
+    ? approvedRows.filter((r) => r.userId === viewerUserId)
+    : [];
+  const visibleRejectedUsers = canInspectHistory
+    ? rejectedRows
+    : viewerUserId
+    ? rejectedRows.filter((r) => r.userId === viewerUserId)
+    : [];
 
   const requiredCount = getRequiredApprovalsForMode(mode, assignees.length);
   const rejectRequiredCount =
@@ -1064,9 +1107,9 @@ function buildStepApprovalProgress(
   return {
     mode,
     approvedUserIds: approvedRows.map((r) => r.userId),
-    approvedUsers: approvedRows,
+    approvedUsers: visibleApprovedUsers,
     rejectedUserIds: rejectedRows.map((r) => r.userId),
-    rejectedUsers: rejectedRows,
+    rejectedUsers: visibleRejectedUsers,
     totalAssignees: assignees.length,
     requiredCount,
     rejectRequiredCount,
@@ -1118,6 +1161,10 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
     return res.status(403).json({ error: 'شما مجوز مشاهده و رهگیری گردش کارها را ندارید.' });
   }
   const canViewAllProjects = hasPermission(currentUser, 'projects.view');
+  const canInspectWorkflowHistory = hasPermission(currentUser, [
+    'workflow.history.view',
+    'voting.confidential.view_all',
+  ]);
 
   const projects = db.prepare(`
     SELECT p.*, u.name as creatorName, u.username as creatorUsername,
@@ -1209,7 +1256,8 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
           prj.currentStepOrder || 1,
           currentStep?.config?.approvalMode,
           currentAssignees,
-          currentUser.id
+          currentUser.id,
+          canInspectWorkflowHistory
         );
 
     const logs = allLogs.filter((l) => l.projectId === prj.id);
@@ -2735,6 +2783,10 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
   const allLogs = sanitizeWorkflowLogsForViewer(allLogsRaw, currentUser);
 
   const canViewConfidential = hasPermission(currentUser, 'voting.confidential.view_all');
+  const canInspectWorkflowHistory = hasPermission(currentUser, [
+    'workflow.history.view',
+    'voting.confidential.view_all',
+  ]);
 
   // Pre-fetch users & structure assignments so multi-position steps and member counts resolve consistently
   const allUsers = db.prepare(`
@@ -2772,7 +2824,21 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
     }
 
     const majorityInfo = calculateMajorityForProject(prj.id);
-    const prjSteps = prj.workflowId ? allSteps.filter((s) => s.workflowId === prj.workflowId) : [];
+    const prjSteps = prj.workflowId
+      ? allSteps
+          .filter((s) => s.workflowId === prj.workflowId)
+          .map((st) => ({
+            ...st,
+            assignees: resolveAssigneesForStepPositions(
+              st.positionIds || [],
+              st.structureId || null,
+              allUsers,
+              allStructAssignments,
+              posMap,
+              st.config?.userIds
+            ),
+          }))
+      : [];
     const hasWorkflow = Boolean(prj.workflowId && prjSteps.length > 0);
     const prjLogs = allLogs.filter((l) => l.projectId === prj.id);
     const prjAttachments = allAttachments.filter((a) => a.projectId === prj.id);
@@ -2811,7 +2877,8 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
           prj.currentStepOrder || 1,
           currentStepObj?.config?.approvalMode,
           currentAssignees,
-          currentUser.id
+          currentUser.id,
+          canInspectWorkflowHistory
         );
 
     const isDirectPosMatch = Boolean(
