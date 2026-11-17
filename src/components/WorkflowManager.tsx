@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Workflow,
+  WorkflowDiagramLayout,
   WorkflowStepConfig,
   Position,
   User,
@@ -10,6 +11,12 @@ import {
 import { api } from '../services/api';
 import { hasPerm } from '../utils/permissions';
 import { WorkflowTrackingView } from './WorkflowTrackingView';
+import {
+  BpmnWorkflowCanvas,
+  BpmnBranchKind,
+  getDefaultDiagramLayout,
+  getDefaultNodePosition,
+} from './BpmnWorkflowCanvas';
 import {
   GitBranch,
   Plus,
@@ -35,6 +42,9 @@ import {
   Wand2,
   Search,
   Info,
+  Clock,
+  LayoutGrid,
+  List,
 } from 'lucide-react';
 
 interface WorkflowManagerProps {
@@ -110,6 +120,10 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
 
   const [steps, setSteps] = useState<EditableStep[]>([]);
   const [selectedStepIdx, setSelectedStepIdx] = useState<number>(0);
+  const [diagramLayout, setDiagramLayout] = useState<WorkflowDiagramLayout>(() =>
+    getDefaultDiagramLayout(1)
+  );
+  const [designerMode, setDesignerMode] = useState<'bpmn' | 'list'>('bpmn');
 
   // Toolbox state inside visual designer: default to empty ("چارت عمومی سازمان") so all positions match cleanly
   const [toolboxStructureId, setToolboxStructureId] = useState<string>('');
@@ -283,9 +297,20 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
         structureId: null,
         positionIds: defaultPos,
         description: 'سمت اولیه دریافت‌کننده پروژه',
-        config: { approvalMode: 'SINGLE', onRejectAction: 'RETURN_PREV' },
+        config: {
+          approvalMode: 'SINGLE',
+          voteCollectionMode: 'EARLY_DECIDE',
+          revisionMode: 'FOLLOW_APPROVAL',
+          tieBreaker: 'REVISION',
+          approveTarget: 'NEXT_STEP',
+          onRevisionAction: 'RETURN_PREV',
+          onRejectAction: 'REJECT_PROJECT',
+          nodePosition: getDefaultNodePosition(0),
+        },
       },
     ]);
+    setDiagramLayout(getDefaultDiagramLayout(1));
+    setDesignerMode('bpmn');
     setSelectedStepIdx(0);
     setError('');
     setModalOpen(true);
@@ -301,7 +326,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
     setIsDefault(Boolean(wf.isDefault));
     setToolboxStructureId('');
     setToolboxSearch('');
-    const mapped: EditableStep[] = wf.steps.map((s) => {
+    const mapped: EditableStep[] = wf.steps.map((s, idx) => {
       let parsedCfg: WorkflowStepConfig = s.config || {};
       if (!s.config && s.configJson) {
         try {
@@ -316,6 +341,14 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
           : s.positionId
           ? [s.positionId]
           : [];
+      const legacyRev = parsedCfg.onRevisionAction || parsedCfg.onRejectAction || 'RETURN_PREV';
+      const legacyReject =
+        parsedCfg.onRevisionAction !== undefined
+          ? parsedCfg.onRejectAction || 'REJECT_PROJECT'
+          : parsedCfg.onRejectAction === 'RETURN_CREATOR' || parsedCfg.onRejectAction === 'CUSTOM_STEP'
+          ? parsedCfg.onRejectAction
+          : 'REJECT_PROJECT';
+
       return {
         id: s.id,
         localKey: makeLocalKey(),
@@ -325,15 +358,24 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
         description: s.description || '',
         config: {
           approvalMode: parsedCfg.approvalMode || 'SINGLE',
-          onRejectAction: parsedCfg.onRejectAction || 'RETURN_PREV',
-          onRejectStepOrder: parsedCfg.onRejectStepOrder,
+          voteCollectionMode: parsedCfg.voteCollectionMode || 'EARLY_DECIDE',
+          revisionMode: parsedCfg.revisionMode || 'FOLLOW_APPROVAL',
+          tieBreaker: parsedCfg.tieBreaker || 'REVISION',
+          approveTarget: parsedCfg.approveTarget || 'NEXT_STEP',
           onApproveStepOrder: parsedCfg.onApproveStepOrder,
+          onRevisionAction: legacyRev,
+          onRevisionStepOrder: parsedCfg.onRevisionStepOrder ?? parsedCfg.onRejectStepOrder,
+          onRejectAction: legacyReject,
+          onRejectStepOrder: parsedCfg.onRejectStepOrder,
           conditionLabel: parsedCfg.conditionLabel || '',
           userIds: Array.isArray(parsedCfg.userIds) ? parsedCfg.userIds : [],
+          nodePosition: parsedCfg.nodePosition || getDefaultNodePosition(idx),
         },
       };
     });
     setSteps(mapped);
+    setDiagramLayout(wf.diagram || getDefaultDiagramLayout(mapped.length));
+    setDesignerMode('bpmn');
     setSelectedStepIdx(0);
     setError('');
     setModalOpen(true);
@@ -351,14 +393,115 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
         : fallbackPos
         ? [fallbackPos]
         : [];
+    const baseIdx = steps.length;
     return {
       localKey: makeLocalKey(),
       title: overrides.title || `گام ${steps.length + 1}`,
       structureId: structId,
       positionIds,
       description: overrides.description || '',
-      config: overrides.config || { approvalMode: 'SINGLE', onRejectAction: 'RETURN_PREV' },
+      config: overrides.config || {
+        approvalMode: 'SINGLE',
+        voteCollectionMode: 'EARLY_DECIDE',
+        revisionMode: 'FOLLOW_APPROVAL',
+        tieBreaker: 'REVISION',
+        approveTarget: 'NEXT_STEP',
+        onRevisionAction: 'RETURN_PREV',
+        onRejectAction: 'REJECT_PROJECT',
+        nodePosition: getDefaultNodePosition(baseIdx),
+      },
     };
+  };
+
+  const handleUpdateStepPos = (idx: number, pos: { x: number; y: number }) => {
+    setSteps((prev) => {
+      const copy = [...prev];
+      if (!copy[idx]) return prev;
+      copy[idx] = {
+        ...copy[idx],
+        config: {
+          ...copy[idx].config,
+          nodePosition: pos,
+        },
+      };
+      return copy;
+    });
+  };
+
+  const handleConnectBpmnBranch = (
+    fromIdx: number,
+    branch: BpmnBranchKind,
+    target: { kind: 'step'; stepOrder: number } | { kind: 'end_approved' } | { kind: 'end_rejected' }
+  ) => {
+    setSteps((prev) => {
+      const copy = [...prev];
+      const step = copy[fromIdx];
+      if (!step) return prev;
+      const nextCfg = { ...step.config };
+
+      if (branch === 'approve') {
+        if (target.kind === 'end_approved') {
+          nextCfg.approveTarget = 'END_APPROVED';
+          nextCfg.onApproveStepOrder = undefined;
+        } else if (target.kind === 'step') {
+          if (target.stepOrder === fromIdx + 2) {
+            nextCfg.approveTarget = 'NEXT_STEP';
+            nextCfg.onApproveStepOrder = undefined;
+          } else {
+            nextCfg.approveTarget = 'CUSTOM_STEP';
+            nextCfg.onApproveStepOrder = target.stepOrder;
+          }
+        }
+      } else if (branch === 'revision') {
+        if (target.kind === 'end_rejected') {
+          nextCfg.onRevisionAction = 'REJECT_PROJECT';
+          nextCfg.onRevisionStepOrder = undefined;
+        } else if (target.kind === 'step') {
+          if (target.stepOrder === 1 && fromIdx > 1) {
+            nextCfg.onRevisionAction = 'RETURN_CREATOR';
+            nextCfg.onRevisionStepOrder = undefined;
+          } else if (target.stepOrder === Math.max(1, fromIdx)) {
+            nextCfg.onRevisionAction = 'RETURN_PREV';
+            nextCfg.onRevisionStepOrder = undefined;
+          } else {
+            nextCfg.onRevisionAction = 'CUSTOM_STEP';
+            nextCfg.onRevisionStepOrder = target.stepOrder;
+          }
+        }
+      } else {
+        if (target.kind === 'end_rejected') {
+          nextCfg.onRejectAction = 'REJECT_PROJECT';
+          nextCfg.onRejectStepOrder = undefined;
+        } else if (target.kind === 'step') {
+          if (target.stepOrder === 1 && fromIdx > 1) {
+            nextCfg.onRejectAction = 'RETURN_CREATOR';
+            nextCfg.onRejectStepOrder = undefined;
+          } else if (target.stepOrder === Math.max(1, fromIdx)) {
+            nextCfg.onRejectAction = 'RETURN_PREV';
+            nextCfg.onRejectStepOrder = undefined;
+          } else {
+            nextCfg.onRejectAction = 'CUSTOM_STEP';
+            nextCfg.onRejectStepOrder = target.stepOrder;
+          }
+        }
+      }
+
+      copy[fromIdx] = { ...step, config: nextCfg };
+      return copy;
+    });
+  };
+
+  const handleAutoLayoutBpmn = () => {
+    setSteps((prev) =>
+      prev.map((st, idx) => ({
+        ...st,
+        config: {
+          ...st.config,
+          nodePosition: getDefaultNodePosition(idx),
+        },
+      }))
+    );
+    setDiagramLayout(getDefaultDiagramLayout(steps.length));
   };
 
   const insertStepAt = (index: number, newStep: EditableStep) => {
@@ -587,6 +730,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
         title: title.trim(),
         description: description.trim(),
         isDefault,
+        diagram: diagramLayout,
         steps: steps.map((s, idx) => ({
           id: s.id,
           title: s.title,
@@ -595,7 +739,10 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
           positionIds: s.positionIds,
           actionType: 'APPROVAL',
           description: s.description || '',
-          config: s.config,
+          config: {
+            ...s.config,
+            nodePosition: s.config.nodePosition || getDefaultNodePosition(idx),
+          },
           stepOrder: idx + 1,
         })),
       };
@@ -879,16 +1026,39 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                                 <span className="text-[10px] px-2 py-0.5 rounded-md bg-violet-50 border border-violet-200 text-violet-800 font-semibold">
                                   {getApprovalSummaryText(stepCfg.approvalMode, stepAssignees.count)}
                                 </span>
+                                {stepCfg.voteCollectionMode === 'WAIT_ALL' && (
+                                  <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-800 font-bold">
+                                    <Clock className="w-3 h-3 text-indigo-600" />
+                                    صبر تا اقدام همه
+                                  </span>
+                                )}
                                 {stepCfg.conditionLabel && (
                                   <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-800 font-semibold">
                                     شرط: {stepCfg.conditionLabel}
                                   </span>
                                 )}
-                                {stepCfg.onRejectAction && stepCfg.onRejectAction !== 'RETURN_PREV' && (
+                                {(stepCfg.approveTarget === 'END_APPROVED' ||
+                                  (stepCfg.approveTarget === 'CUSTOM_STEP' && stepCfg.onApproveStepOrder)) && (
+                                  <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 font-semibold">
+                                    تایید ←{' '}
+                                    {stepCfg.approveTarget === 'END_APPROVED'
+                                      ? 'تصویب نهایی'
+                                      : `گام ${stepCfg.onApproveStepOrder}`}
+                                  </span>
+                                )}
+                                {stepCfg.onRevisionAction && stepCfg.onRevisionAction !== 'RETURN_PREV' && (
+                                  <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-800 font-semibold">
+                                    اصلاح ←{' '}
+                                    {stepCfg.onRevisionAction === 'CUSTOM_STEP' && stepCfg.onRevisionStepOrder
+                                      ? `گام ${stepCfg.onRevisionStepOrder}`
+                                      : REJECT_ACTION_LABELS[stepCfg.onRevisionAction]}
+                                  </span>
+                                )}
+                                {stepCfg.onRejectAction && stepCfg.onRejectAction !== 'REJECT_PROJECT' && (
                                   <span className="text-[10px] px-2 py-0.5 rounded-md bg-rose-50 border border-rose-200 text-rose-700 font-semibold">
-                                    در عدم تایید:{' '}
+                                    رد ←{' '}
                                     {stepCfg.onRejectAction === 'CUSTOM_STEP' && stepCfg.onRejectStepOrder
-                                      ? `بازگشت به گام ${stepCfg.onRejectStepOrder}`
+                                      ? `گام ${stepCfg.onRejectStepOrder}`
                                       : REJECT_ACTION_LABELS[stepCfg.onRejectAction]}
                                   </span>
                                 )}
@@ -1197,9 +1367,99 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                   </div>
                 </div>
 
-                {/* LEFT SIDE IN RTL: VISUAL FLOWCHART CANVAS + STEP INSPECTOR */}
+                {/* LEFT SIDE IN RTL: BPMN VISUAL DESIGNER / LIST VIEW + STEP INSPECTOR */}
                 <div className="lg:col-span-8 space-y-4">
-                  {/* Flowchart Canvas */}
+                  {/* Designer Mode Switcher */}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="inline-flex items-center p-1 rounded-xl bg-slate-100 border border-slate-200">
+                      <button
+                        type="button"
+                        onClick={() => setDesignerMode('bpmn')}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition ${
+                          designerMode === 'bpmn'
+                            ? 'bg-indigo-600 text-white shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        <LayoutGrid className="w-3.5 h-3.5" />
+                        <span>بوم بصری BPMN (چسباندن مسیرها)</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDesignerMode('list')}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition ${
+                          designerMode === 'list'
+                            ? 'bg-indigo-600 text-white shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        <List className="w-3.5 h-3.5" />
+                        <span>نمای لیستی ترتیب مراحل</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {designerMode === 'bpmn' ? (
+                    <BpmnWorkflowCanvas
+                      steps={steps}
+                      selectedStepIdx={selectedStepIdx}
+                      diagram={diagramLayout}
+                      onSelectStep={(idx) => setSelectedStepIdx(idx)}
+                      onDiagramChange={(next) => setDiagramLayout(next)}
+                      onUpdateStepPos={handleUpdateStepPos}
+                      onConnectBranch={handleConnectBpmnBranch}
+                      onDeleteStep={removeStep}
+                      onAddBlankStepAt={(pos) => {
+                        const newIdx = steps.length;
+                        insertStepAt(
+                          newIdx,
+                          createDefaultStep({
+                            config: {
+                              approvalMode: 'SINGLE',
+                              voteCollectionMode: 'EARLY_DECIDE',
+                              revisionMode: 'FOLLOW_APPROVAL',
+                              tieBreaker: 'REVISION',
+                              approveTarget: 'NEXT_STEP',
+                              onRevisionAction: 'RETURN_PREV',
+                              onRejectAction: 'REJECT_PROJECT',
+                              nodePosition: pos || getDefaultNodePosition(newIdx),
+                            },
+                          })
+                        );
+                      }}
+                      onAutoLayout={handleAutoLayoutBpmn}
+                      getPositionTitle={(pid, structId) => getPositionDetails(pid, structId).title}
+                      getStepAssigneeCount={(st) =>
+                        getStepUniqueAssignees(st.positionIds, st.structureId, st.config.userIds).count
+                      }
+                      dragPayload={dragPayload}
+                      onDropPositionAtCanvas={(positionId, posTitle, pos) => {
+                        const newIdx = steps.length;
+                        insertStepAt(
+                          newIdx,
+                          createDefaultStep({
+                            title: `بررسی در ${posTitle}`,
+                            structureId: null,
+                            positionIds: [positionId],
+                            config: {
+                              approvalMode: 'SINGLE',
+                              voteCollectionMode: 'EARLY_DECIDE',
+                              revisionMode: 'FOLLOW_APPROVAL',
+                              tieBreaker: 'REVISION',
+                              approveTarget: 'NEXT_STEP',
+                              onRevisionAction: 'RETURN_PREV',
+                              onRejectAction: 'REJECT_PROJECT',
+                              nodePosition: pos,
+                            },
+                          })
+                        );
+                      }}
+                      onDropPositionOnStep={(targetIdx, positionId) =>
+                        addParallelPositionToStep(targetIdx, positionId, null)
+                      }
+                      onClearDrag={clearDragState}
+                    />
+                  ) : (
                   <div className="p-4 rounded-2xl bg-slate-50/90 border border-slate-200 space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
@@ -1444,6 +1704,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                       </div>
                     </div>
                   </div>
+                  )}
 
                   {/* Step Inspector Panel (Full Customization for Selected Step) */}
                   {selectedStep && (() => {
@@ -1638,56 +1899,206 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                           </div>
                         </div>
 
-                        {/* Clarified Approval Rule & Rejection Routing */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div className="space-y-1.5">
-                            <label className="block text-[11px] font-bold text-slate-700">
-                              نحوه تایید و عبور به مرحله بعد
-                            </label>
-                            <select
-                              value={selectedStep.config.approvalMode || 'SINGLE'}
-                              onChange={(e) =>
-                                handleStepConfigChange(selectedStepIdx, 'approvalMode', e.target.value)
-                              }
-                              className="w-full rounded-xl bg-slate-50 border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white cursor-pointer"
-                            >
-                              {APPROVAL_MODE_OPTIONS.map((opt) => (
-                                <option key={opt.value} value={opt.value}>
-                                  {opt.label}
-                                </option>
-                              ))}
-                            </select>
-                            <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-200/80 text-[11px] text-indigo-900 leading-relaxed">
-                              {getApprovalExplanationText(selectedStep.config.approvalMode, inspectorAssignees.count)}
-                            </div>
+                        {/* BPMN Gateway Voting & Branch Routing Panel */}
+                        <div className="p-3.5 rounded-2xl bg-indigo-50/40 border border-indigo-200/80 space-y-3.5">
+                          <div className="text-xs font-black text-indigo-950 flex items-center gap-1.5">
+                            <GitBranch className="w-4 h-4 text-indigo-600" />
+                            <span>قوانین دروازه تصمیم‌گیری و مسیرهای خروجی BPMN در این مرحله</span>
                           </div>
 
-                          <div className="space-y-3">
-                            <div>
-                              <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1">
-                                <CornerDownLeft className="w-3 h-3 text-rose-500" />
-                                <span>اگر این مرحله رد یا نیاز به اصلاح زد، پروژه کجا برود؟</span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div className="space-y-1.5">
+                              <label className="block text-[11px] font-bold text-slate-700">
+                                نحوه تایید و عبور به گام بعد
                               </label>
                               <select
-                                value={selectedStep.config.onRejectAction || 'RETURN_PREV'}
+                                value={selectedStep.config.approvalMode || 'SINGLE'}
                                 onChange={(e) =>
-                                  handleStepConfigChange(selectedStepIdx, 'onRejectAction', e.target.value)
+                                  handleStepConfigChange(selectedStepIdx, 'approvalMode', e.target.value)
                                 }
-                                className="w-full rounded-xl bg-slate-50 border border-slate-300 px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-indigo-500 focus:bg-white cursor-pointer"
+                                className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-900 focus:outline-none focus:border-indigo-500 cursor-pointer"
                               >
-                                {Object.entries(REJECT_ACTION_LABELS).map(([k, label]) => (
-                                  <option key={k} value={k}>
-                                    {label}
+                                {APPROVAL_MODE_OPTIONS.map((opt) => (
+                                  <option key={opt.value} value={opt.value}>
+                                    {opt.label}
                                   </option>
                                 ))}
                               </select>
+                              <div className="p-2 rounded-xl bg-white border border-indigo-200/80 text-[11px] text-indigo-900 leading-relaxed">
+                                {getApprovalExplanationText(selectedStep.config.approvalMode, inspectorAssignees.count)}
+                              </div>
                             </div>
 
-                            {selectedStep.config.onRejectAction === 'CUSTOM_STEP' && (
+                            <div className="space-y-2.5">
                               <div>
-                                <label className="block text-[11px] font-bold text-rose-700 mb-1">
-                                  بازگشت به کدام گام؟
+                                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                                  سیاست انتظار برای جمع‌آوری آرا (جلوگیری از پرش زودهنگام)
                                 </label>
+                                <select
+                                  value={selectedStep.config.voteCollectionMode || 'EARLY_DECIDE'}
+                                  onChange={(e) =>
+                                    handleStepConfigChange(
+                                      selectedStepIdx,
+                                      'voteCollectionMode',
+                                      e.target.value
+                                    )
+                                  }
+                                  className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-900 focus:outline-none focus:border-indigo-500 cursor-pointer"
+                                >
+                                  <option value="EARLY_DECIDE">
+                                    تصمیم‌گیری به محض تحقق نصاب (اکثریت یا اجماع)
+                                  </option>
+                                  <option value="WAIT_ALL">
+                                    صبر اجباری تا اقدام تمام اعضای کارتابل این مرحله
+                                  </option>
+                                </select>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <div>
+                                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                                    نصاب درخواست اصلاح
+                                  </label>
+                                  <select
+                                    value={selectedStep.config.revisionMode || 'FOLLOW_APPROVAL'}
+                                    onChange={(e) =>
+                                      handleStepConfigChange(
+                                        selectedStepIdx,
+                                        'revisionMode',
+                                        e.target.value
+                                      )
+                                    }
+                                    className="w-full rounded-xl bg-white border border-slate-300 px-2.5 py-2 text-[11px] font-semibold text-slate-800 focus:outline-none focus:border-indigo-500 cursor-pointer"
+                                  >
+                                    <option value="FOLLOW_APPROVAL">همگام با نحوه تایید (اکثریت در جمعی)</option>
+                                    <option value="MAJORITY">اکثریت اعضا (&gt;۵۰٪)</option>
+                                    <option value="ALL">اجماع تمام اعضا (۱۰۰٪)</option>
+                                    <option value="SINGLE">فوری با رای ۱ نفر</option>
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                                    در تساوی آرا
+                                  </label>
+                                  <select
+                                    value={selectedStep.config.tieBreaker || 'REVISION'}
+                                    onChange={(e) =>
+                                      handleStepConfigChange(
+                                        selectedStepIdx,
+                                        'tieBreaker',
+                                        e.target.value
+                                      )
+                                    }
+                                    className="w-full rounded-xl bg-white border border-slate-300 px-2.5 py-2 text-[11px] font-semibold text-slate-800 focus:outline-none focus:border-indigo-500 cursor-pointer"
+                                  >
+                                    <option value="REVISION">اجرای مسیر اصلاح</option>
+                                    <option value="REJECT">اجرای مسیر رد</option>
+                                    <option value="APPROVE">اجرای مسیر تایید</option>
+                                  </select>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* 3 Typed Outgoing BPMN Sequence Flows (Synced live with canvas) */}
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-indigo-200/70">
+                            {/* Green Branch: Approve */}
+                            <div className="p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-1.5">
+                              <label className="text-[11px] font-bold text-emerald-900 flex items-center gap-1">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>خروجی تایید (سبز):</span>
+                              </label>
+                              <select
+                                value={selectedStep.config.approveTarget || 'NEXT_STEP'}
+                                onChange={(e) =>
+                                  handleStepConfigChange(selectedStepIdx, 'approveTarget', e.target.value)
+                                }
+                                className="w-full rounded-lg bg-white border border-emerald-300 px-2 py-1.5 text-[11px] font-semibold text-slate-800"
+                              >
+                                <option value="NEXT_STEP">گام بعدی (یا تصویب نهایی)</option>
+                                <option value="CUSTOM_STEP">انتقال به گام دلخواه</option>
+                                <option value="END_APPROVED">تصویب نهایی مستقیم</option>
+                              </select>
+                              {selectedStep.config.approveTarget === 'CUSTOM_STEP' && (
+                                <select
+                                  value={selectedStep.config.onApproveStepOrder || 1}
+                                  onChange={(e) =>
+                                    handleStepConfigChange(
+                                      selectedStepIdx,
+                                      'onApproveStepOrder',
+                                      parseInt(e.target.value, 10)
+                                    )
+                                  }
+                                  className="w-full rounded-lg bg-white border border-emerald-300 px-2 py-1.5 text-[11px] text-slate-900"
+                                >
+                                  {steps.map((targetSt, tIdx) => (
+                                    <option key={targetSt.localKey} value={tIdx + 1}>
+                                      گام {tIdx + 1}: {targetSt.title}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                            </div>
+
+                            {/* Amber Branch: Revision */}
+                            <div className="p-2.5 rounded-xl bg-amber-50/70 border border-amber-200 space-y-1.5">
+                              <label className="text-[11px] font-bold text-amber-900 flex items-center gap-1">
+                                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                                <span>خروجی اصلاح (زرد):</span>
+                              </label>
+                              <select
+                                value={selectedStep.config.onRevisionAction || 'RETURN_PREV'}
+                                onChange={(e) =>
+                                  handleStepConfigChange(selectedStepIdx, 'onRevisionAction', e.target.value)
+                                }
+                                className="w-full rounded-lg bg-white border border-amber-300 px-2 py-1.5 text-[11px] font-semibold text-slate-800"
+                              >
+                                <option value="RETURN_PREV">بازگشت به گام قبلی</option>
+                                <option value="RETURN_CREATOR">بازگشت به گام اول</option>
+                                <option value="CUSTOM_STEP">ارجاع به گام دلخواه</option>
+                                <option value="REJECT_PROJECT">رد و مختومه شدن طرح</option>
+                              </select>
+                              {selectedStep.config.onRevisionAction === 'CUSTOM_STEP' && (
+                                <select
+                                  value={selectedStep.config.onRevisionStepOrder || 1}
+                                  onChange={(e) =>
+                                    handleStepConfigChange(
+                                      selectedStepIdx,
+                                      'onRevisionStepOrder',
+                                      parseInt(e.target.value, 10)
+                                    )
+                                  }
+                                  className="w-full rounded-lg bg-white border border-amber-300 px-2 py-1.5 text-[11px] text-slate-900"
+                                >
+                                  {steps.map((targetSt, tIdx) => (
+                                    <option key={targetSt.localKey} value={tIdx + 1}>
+                                      گام {tIdx + 1}: {targetSt.title}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                            </div>
+
+                            {/* Rose Branch: Reject */}
+                            <div className="p-2.5 rounded-xl bg-rose-50/70 border border-rose-200 space-y-1.5">
+                              <label className="text-[11px] font-bold text-rose-900 flex items-center gap-1">
+                                <CornerDownLeft className="w-3.5 h-3.5 text-rose-600" />
+                                <span>خروجی رد طرح (قرمز):</span>
+                              </label>
+                              <select
+                                value={selectedStep.config.onRejectAction || 'REJECT_PROJECT'}
+                                onChange={(e) =>
+                                  handleStepConfigChange(selectedStepIdx, 'onRejectAction', e.target.value)
+                                }
+                                className="w-full rounded-lg bg-white border border-rose-300 px-2 py-1.5 text-[11px] font-semibold text-slate-800"
+                              >
+                                <option value="REJECT_PROJECT">رد و مختومه شدن طرح</option>
+                                <option value="RETURN_PREV">بازگشت به گام قبلی</option>
+                                <option value="RETURN_CREATOR">بازگشت به گام اول</option>
+                                <option value="CUSTOM_STEP">ارجاع به گام دلخواه</option>
+                              </select>
+                              {selectedStep.config.onRejectAction === 'CUSTOM_STEP' && (
                                 <select
                                   value={selectedStep.config.onRejectStepOrder || 1}
                                   onChange={(e) =>
@@ -1697,7 +2108,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                                       parseInt(e.target.value, 10)
                                     )
                                   }
-                                  className="w-full rounded-xl bg-rose-50/40 border border-rose-300 px-3 py-2 text-xs text-slate-900"
+                                  className="w-full rounded-lg bg-white border border-rose-300 px-2 py-1.5 text-[11px] text-slate-900"
                                 >
                                   {steps.map((targetSt, tIdx) => (
                                     <option key={targetSt.localKey} value={tIdx + 1}>
@@ -1705,23 +2116,23 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                                     </option>
                                   ))}
                                 </select>
-                              </div>
-                            )}
-
-                            <div>
-                              <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                                برچسب شرط یا یادداشت کوتاه مرحله (اختیاری)
-                              </label>
-                              <input
-                                type="text"
-                                value={selectedStep.config.conditionLabel || ''}
-                                onChange={(e) =>
-                                  handleStepConfigChange(selectedStepIdx, 'conditionLabel', e.target.value)
-                                }
-                                placeholder="مثلاً: برای طرح‌های بالای ۱۰۰ میلیون..."
-                                className="w-full rounded-xl bg-slate-50 border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white"
-                              />
+                              )}
                             </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                              برچسب شرط یا یادداشت کوتاه مرحله (اختیاری)
+                            </label>
+                            <input
+                              type="text"
+                              value={selectedStep.config.conditionLabel || ''}
+                              onChange={(e) =>
+                                handleStepConfigChange(selectedStepIdx, 'conditionLabel', e.target.value)
+                              }
+                              placeholder="مثلاً: برای طرح‌های بالای ۱۰۰ میلیون..."
+                              className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500"
+                            />
                           </div>
                         </div>
 

@@ -7,6 +7,7 @@ export interface WorkflowActionMeta {
 export const WORKFLOW_ACTION_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'PROJECT_CREATED', label: 'ثبت اولیه پروژه' },
   { value: 'STEP_APPROVED', label: 'تایید عضو در مرحله' },
+  { value: 'STEP_REVISION', label: 'درخواست اصلاح عضو در مرحله' },
   { value: 'STEP_REJECTED', label: 'مخالفت عضو در مرحله' },
   { value: 'FORWARD', label: 'تایید و ارجاع مرحله' },
   { value: 'FINAL_APPROVED', label: 'تصویب نهایی' },
@@ -34,6 +35,12 @@ export function getActionBadgeMeta(action: string): WorkflowActionMeta {
         label: 'تایید در مرحله',
         badgeClass: 'bg-cyan-50 text-cyan-800 border-cyan-200',
         dotClass: 'bg-cyan-500',
+      };
+    case 'STEP_REVISION':
+      return {
+        label: 'درخواست اصلاح در مرحله',
+        badgeClass: 'bg-amber-50 text-amber-800 border-amber-200',
+        dotClass: 'bg-amber-400',
       };
     case 'STEP_REJECTED':
       return {

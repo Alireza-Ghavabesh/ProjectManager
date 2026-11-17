@@ -69,22 +69,67 @@ export function parsePersianDate(dateStr?: string | null): { year: number; month
 }
 
 /**
- * Get current Jalali date
+ * Convert a Gregorian Date object to Jalali year, month, day
  */
-export function getTodayJalali(): { year: number; month: number; day: number } {
+export function getJalaliFromDate(date: Date): { year: number; month: number; day: number } {
   try {
     const parts = new Intl.DateTimeFormat('en-US-u-ca-persian', {
       year: 'numeric',
       month: 'numeric',
       day: 'numeric',
-    }).formatToParts(new Date());
-    const year = parseInt(parts.find((p) => p.type === 'year')?.value || '1403', 10);
-    const month = parseInt(parts.find((p) => p.type === 'month')?.value || '8', 10);
+    }).formatToParts(date);
+    const year = parseInt(parts.find((p) => p.type === 'year')?.value || '1405', 10);
+    const month = parseInt(parts.find((p) => p.type === 'month')?.value || '1', 10);
     const day = parseInt(parts.find((p) => p.type === 'day')?.value || '1', 10);
     return { year, month, day };
   } catch (e) {
-    return { year: 1403, month: 8, day: 1 };
+    return { year: 1405, month: 1, day: 1 };
   }
+}
+
+export function isJalaliLeapYear(jy: number): boolean {
+  return (((((jy - (jy > 0 ? 474 : 473)) % 2820) + 474) + 38) * 682) % 2816 < 682;
+}
+
+export function getJalaliMonthLength(jy: number, jm: number): number {
+  if (jm <= 6) return 31;
+  if (jm <= 11) return 30;
+  return isJalaliLeapYear(jy) ? 30 : 29;
+}
+
+export function formatJalaliDate(year: number, month: number, day: number, inFarsiDigits = true): string {
+  const m = month < 10 ? `0${month}` : `${month}`;
+  const d = day < 10 ? `0${day}` : `${day}`;
+  const formatted = `${year}/${m}/${d}`;
+  return inFarsiDigits ? toPersianDigits(formatted) : formatted;
+}
+
+/**
+ * Get current Jalali date
+ */
+export function getTodayJalali(): { year: number; month: number; day: number } {
+  return getJalaliFromDate(new Date());
+}
+
+/**
+ * Default project evaluation deadline: 1 week (7 days) from now in Jalali YYYY/MM/DD
+ */
+export function getDefaultEvaluationDeadlineJalali(baseDate: Date = new Date()): string {
+  const nextWeek = new Date(baseDate.getTime());
+  nextWeek.setDate(nextWeek.getDate() + 7);
+  const { year, month, day } = getJalaliFromDate(nextWeek);
+  return formatJalaliDate(year, month, day, true);
+}
+
+/**
+ * Default project delivery date: 1 Jalali year from now in Jalali YYYY/MM/DD
+ */
+export function getDefaultDeliveryDateJalali(baseDate: Date = new Date()): string {
+  const today = getJalaliFromDate(baseDate);
+  const nextYear = today.year + 1;
+  const maxDay = getJalaliMonthLength(nextYear, today.month);
+  const day = Math.min(today.day, maxDay);
+  return formatJalaliDate(nextYear, today.month, day, true);
 }
 
 /**

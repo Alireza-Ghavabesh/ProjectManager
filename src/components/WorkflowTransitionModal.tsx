@@ -41,6 +41,8 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
   const logs = project.workflowLogs || [];
   const stepProgress = project.currentStepApprovalProgress;
   const currentApprovalMode = currentStep?.config?.approvalMode || stepProgress?.mode || 'SINGLE';
+  const currentVoteCollectionMode =
+    currentStep?.config?.voteCollectionMode || stepProgress?.voteCollectionMode || 'EARLY_DECIDE';
   const isCompletedOrRejected = project.status === 'APPROVED' || project.status === 'REJECTED';
   const currentPosIds =
     project.currentPositionIds && project.currentPositionIds.length > 0
@@ -62,8 +64,50 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
   ]);
   const showQuorumBar =
     Boolean(stepProgress) &&
-    (currentApprovalMode === 'MAJORITY' || currentApprovalMode === 'ALL') &&
+    (currentApprovalMode === 'MAJORITY' ||
+      currentApprovalMode === 'ALL' ||
+      currentVoteCollectionMode === 'WAIT_ALL') &&
     !isCompletedOrRejected;
+
+  const approveTargetLabel = (() => {
+    const cfg = currentStep?.config;
+    if (cfg?.approveTarget === 'END_APPROVED') return 'تصویب نهایی و اتمام';
+    if (cfg?.approveTarget === 'CUSTOM_STEP' && cfg.onApproveStepOrder) {
+      const tStep = steps.find((s) => s.stepOrder === cfg.onApproveStepOrder);
+      return tStep ? `به گام ${tStep.stepOrder}: ${tStep.title}` : `به گام ${cfg.onApproveStepOrder}`;
+    }
+    return nextStep ? `به: ${nextStep.title}` : 'تصویب نهایی';
+  })();
+
+  const revisionTargetLabel = (() => {
+    const cfg = currentStep?.config;
+    const rule = cfg?.onRevisionAction || cfg?.onRejectAction || 'RETURN_PREV';
+    if (rule === 'RETURN_CREATOR') return 'بازگشت به گام ۱';
+    if (rule === 'REJECT_PROJECT') return 'رد و مختومه شدن طرح';
+    if (rule === 'CUSTOM_STEP') {
+      const ord = cfg?.onRevisionStepOrder ?? cfg?.onRejectStepOrder ?? 1;
+      const tStep = steps.find((s) => s.stepOrder === ord);
+      return tStep ? `ارجاع به گام ${tStep.stepOrder}: ${tStep.title}` : `ارجاع به گام ${ord}`;
+    }
+    return 'بازگشت به گام قبل';
+  })();
+
+  const rejectTargetLabel = (() => {
+    const cfg = currentStep?.config;
+    const rule =
+      cfg?.onRevisionAction !== undefined
+        ? cfg?.onRejectAction || 'REJECT_PROJECT'
+        : cfg?.onRejectAction === 'RETURN_CREATOR' || cfg?.onRejectAction === 'CUSTOM_STEP'
+        ? cfg.onRejectAction
+        : 'REJECT_PROJECT';
+    if (rule === 'RETURN_CREATOR') return 'بازگشت به گام ۱';
+    if (rule === 'RETURN_PREV') return 'بازگشت به گام قبل';
+    if (rule === 'CUSTOM_STEP' && cfg?.onRejectStepOrder) {
+      const tStep = steps.find((s) => s.stepOrder === cfg.onRejectStepOrder);
+      return tStep ? `ارجاع به گام ${tStep.stepOrder}: ${tStep.title}` : `ارجاع به گام ${cfg.onRejectStepOrder}`;
+    }
+    return 'رد و خروج از گردش کار';
+  })();
 
   const handleTransition = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -178,85 +222,139 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
           </div>
 
           {/* Step Multi-User Quorum Progress Banner */}
-          {showQuorumBar && stepProgress && (
-            <div className="p-3 rounded-2xl bg-white border border-indigo-200 text-xs space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-bold text-slate-800">
-                  وضعیت رای‌گیری در این گام (
-                  {currentApprovalMode === 'MAJORITY' ? 'اکثریت اعضا' : 'تایید همه اعضا'}
-                  ):
-                </span>
-                <div className="flex flex-wrap items-center gap-1.5 tabular-nums">
-                  <span className="font-black text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200">
-                    موافق: {stepProgress.approvedUserIds.length} از {stepProgress.requiredCount}
-                  </span>
-                  {currentApprovalMode === 'MAJORITY' && (
-                    <span className="font-black text-rose-800 bg-rose-50 px-2.5 py-0.5 rounded-lg border border-rose-200">
-                      مخالف: {stepProgress.rejectedUserIds?.length || 0} از {stepProgress.rejectRequiredCount || stepProgress.requiredCount}
+          {showQuorumBar && stepProgress && (() => {
+            const revCount = stepProgress.revisionUserIds?.length || 0;
+            const rejCount = stepProgress.rejectedUserIds?.length || 0;
+            const appCount = stepProgress.approvedUserIds.length;
+            const votedTotal = appCount + revCount + rejCount;
+            const pendingCount = Math.max(0, stepProgress.totalAssignees - votedTotal);
+
+            return (
+              <div className="p-3 rounded-2xl bg-white border border-indigo-200 text-xs space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-bold text-slate-800">
+                      وضعیت رای‌گیری در این گام (
+                      {currentApprovalMode === 'MAJORITY'
+                        ? 'اکثریت اعضا'
+                        : currentApprovalMode === 'ALL'
+                        ? 'تایید همه اعضا'
+                        : 'جمع‌آوری آرا'}
+                      ):
                     </span>
-                  )}
-                  <span className="font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200">
-                    کل افراد: {stepProgress.totalAssignees} نفر
-                  </span>
+                    {currentVoteCollectionMode === 'WAIT_ALL' && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        صبر تا اقدام تمام اعضا ({votedTotal} از {stepProgress.totalAssignees})
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 tabular-nums">
+                    <span className="font-black text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200">
+                      موافق: {appCount}
+                      {currentVoteCollectionMode !== 'WAIT_ALL' ? ` از ${stepProgress.requiredCount}` : ''}
+                    </span>
+                    <span className="font-black text-amber-800 bg-amber-50 px-2.5 py-0.5 rounded-lg border border-amber-300">
+                      اصلاح: {revCount}
+                      {currentVoteCollectionMode !== 'WAIT_ALL' && stepProgress.revisionRequiredCount
+                        ? ` از ${stepProgress.revisionRequiredCount}`
+                        : ''}
+                    </span>
+                    <span className="font-black text-rose-800 bg-rose-50 px-2.5 py-0.5 rounded-lg border border-rose-200">
+                      مخالف: {rejCount}
+                      {currentVoteCollectionMode !== 'WAIT_ALL' && stepProgress.rejectRequiredCount
+                        ? ` از ${stepProgress.rejectRequiredCount}`
+                        : ''}
+                    </span>
+                    <span className="font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200">
+                      در انتظار: {pendingCount} از {stepProgress.totalAssignees} نفر
+                    </span>
+                  </div>
                 </div>
+
+                {stepProgress.approvedUsers.length > 0 && (
+                  <div className="space-y-1 text-[11px]">
+                    <span className="text-slate-500 block">رای موافق تاکنون:</span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {stepProgress.approvedUsers.map((au) => (
+                        <span
+                          key={au.userId}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold"
+                        >
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                          <span>{au.userName}</span>
+                          {(canViewWorkflowHistory || au.userId === currentUser.id) && au.comment && (
+                            <span className="text-[10px] font-normal text-emerald-700">
+                              («{au.comment}»)
+                            </span>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {stepProgress.revisionUsers && stepProgress.revisionUsers.length > 0 && (
+                  <div className="space-y-1 text-[11px]">
+                    <span className="text-slate-500 block">درخواست اصلاح تاکنون:</span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {stepProgress.revisionUsers.map((rv) => (
+                        <span
+                          key={rv.userId}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-50 text-amber-900 border border-amber-300 font-semibold"
+                        >
+                          <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                          <span>{rv.userName}</span>
+                          {(canViewWorkflowHistory || rv.userId === currentUser.id) && rv.comment && (
+                            <span className="text-[10px] font-normal text-amber-800">
+                              («{rv.comment}»)
+                            </span>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {stepProgress.rejectedUsers && stepProgress.rejectedUsers.length > 0 && (
+                  <div className="space-y-1 text-[11px]">
+                    <span className="text-slate-500 block">رای مخالف تاکنون:</span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {stepProgress.rejectedUsers.map((ru) => (
+                        <span
+                          key={ru.userId}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-rose-50 text-rose-800 border border-rose-200 font-semibold"
+                        >
+                          <XCircle className="w-3 h-3 text-rose-600 shrink-0" />
+                          <span>{ru.userName}</span>
+                          {(canViewWorkflowHistory || ru.userId === currentUser.id) && ru.comment && (
+                            <span className="text-[10px] font-normal text-rose-700">
+                              («{ru.comment}»)
+                            </span>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {stepProgress.hasCurrentUserApproved && (
+                  <div className="text-[11px] font-bold text-emerald-700">
+                    شما رای موافق خود را در این مرحله ثبت کرده‌اید و پرونده در انتظار تکمیل آرای سایر افراد است (در صورت نیاز می‌توانید رای خود را تغییر دهید).
+                  </div>
+                )}
+                {stepProgress.hasCurrentUserRequestedRevision && (
+                  <div className="text-[11px] font-bold text-amber-800">
+                    شما رای «نیاز به اصلاح» خود را در این مرحله ثبت کرده‌اید و پرونده همچنان در انتظار نظر سایر اعضای مرحله است (در صورت نیاز می‌توانید رای خود را تغییر دهید).
+                  </div>
+                )}
+                {stepProgress.hasCurrentUserRejected && (
+                  <div className="text-[11px] font-bold text-rose-700">
+                    شما رای مخالف خود را در این مرحله ثبت کرده‌اید و پرونده در انتظار تکمیل آرای سایر افراد است (در صورت نیاز می‌توانید رای خود را تغییر دهید).
+                  </div>
+                )}
               </div>
-
-              {stepProgress.approvedUsers.length > 0 && (
-                <div className="space-y-1 text-[11px]">
-                  <span className="text-slate-500 block">رای موافق تاکنون:</span>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {stepProgress.approvedUsers.map((au) => (
-                      <span
-                        key={au.userId}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold"
-                      >
-                        <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
-                        <span>{au.userName}</span>
-                        {(canViewWorkflowHistory || au.userId === currentUser.id) && au.comment && (
-                          <span className="text-[10px] font-normal text-emerald-700">
-                            («{au.comment}»)
-                          </span>
-                        )}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {stepProgress.rejectedUsers && stepProgress.rejectedUsers.length > 0 && (
-                <div className="space-y-1 text-[11px]">
-                  <span className="text-slate-500 block">رای مخالف تاکنون:</span>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {stepProgress.rejectedUsers.map((ru) => (
-                      <span
-                        key={ru.userId}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-rose-50 text-rose-800 border border-rose-200 font-semibold"
-                      >
-                        <XCircle className="w-3 h-3 text-rose-600 shrink-0" />
-                        <span>{ru.userName}</span>
-                        {(canViewWorkflowHistory || ru.userId === currentUser.id) && ru.comment && (
-                          <span className="text-[10px] font-normal text-rose-700">
-                            («{ru.comment}»)
-                          </span>
-                        )}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {stepProgress.hasCurrentUserApproved && (
-                <div className="text-[11px] font-bold text-emerald-700">
-                  شما رای موافق خود را در این مرحله ثبت کرده‌اید و پرونده در انتظار تکمیل حد نصاب سایر افراد است (در صورت نیاز می‌توانید رای خود را تغییر دهید).
-                </div>
-              )}
-              {stepProgress.hasCurrentUserRejected && (
-                <div className="text-[11px] font-bold text-rose-700">
-                  شما رای مخالف خود را در این مرحله ثبت کرده‌اید و پرونده در انتظار تکمیل آرای سایر افراد است (در صورت نیاز می‌توانید رای خود را تغییر دهید).
-                </div>
-              )}
-            </div>
-          )}
+            );
+          })()}
         </div>
 
         {/* Action Form */}
@@ -316,10 +414,10 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
                     ? 'رای موافق (تایید در اکثریت)'
                     : showQuorumBar
                     ? 'ثبت تایید من در این مرحله'
-                    : 'تایید و ارجاع به بعد'}
+                    : 'تایید و ارجاع'}
                 </span>
                 <span className="text-[10px] text-slate-500 mt-0.5 truncate max-w-full">
-                  {nextStep ? `به: ${nextStep.title}` : 'تصویب نهایی'}
+                  {approveTargetLabel}
                 </span>
               </button>
 
@@ -333,9 +431,11 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
                 }`}
               >
                 <AlertTriangle className="w-5 h-5 mb-1 text-amber-600" />
-                <span className="text-xs font-bold">عودت جهت اصلاح</span>
-                <span className="text-[10px] text-slate-500 mt-0.5">
-                  بازگشت به گام قبل
+                <span className="text-xs font-bold">
+                  {showQuorumBar ? 'رای نیاز به اصلاح' : 'عودت جهت اصلاح'}
+                </span>
+                <span className="text-[10px] text-slate-500 mt-0.5 truncate max-w-full">
+                  {showQuorumBar ? `ثبت در مرحله (${revisionTargetLabel})` : revisionTargetLabel}
                 </span>
               </button>
 
@@ -350,12 +450,10 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
               >
                 <XCircle className="w-5 h-5 mb-1 text-rose-600" />
                 <span className="text-xs font-bold">
-                  {currentApprovalMode === 'MAJORITY' ? 'رای مخالف (رد در اکثریت)' : 'رد در این مرحله'}
+                  {showQuorumBar ? 'رای مخالف (رد در مرحله)' : 'رد در این مرحله'}
                 </span>
-                <span className="text-[10px] text-slate-500 mt-0.5">
-                  {currentApprovalMode === 'MAJORITY'
-                    ? 'ثبت در آمار آرای مخالف'
-                    : 'خروج از گردش کار'}
+                <span className="text-[10px] text-slate-500 mt-0.5 truncate max-w-full">
+                  {showQuorumBar ? `ثبت در آمار آرا (${rejectTargetLabel})` : rejectTargetLabel}
                 </span>
               </button>
 

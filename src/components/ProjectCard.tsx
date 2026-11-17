@@ -254,6 +254,9 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
     (project.isMyWorkflowTurn ??
       Boolean(currentUser.positionId && currentPosIds.includes(currentUser.positionId)));
   const hasCurrentUserApproved = Boolean(project.currentStepApprovalProgress?.hasCurrentUserApproved);
+  const hasCurrentUserRequestedRevision = Boolean(
+    project.currentStepApprovalProgress?.hasCurrentUserRequestedRevision
+  );
   const hasCurrentUserRejected = Boolean(project.currentStepApprovalProgress?.hasCurrentUserRejected);
   const isExpired = project.isDeadlineExpired ?? isDeadlineExpired(project.deadline);
 
@@ -447,20 +450,40 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               </button>
             )}
 
-            {hasWorkflow && !hasCurrentUserApproved && hasCurrentUserRejected && !isCompletedOrRejected && (
-              <button
-                type="button"
-                onClick={() => onOpenWorkflowModal && onOpenWorkflowModal(project)}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[11px] font-bold transition cursor-pointer whitespace-nowrap shrink-0"
-                title="رای مخالف شما در این گام ثبت شده است"
-              >
-                <XCircle className="w-3.5 h-3.5 text-rose-600" />
-                <span>رای مخالف ثبت شد</span>
-              </button>
-            )}
+            {hasWorkflow &&
+              !hasCurrentUserApproved &&
+              hasCurrentUserRequestedRevision &&
+              !isCompletedOrRejected && (
+                <button
+                  type="button"
+                  onClick={() => onOpenWorkflowModal && onOpenWorkflowModal(project)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-[11px] font-bold transition cursor-pointer whitespace-nowrap shrink-0"
+                  title="درخواست اصلاح شما در این گام ثبت شده است (در انتظار نظر سایر اعضا)"
+                >
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                  <span>رای اصلاح ثبت شد</span>
+                </button>
+              )}
 
             {hasWorkflow &&
               !hasCurrentUserApproved &&
+              !hasCurrentUserRequestedRevision &&
+              hasCurrentUserRejected &&
+              !isCompletedOrRejected && (
+                <button
+                  type="button"
+                  onClick={() => onOpenWorkflowModal && onOpenWorkflowModal(project)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[11px] font-bold transition cursor-pointer whitespace-nowrap shrink-0"
+                  title="رای مخالف شما در این گام ثبت شده است"
+                >
+                  <XCircle className="w-3.5 h-3.5 text-rose-600" />
+                  <span>رای مخالف ثبت شد</span>
+                </button>
+              )}
+
+            {hasWorkflow &&
+              !hasCurrentUserApproved &&
+              !hasCurrentUserRequestedRevision &&
               !hasCurrentUserRejected &&
               canForwardWorkflow &&
               !isCompletedOrRejected &&
@@ -479,6 +502,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
 
             {hasWorkflow &&
               !hasCurrentUserApproved &&
+              !hasCurrentUserRequestedRevision &&
               !hasCurrentUserRejected &&
               !canForwardWorkflow &&
               !isCompletedOrRejected &&
@@ -598,15 +622,18 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   {!isCompletedOrRejected &&
                   project.currentStepApprovalProgress &&
                   (project.currentStepApprovalProgress.mode === 'MAJORITY' ||
-                    project.currentStepApprovalProgress.mode === 'ALL') ? (
+                    project.currentStepApprovalProgress.mode === 'ALL' ||
+                    project.currentStepApprovalProgress.voteCollectionMode === 'WAIT_ALL') ? (
                     <span className="text-violet-800 font-semibold">
-                      {project.currentStepApprovalProgress.mode === 'MAJORITY'
-                        ? `آرای مرحله: ${project.currentStepApprovalProgress.approvedUserIds.length} موافق / ${
-                            project.currentStepApprovalProgress.rejectedUserIds?.length || 0
-                          } مخالف (حدنصاب: ${project.currentStepApprovalProgress.requiredCount} از ${
-                            project.currentStepApprovalProgress.totalAssignees
-                          } نفر)`
-                        : `تایید مرحله فعلی: ${project.currentStepApprovalProgress.approvedUserIds.length} از ${project.currentStepApprovalProgress.requiredCount} نفر لازم`}
+                      {`موافق: ${project.currentStepApprovalProgress.approvedUserIds.length} | اصلاح: ${
+                        project.currentStepApprovalProgress.revisionUserIds?.length || 0
+                      } | مخالف: ${project.currentStepApprovalProgress.rejectedUserIds?.length || 0} (نصاب: ${
+                        project.currentStepApprovalProgress.requiredCount
+                      } از ${project.currentStepApprovalProgress.totalAssignees}${
+                        project.currentStepApprovalProgress.voteCollectionMode === 'WAIT_ALL'
+                          ? ' · صبر تا همه'
+                          : ''
+                      })`}
                     </span>
                   ) : (
                     <span>
@@ -621,6 +648,11 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                     <span className="text-emerald-700 font-bold flex items-center gap-1">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                       تایید شما در این گام ثبت شده است
+                    </span>
+                  ) : hasCurrentUserRequestedRevision && !isCompletedOrRejected ? (
+                    <span className="text-amber-800 font-bold flex items-center gap-1">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                      رای اصلاح شما ثبت شد (در انتظار سایر اعضا)
                     </span>
                   ) : hasCurrentUserRejected && !isCompletedOrRejected ? (
                     <span className="text-rose-700 font-bold flex items-center gap-1">
@@ -881,13 +913,18 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                 {!isCompletedOrRejected &&
                   project.currentStepApprovalProgress &&
                   (project.currentStepApprovalProgress.mode === 'MAJORITY' ||
-                    project.currentStepApprovalProgress.mode === 'ALL') && (
+                    project.currentStepApprovalProgress.mode === 'ALL' ||
+                    project.currentStepApprovalProgress.voteCollectionMode === 'WAIT_ALL') && (
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-violet-50 text-violet-800 border border-violet-200 tabular-nums">
-                      {project.currentStepApprovalProgress.mode === 'MAJORITY'
-                        ? `موافق: ${project.currentStepApprovalProgress.approvedUserIds.length} | مخالف: ${
-                            project.currentStepApprovalProgress.rejectedUserIds?.length || 0
-                          } (حدنصاب: ${project.currentStepApprovalProgress.requiredCount})`
-                        : `تایید مرحله: ${project.currentStepApprovalProgress.approvedUserIds.length} از ${project.currentStepApprovalProgress.requiredCount} نفر لازم`}
+                      {`موافق: ${project.currentStepApprovalProgress.approvedUserIds.length} | اصلاح: ${
+                        project.currentStepApprovalProgress.revisionUserIds?.length || 0
+                      } | مخالف: ${project.currentStepApprovalProgress.rejectedUserIds?.length || 0} (نصاب: ${
+                        project.currentStepApprovalProgress.requiredCount
+                      }${
+                        project.currentStepApprovalProgress.voteCollectionMode === 'WAIT_ALL'
+                          ? ' · صبر تا همه'
+                          : ''
+                      })`}
                     </span>
                   )}
                 {!isCompletedOrRejected && !canManualApprove && (
@@ -1020,6 +1057,11 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                                 <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-semibold text-indigo-700">
                                   {modeLabel}
                                 </span>
+                                {st.config?.voteCollectionMode === 'WAIT_ALL' && (
+                                  <span className="px-1.5 py-0.5 rounded bg-indigo-50 border border-indigo-200 font-semibold text-indigo-700">
+                                    صبر تا اقدام همه
+                                  </span>
+                                )}
                                 <span className="truncate">
                                   {st.positions && st.positions.length > 0
                                     ? st.positions.map((p) => p.title).join('، ')
@@ -1050,6 +1092,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                     ((project.currentAssignees && project.currentAssignees.length > 0) ||
                       (project.currentStepApprovalProgress &&
                         (project.currentStepApprovalProgress.approvedUsers.length > 0 ||
+                          (project.currentStepApprovalProgress.revisionUsers?.length || 0) > 0 ||
                           (project.currentStepApprovalProgress.rejectedUsers?.length || 0) > 0))) && (
                       <div className="space-y-2">
                         <div className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
@@ -1061,9 +1104,13 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                             const approvedEntry = project.currentStepApprovalProgress?.approvedUsers.find(
                               (au) => au.userId === assignee.id
                             );
+                            const revisionEntry = project.currentStepApprovalProgress?.revisionUsers?.find(
+                              (rv) => rv.userId === assignee.id
+                            );
                             const rejectedEntry = project.currentStepApprovalProgress?.rejectedUsers?.find(
                               (ru) => ru.userId === assignee.id
                             );
+                            const activeEntry = approvedEntry || revisionEntry || rejectedEntry;
 
                             return (
                               <div
@@ -1071,6 +1118,8 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                                 className={`p-2.5 rounded-xl border space-y-1.5 ${
                                   approvedEntry
                                     ? 'bg-emerald-50/70 border-emerald-200'
+                                    : revisionEntry
+                                    ? 'bg-amber-50/70 border-amber-300'
                                     : rejectedEntry
                                     ? 'bg-rose-50/70 border-rose-200'
                                     : 'bg-white border-slate-200'
@@ -1090,32 +1139,37 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                                       <CheckCircle2 className="w-3 h-3" />
                                       تایید کرده
                                     </span>
+                                  ) : revisionEntry ? (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg bg-amber-100 text-amber-900 border border-amber-300 shrink-0">
+                                      <AlertTriangle className="w-3 h-3" />
+                                      درخواست اصلاح
+                                    </span>
                                   ) : rejectedEntry ? (
                                     <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg bg-rose-100 text-rose-800 border border-rose-300 shrink-0">
                                       <XCircle className="w-3 h-3" />
                                       رای مخالف
                                     </span>
                                   ) : (
-                                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 shrink-0">
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 shrink-0">
                                       <Clock className="w-3 h-3" />
                                       در انتظار اقدام
                                     </span>
                                   )}
                                 </div>
-                                {(approvedEntry || rejectedEntry) && (
+                                {activeEntry && (
                                   <div className="text-[11px] text-slate-700 bg-white/90 px-2.5 py-1.5 rounded-lg border border-slate-200/80 flex items-start justify-between gap-2">
                                     <span className="leading-relaxed">
-                                      {(approvedEntry || rejectedEntry)?.comment ? (
+                                      {activeEntry.comment ? (
                                         <>
                                           <strong className="text-indigo-700 ml-1">توضیح:</strong>
-                                          {(approvedEntry || rejectedEntry)?.comment}
+                                          {activeEntry.comment}
                                         </>
                                       ) : (
                                         <span className="text-slate-400">بدون توضیح تکمیلی</span>
                                       )}
                                     </span>
                                     <span className="text-[10px] text-slate-400 shrink-0 tabular-nums">
-                                      {new Date((approvedEntry || rejectedEntry)!.createdAt).toLocaleTimeString('fa-IR', {
+                                      {new Date(activeEntry.createdAt).toLocaleTimeString('fa-IR', {
                                         hour: '2-digit',
                                         minute: '2-digit',
                                       })}

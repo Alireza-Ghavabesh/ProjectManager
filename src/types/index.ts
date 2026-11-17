@@ -121,19 +121,35 @@ export interface Vote {
 
 export interface WorkflowStepConfig {
   approvalMode?: 'SINGLE' | 'MAJORITY' | 'ALL' | 'NOTIFY_ONLY';
+  voteCollectionMode?: 'EARLY_DECIDE' | 'WAIT_ALL';
+  revisionMode?: 'FOLLOW_APPROVAL' | 'MAJORITY' | 'ALL' | 'SINGLE';
+  tieBreaker?: 'REVISION' | 'REJECT' | 'APPROVE';
+  approveTarget?: 'NEXT_STEP' | 'END_APPROVED' | 'CUSTOM_STEP';
+  onApproveStepOrder?: number;
+  onRevisionAction?: 'RETURN_PREV' | 'RETURN_CREATOR' | 'REJECT_PROJECT' | 'CUSTOM_STEP';
+  onRevisionStepOrder?: number;
   onRejectAction?: 'RETURN_PREV' | 'RETURN_CREATOR' | 'REJECT_PROJECT' | 'CUSTOM_STEP';
   onRejectStepOrder?: number;
-  onApproveStepOrder?: number;
   conditionLabel?: string;
   customActionLabel?: string;
   color?: string;
   userIds?: string[];
+  nodePosition?: { x: number; y: number };
 }
 
 export interface WorkflowStepApprovalProgress {
   mode: 'SINGLE' | 'MAJORITY' | 'ALL' | 'NOTIFY_ONLY';
+  voteCollectionMode?: 'EARLY_DECIDE' | 'WAIT_ALL';
   approvedUserIds: string[];
   approvedUsers: Array<{
+    userId: string;
+    userName: string;
+    positionTitle?: string;
+    comment?: string;
+    createdAt: string;
+  }>;
+  revisionUserIds?: string[];
+  revisionUsers?: Array<{
     userId: string;
     userName: string;
     positionTitle?: string;
@@ -150,8 +166,10 @@ export interface WorkflowStepApprovalProgress {
   }>;
   totalAssignees: number;
   requiredCount: number;
+  revisionRequiredCount?: number;
   rejectRequiredCount?: number;
   hasCurrentUserApproved: boolean;
+  hasCurrentUserRequestedRevision?: boolean;
   hasCurrentUserRejected?: boolean;
 }
 
@@ -174,11 +192,19 @@ export interface WorkflowStep {
   assignees?: WorkflowTrackingAssignee[];
 }
 
+export interface WorkflowDiagramLayout {
+  startPos?: { x: number; y: number };
+  endApprovedPos?: { x: number; y: number };
+  endRejectedPos?: { x: number; y: number };
+}
+
 export interface Workflow {
   id: string;
   title: string;
   description?: string;
   isDefault: number | boolean;
+  diagramJson?: string;
+  diagram?: WorkflowDiagramLayout | null;
   createdAt?: string;
   steps: WorkflowStep[];
 }

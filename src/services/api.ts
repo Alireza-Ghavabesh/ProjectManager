@@ -1,4 +1,4 @@
-import { Position, User, DynamicField, ProjectType, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowLog, WorkflowTrackingItem, ProjectStructure, StructurePositionNode, ProjectAttachment, SystemSetting, PasswordResetRequest, SmsRule, SmsLog, PublicSettings, UploadProgressInfo } from '../types';
+import { Position, User, DynamicField, ProjectType, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowDiagramLayout, WorkflowLog, WorkflowTrackingItem, ProjectStructure, StructurePositionNode, ProjectAttachment, SystemSetting, PasswordResetRequest, SmsRule, SmsLog, PublicSettings, UploadProgressInfo } from '../types';
 
 class ApiService {
   getToken(): string | null {
@@ -297,7 +297,7 @@ class ApiService {
     return data.workflows || [];
   }
 
-  async createWorkflow(payload: { title: string; description?: string; isDefault?: boolean; steps: any[] }): Promise<{ workflowId: string }> {
+  async createWorkflow(payload: { title: string; description?: string; isDefault?: boolean; diagram?: WorkflowDiagramLayout | null; steps: any[] }): Promise<{ workflowId: string }> {
     const res = await fetch('/api/workflows', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
@@ -308,7 +308,7 @@ class ApiService {
     return data;
   }
 
-  async updateWorkflow(id: string, payload: { title: string; description?: string; isDefault?: boolean; steps: any[] }): Promise<void> {
+  async updateWorkflow(id: string, payload: { title: string; description?: string; isDefault?: boolean; diagram?: WorkflowDiagramLayout | null; steps: any[] }): Promise<void> {
     const res = await fetch(`/api/workflows/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },

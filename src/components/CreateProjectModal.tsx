@@ -3,7 +3,13 @@ import { DynamicField, ProjectType, Project, ProjectAttachment, Workflow, Upload
 import { api, formatFileSize } from '../services/api';
 import { ProjectAttachments } from './ProjectAttachments';
 import { PersianDatePicker } from './PersianDatePicker';
-import { formatCurrencyInput, formatBudgetDisplay } from '../utils/formatters';
+import {
+  formatCurrencyInput,
+  formatBudgetDisplay,
+  getTodayJalali,
+  getDefaultEvaluationDeadlineJalali,
+  getDefaultDeliveryDateJalali,
+} from '../utils/formatters';
 import { hasPerm } from '../utils/permissions';
 import { 
   X, 
@@ -44,7 +50,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 }) => {
   const [title, setTitle] = useState(editProject?.title || '');
   const [code, setCode] = useState(
-    editProject?.code || `PRJ-1403-${Math.floor(10 + Math.random() * 90)}`
+    editProject?.code || `PRJ-${getTodayJalali().year}-${Math.floor(10 + Math.random() * 90)}`
   );
   const [availableProjectTypes, setAvailableProjectTypes] = useState<ProjectType[]>(projectTypes);
   const activeProjectTypes = availableProjectTypes.filter((pt) => pt.isActive !== 0 && pt.isActive !== false);
@@ -62,8 +68,12 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     if (editProject?.productionType) return editProject.productionType;
     return activeProjectTypes[0]?.title || 'طرح عمومی شورا';
   });
-  const [deadline, setDeadline] = useState(editProject?.deadline || '۱۴۰۳/۰۹/۳۰');
-  const [deliveryDate, setDeliveryDate] = useState(editProject?.deliveryDate || '');
+  const [deadline, setDeadline] = useState(() =>
+    editProject ? editProject.deadline || '' : getDefaultEvaluationDeadlineJalali()
+  );
+  const [deliveryDate, setDeliveryDate] = useState(() =>
+    editProject ? editProject.deliveryDate || '' : getDefaultDeliveryDateJalali()
+  );
   const [budgetEstimated, setBudgetEstimated] = useState(
     formatCurrencyInput(editProject?.budgetEstimated || '')
   );

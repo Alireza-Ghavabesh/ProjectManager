@@ -228,6 +228,7 @@ function sanitizeWorkflowLogsForViewer(logs: any[], viewer: any) {
       viewer?.id !== l.fromUserId &&
       [
         'STEP_APPROVED',
+        'STEP_REVISION',
         'STEP_REJECTED',
         'FORWARD',
         'FINAL_APPROVED',
@@ -1057,15 +1058,37 @@ function getRequiredApprovalsForMode(mode: string | undefined, totalAssignees: n
   return 1;
 }
 
+function getRevisionThresholdForMode(
+  approvalMode: string | undefined,
+  revisionMode: string | undefined,
+  totalAssignees: number
+): number {
+  const n = Math.max(1, totalAssignees);
+  const effRev =
+    !revisionMode || revisionMode === 'FOLLOW_APPROVAL'
+      ? approvalMode === 'SINGLE' || approvalMode === 'NOTIFY_ONLY'
+        ? 'SINGLE'
+        : 'MAJORITY'
+      : revisionMode;
+  if (effRev === 'SINGLE') return 1;
+  if (effRev === 'ALL') return n;
+  return Math.floor(n / 2) + 1;
+}
+
 function buildStepApprovalProgress(
   projectId: string,
   stepOrder: number,
-  approvalMode: string | undefined,
+  stepConfigOrMode: any,
   assignees: any[],
   viewerUserId?: string,
   canInspectHistory = true
 ) {
-  const mode = (approvalMode || 'SINGLE') as 'SINGLE' | 'MAJORITY' | 'ALL' | 'NOTIFY_ONLY';
+  const cfg =
+    typeof stepConfigOrMode === 'string'
+      ? { approvalMode: stepConfigOrMode }
+      : stepConfigOrMode || {};
+  const mode = (cfg.approvalMode || 'SINGLE') as 'SINGLE' | 'MAJORITY' | 'ALL' | 'NOTIFY_ONLY';
+  const voteCollectionMode = (cfg.voteCollectionMode || 'EARLY_DECIDE') as 'EARLY_DECIDE' | 'WAIT_ALL';
   const rows = db.prepare(`
     SELECT wsa.userId, wsa.createdAt, COALESCE(wsa.decision, 'APPROVE') as decision,
            COALESCE(wsa.comment, '') as comment,
@@ -1084,13 +1107,19 @@ function buildStepApprovalProgress(
     createdAt: string;
   }>;
 
-  const approvedRows = rows.filter((r) => r.decision !== 'REJECT');
+  const approvedRows = rows.filter((r) => r.decision === 'APPROVE');
+  const revisionRows = rows.filter((r) => r.decision === 'REVISION');
   const rejectedRows = rows.filter((r) => r.decision === 'REJECT');
 
   const visibleApprovedUsers = canInspectHistory
     ? approvedRows
     : viewerUserId
     ? approvedRows.filter((r) => r.userId === viewerUserId)
+    : [];
+  const visibleRevisionUsers = canInspectHistory
+    ? revisionRows
+    : viewerUserId
+    ? revisionRows.filter((r) => r.userId === viewerUserId)
     : [];
   const visibleRejectedUsers = canInspectHistory
     ? rejectedRows
@@ -1099,21 +1128,33 @@ function buildStepApprovalProgress(
     : [];
 
   const requiredCount = getRequiredApprovalsForMode(mode, assignees.length);
+  const revisionRequiredCount = getRevisionThresholdForMode(mode, cfg.revisionMode, assignees.length);
   const rejectRequiredCount =
     mode === 'MAJORITY'
       ? Math.max(1, Math.max(1, assignees.length) - requiredCount + 1)
+      : mode === 'ALL' && voteCollectionMode !== 'WAIT_ALL' && cfg.revisionMode === 'SINGLE'
+      ? 1
+      : mode === 'ALL'
+      ? Math.floor(Math.max(1, assignees.length) / 2) + 1
       : 1;
 
   return {
     mode,
+    voteCollectionMode,
     approvedUserIds: approvedRows.map((r) => r.userId),
     approvedUsers: visibleApprovedUsers,
+    revisionUserIds: revisionRows.map((r) => r.userId),
+    revisionUsers: visibleRevisionUsers,
     rejectedUserIds: rejectedRows.map((r) => r.userId),
     rejectedUsers: visibleRejectedUsers,
     totalAssignees: assignees.length,
     requiredCount,
+    revisionRequiredCount,
     rejectRequiredCount,
     hasCurrentUserApproved: Boolean(viewerUserId && approvedRows.some((r) => r.userId === viewerUserId)),
+    hasCurrentUserRequestedRevision: Boolean(
+      viewerUserId && revisionRows.some((r) => r.userId === viewerUserId)
+    ),
     hasCurrentUserRejected: Boolean(viewerUserId && rejectedRows.some((r) => r.userId === viewerUserId)),
   };
 }
@@ -1134,8 +1175,17 @@ apiRouter.get('/workflows', (_req: Request, res: Response) => {
     const wfSteps = steps
       .filter((s) => s.workflowId === wf.id)
       .map((s) => enrichStepObject(s, posMap));
+    let diagram = null;
+    if (wf.diagramJson) {
+      try {
+        diagram = JSON.parse(wf.diagramJson);
+      } catch {
+        diagram = null;
+      }
+    }
     return {
       ...wf,
+      diagram,
       steps: wfSteps,
     };
   });
@@ -1254,7 +1304,7 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
       : buildStepApprovalProgress(
           prj.id,
           prj.currentStepOrder || 1,
-          currentStep?.config?.approvalMode,
+          currentStep?.config,
           currentAssignees,
           currentUser.id,
           canInspectWorkflowHistory
@@ -1390,7 +1440,7 @@ apiRouter.post('/workflows', (req: Request, res: Response) => {
     return res.status(403).json({ error: 'شما مجاز به طراحی و تعریف فرآیند گردش کار نیستید.' });
   }
 
-  const { title, description, isDefault, steps } = req.body;
+  const { title, description, isDefault, steps, diagram } = req.body;
   if (!title || !title.trim() || !Array.isArray(steps) || steps.length === 0) {
     return res.status(400).json({ error: 'عنوان گردش کار و حداقل یک مرحله الزامی است.' });
   }
@@ -1404,8 +1454,9 @@ apiRouter.post('/workflows', (req: Request, res: Response) => {
 
   const id = `wf-${randomUUID().substring(0, 8)}`;
   const now = new Date().toISOString();
+  const diagramStr = diagram ? JSON.stringify(diagram) : null;
 
-  const insertWf = db.prepare('INSERT INTO workflows (id, title, description, isDefault, createdAt) VALUES (?, ?, ?, ?, ?)');
+  const insertWf = db.prepare('INSERT INTO workflows (id, title, description, isDefault, diagramJson, createdAt) VALUES (?, ?, ?, ?, ?, ?)');
   const insertStep = db.prepare(`
     INSERT INTO workflow_steps (id, workflowId, stepOrder, title, structureId, positionId, positionIdsJson, actionType, description, configJson)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1415,7 +1466,7 @@ apiRouter.post('/workflows', (req: Request, res: Response) => {
     if (isDefault) {
       db.prepare('UPDATE workflows SET isDefault = 0').run();
     }
-    insertWf.run(id, title.trim(), description || '', isDefault ? 1 : 0, now);
+    insertWf.run(id, title.trim(), description || '', isDefault ? 1 : 0, diagramStr, now);
     steps.forEach((s: any, idx: number) => {
       const cfg = s.config || parseStepConfig(s.configJson);
       const posIds = parseStepPositionIds(s);
@@ -1446,7 +1497,7 @@ apiRouter.put('/workflows/:id', (req: Request, res: Response) => {
   }
 
   const { id } = req.params;
-  const { title, description, isDefault, steps } = req.body;
+  const { title, description, isDefault, steps, diagram } = req.body;
   if (!title || !title.trim() || !Array.isArray(steps) || steps.length === 0) {
     return res.status(400).json({ error: 'عنوان گردش کار و حداقل یک مرحله الزامی است.' });
   }
@@ -1458,12 +1509,14 @@ apiRouter.put('/workflows/:id', (req: Request, res: Response) => {
     }
   }
 
+  const diagramStr = diagram ? JSON.stringify(diagram) : null;
+
   const tx = db.transaction(() => {
     if (isDefault) {
       db.prepare('UPDATE workflows SET isDefault = 0 WHERE id != ?').run(id);
     }
-    db.prepare('UPDATE workflows SET title = ?, description = ?, isDefault = ? WHERE id = ?')
-      .run(title.trim(), description || '', isDefault ? 1 : 0, id);
+    db.prepare('UPDATE workflows SET title = ?, description = ?, isDefault = ?, diagramJson = ? WHERE id = ?')
+      .run(title.trim(), description || '', isDefault ? 1 : 0, diagramStr, id);
 
     db.prepare('DELETE FROM workflow_steps WHERE workflowId = ?').run(id);
 
@@ -1604,213 +1657,281 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
     }
   }
 
-  const approvalMode = currentConfig.approvalMode || 'SINGLE';
+  const approvalMode = (currentConfig.approvalMode || 'SINGLE') as 'SINGLE' | 'MAJORITY' | 'ALL' | 'NOTIFY_ONLY';
+  const voteCollectionMode = (currentConfig.voteCollectionMode || 'EARLY_DECIDE') as 'EARLY_DECIDE' | 'WAIT_ALL';
+  const currentStepNum = project.currentStepOrder || 1;
+  const isMultiUserVotingStep =
+    stepAssignees.length > 1 &&
+    (approvalMode === 'MAJORITY' || approvalMode === 'ALL' || voteCollectionMode === 'WAIT_ALL');
 
-  if (action === 'FORWARD' || action === 'APPROVED') {
-    if (approvalMode === 'MAJORITY' || approvalMode === 'ALL') {
-      db.prepare(`
-        INSERT INTO workflow_step_approvals (id, projectId, stepOrder, userId, positionId, decision, comment, createdAt)
-        VALUES (?, ?, ?, ?, ?, 'APPROVE', ?, ?)
-        ON CONFLICT(projectId, stepOrder, userId) DO UPDATE SET
-          decision = 'APPROVE',
-          comment = excluded.comment,
-          createdAt = excluded.createdAt
-      `).run(
-        `wsa-${randomUUID().substring(0, 8)}`,
-        projectId,
-        project.currentStepOrder || 1,
-        currentUser.id,
-        currentUser.positionId || currentPosIds[0] || null,
-        comment || '',
-        now
-      );
+  const voteDecision: 'APPROVE' | 'REVISION' | 'REJECT' =
+    action === 'NEEDS_REVISION' ? 'REVISION' : action === 'REJECTED' ? 'REJECT' : 'APPROVE';
 
-      const currentVotes = db.prepare(`
-        SELECT userId, COALESCE(decision, 'APPROVE') as decision FROM workflow_step_approvals
-        WHERE projectId = ? AND stepOrder = ?
-      `).all(projectId, project.currentStepOrder || 1) as Array<{ userId: string; decision: string }>;
+  let resolvedOutcome: 'APPROVE' | 'REVISION' | 'REJECT' = voteDecision;
 
-      const currentApprovals = currentVotes.filter((v) => v.decision !== 'REJECT');
-      const currentRejections = currentVotes.filter((v) => v.decision === 'REJECT');
+  if (isMultiUserVotingStep && !adminOverride) {
+    db.prepare(`
+      INSERT INTO workflow_step_approvals (id, projectId, stepOrder, userId, positionId, decision, comment, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(projectId, stepOrder, userId) DO UPDATE SET
+        decision = excluded.decision,
+        comment = excluded.comment,
+        createdAt = excluded.createdAt
+    `).run(
+      `wsa-${randomUUID().substring(0, 8)}`,
+      projectId,
+      currentStepNum,
+      currentUser.id,
+      currentUser.positionId || currentPosIds[0] || null,
+      voteDecision,
+      comment || '',
+      now
+    );
 
-      const assigneeSet = new Set(stepAssignees.map((a) => a.id));
-      const matchedApprovalCount =
-        stepAssignees.length > 0
-          ? currentApprovals.filter((a) => assigneeSet.has(a.userId)).length
-          : currentApprovals.length;
-      const effectiveApprovedCount =
-        stepAssignees.length > 0
-          ? adminOverride
-            ? Math.max(matchedApprovalCount, currentApprovals.length)
-            : matchedApprovalCount
-          : currentApprovals.length;
-      const matchedRejectCount =
-        stepAssignees.length > 0
-          ? currentRejections.filter((a) => assigneeSet.has(a.userId)).length
-          : currentRejections.length;
-      const requiredCount = getRequiredApprovalsForMode(approvalMode, stepAssignees.length);
-      const rejectRequiredCount =
-        approvalMode === 'MAJORITY'
-          ? Math.max(1, Math.max(1, stepAssignees.length) - requiredCount + 1)
-          : 1;
+    const currentVotes = db.prepare(`
+      SELECT userId, COALESCE(decision, 'APPROVE') as decision
+      FROM workflow_step_approvals
+      WHERE projectId = ? AND stepOrder = ?
+    `).all(projectId, currentStepNum) as Array<{ userId: string; decision: string }>;
 
-      if (effectiveApprovedCount < requiredCount) {
-        const stepNote = `تایید در مرحله «${currentStep?.title || `گام ${project.currentStepOrder}`}» ثبت شد (${effectiveApprovedCount} از ${requiredCount} رای موافق لازم)${comment ? ` — ${comment}` : ''}`;
-        db.prepare(`
-          INSERT INTO workflow_logs (id, projectId, stepOrder, fromUserId, toPositionId, action, comment, createdAt)
-          VALUES (?, ?, ?, ?, ?, 'STEP_APPROVED', ?, ?)
-        `).run(
-          logId,
-          projectId,
-          project.currentStepOrder || 1,
-          currentUser.id,
-          currentPosIds[0] || project.currentPositionId || null,
-          stepNote,
-          now
-        );
+    const assigneeSet = new Set(stepAssignees.map((a) => a.id));
+    const matchedVotes = currentVotes.filter((v) => assigneeSet.has(v.userId));
+    const approveCount = matchedVotes.filter((v) => v.decision === 'APPROVE').length;
+    const revisionCount = matchedVotes.filter((v) => v.decision === 'REVISION').length;
+    const rejectCount = matchedVotes.filter((v) => v.decision === 'REJECT').length;
+    const totalVoted = matchedVotes.length;
+    const totalAssignees = stepAssignees.length;
 
-        db.prepare('UPDATE projects SET updatedAt = ? WHERE id = ?').run(now, projectId);
+    const requiredCount = getRequiredApprovalsForMode(approvalMode, totalAssignees);
+    const revisionRequiredCount = getRevisionThresholdForMode(
+      approvalMode,
+      currentConfig.revisionMode,
+      totalAssignees
+    );
+    const rejectRequiredCount =
+      approvalMode === 'MAJORITY'
+        ? Math.max(1, totalAssignees - requiredCount + 1)
+        : approvalMode === 'ALL' && voteCollectionMode !== 'WAIT_ALL' && currentConfig.revisionMode === 'SINGLE'
+        ? 1
+        : Math.floor(totalAssignees / 2) + 1;
 
-        return res.json({
-          success: true,
-          advanced: false,
-          approvedCount: effectiveApprovedCount,
-          rejectedCount: matchedRejectCount,
-          requiredCount,
-          rejectRequiredCount,
-          totalAssignees: stepAssignees.length,
-          currentStepOrder: project.currentStepOrder || 1,
-          currentPositionId: project.currentPositionId,
-          status: project.status,
-        });
+    let decided: 'APPROVE' | 'REVISION' | 'REJECT' | null = null;
+
+    if (voteCollectionMode === 'WAIT_ALL') {
+      // Wait unconditionally until every assignee in this step has submitted a vote
+      if (totalVoted >= totalAssignees) {
+        if (approvalMode === 'ALL') {
+          if (approveCount >= totalAssignees) decided = 'APPROVE';
+          else if (rejectCount > revisionCount) decided = 'REJECT';
+          else decided = 'REVISION';
+        } else {
+          if (approveCount > revisionCount && approveCount > rejectCount) decided = 'APPROVE';
+          else if (revisionCount > approveCount && revisionCount >= rejectCount) decided = 'REVISION';
+          else if (rejectCount > approveCount && rejectCount > revisionCount) decided = 'REJECT';
+          else {
+            const tb = currentConfig.tieBreaker || 'REVISION';
+            if (tb === 'APPROVE' && approveCount > 0) decided = 'APPROVE';
+            else if (tb === 'REJECT' && rejectCount > 0) decided = 'REJECT';
+            else decided = revisionCount > 0 ? 'REVISION' : rejectCount > 0 ? 'REJECT' : 'APPROVE';
+          }
+        }
+      }
+    } else {
+      // EARLY_DECIDE: only resolve early if strict threshold is achieved (e.g. >50% for revision/majority, NOT 1 click!)
+      if (approveCount >= requiredCount) {
+        decided = 'APPROVE';
+      } else if (revisionCount >= revisionRequiredCount) {
+        decided = 'REVISION';
+      } else if (rejectCount >= rejectRequiredCount) {
+        decided = 'REJECT';
+      } else if (totalVoted >= totalAssignees) {
+        if (approvalMode === 'ALL') {
+          if (approveCount >= totalAssignees) decided = 'APPROVE';
+          else if (rejectCount > revisionCount) decided = 'REJECT';
+          else decided = 'REVISION';
+        } else {
+          if (approveCount > revisionCount && approveCount > rejectCount) decided = 'APPROVE';
+          else if (revisionCount > approveCount && revisionCount >= rejectCount) decided = 'REVISION';
+          else if (rejectCount > approveCount && rejectCount > revisionCount) decided = 'REJECT';
+          else {
+            const tb = currentConfig.tieBreaker || 'REVISION';
+            if (tb === 'APPROVE' && approveCount > 0) decided = 'APPROVE';
+            else if (tb === 'REJECT' && rejectCount > 0) decided = 'REJECT';
+            else decided = revisionCount > 0 ? 'REVISION' : rejectCount > 0 ? 'REJECT' : 'APPROVE';
+          }
+        }
       }
     }
 
-    // Threshold met (or SINGLE / NOTIFY_ONLY): clear step approvals and advance
-    db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ? AND stepOrder = ?')
-      .run(projectId, project.currentStepOrder || 1);
+    if (!decided) {
+      const stepActionName =
+        voteDecision === 'REVISION'
+          ? 'STEP_REVISION'
+          : voteDecision === 'REJECT'
+          ? 'STEP_REJECTED'
+          : 'STEP_APPROVED';
+      const stepLabel = currentStep?.title || `گام ${currentStepNum}`;
+      const stepNote =
+        voteDecision === 'REVISION'
+          ? `درخواست اصلاح در مرحله «${stepLabel}» ثبت شد (${revisionCount} رای اصلاح، در انتظار نظر سایر اعضا — ${totalVoted} از ${totalAssignees})${comment ? ` — ${comment}` : ''}`
+          : voteDecision === 'REJECT'
+          ? `مخالفت در مرحله «${stepLabel}» ثبت شد (${rejectCount} رای مخالف، در انتظار نظر سایر اعضا — ${totalVoted} از ${totalAssignees})${comment ? ` — ${comment}` : ''}`
+          : `تایید در مرحله «${stepLabel}» ثبت شد (${approveCount} از ${requiredCount} رای موافق لازم — ${totalVoted} از ${totalAssignees})${comment ? ` — ${comment}` : ''}`;
 
-    const isCurrentlyLastStep = steps.length === 0 || (project.currentStepOrder || 1) >= steps.length;
-    if (nextStepOrder) {
-      targetStepOrder = nextStepOrder;
+      db.prepare(`
+        INSERT INTO workflow_logs (id, projectId, stepOrder, fromUserId, toPositionId, action, comment, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        logId,
+        projectId,
+        currentStepNum,
+        currentUser.id,
+        currentPosIds[0] || project.currentPositionId || null,
+        stepActionName,
+        stepNote,
+        now
+      );
+
+      db.prepare('UPDATE projects SET updatedAt = ? WHERE id = ?').run(now, projectId);
+
+      return res.json({
+        success: true,
+        advanced: false,
+        decided: false,
+        approvedCount: approveCount,
+        revisionCount,
+        rejectedCount: rejectCount,
+        requiredCount,
+        revisionRequiredCount,
+        rejectRequiredCount,
+        totalAssignees,
+        currentStepOrder: currentStepNum,
+        currentPositionId: project.currentPositionId,
+        status: project.status,
+      });
+    }
+
+    resolvedOutcome = decided;
+  }
+
+  // Execute the decided branch transition (APPROVE / REVISION / REJECT)
+  const effectiveAction =
+    resolvedOutcome === 'APPROVE'
+      ? 'FORWARD'
+      : resolvedOutcome === 'REVISION'
+      ? 'NEEDS_REVISION'
+      : 'REJECTED';
+
+  if (resolvedOutcome === 'APPROVE') {
+    db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ? AND stepOrder = ?')
+      .run(projectId, currentStepNum);
+
+    const approveTarget = currentConfig.approveTarget;
+    if (approveTarget === 'END_APPROVED') {
+      newStatus = 'APPROVED';
+      targetStepOrder = currentStepNum;
+      targetPositionId = project.currentPositionId;
     } else if (
+      approveTarget === 'CUSTOM_STEP' &&
       currentConfig.onApproveStepOrder &&
       currentConfig.onApproveStepOrder >= 1 &&
       currentConfig.onApproveStepOrder <= steps.length
     ) {
       targetStepOrder = currentConfig.onApproveStepOrder;
-    } else {
-      targetStepOrder = Math.min(Math.max(1, steps.length), (project.currentStepOrder || 1) + 1);
-    }
-
-    const targetStep = steps.find((s) => s.stepOrder === targetStepOrder);
-    const targetPosIds = parseStepPositionIds(targetStep);
-    targetPositionId = nextPositionId || targetPosIds[0] || project.currentPositionId;
-
-    if (isCurrentlyLastStep && targetStepOrder >= Math.max(1, steps.length)) {
-      newStatus = 'APPROVED';
-    } else {
+      const targetStep = steps.find((s) => s.stepOrder === targetStepOrder);
+      targetPositionId = nextPositionId || parseStepPositionIds(targetStep)[0] || project.currentPositionId;
       newStatus = 'IN_REVIEW';
+    } else {
+      const isCurrentlyLastStep = steps.length === 0 || currentStepNum >= steps.length;
+      if (nextStepOrder) {
+        targetStepOrder = nextStepOrder;
+      } else if (
+        currentConfig.onApproveStepOrder &&
+        currentConfig.onApproveStepOrder >= 1 &&
+        currentConfig.onApproveStepOrder <= steps.length
+      ) {
+        targetStepOrder = currentConfig.onApproveStepOrder;
+      } else {
+        targetStepOrder = Math.min(Math.max(1, steps.length), currentStepNum + 1);
+      }
+
+      const targetStep = steps.find((s) => s.stepOrder === targetStepOrder);
+      const targetPosIds = parseStepPositionIds(targetStep);
+      targetPositionId = nextPositionId || targetPosIds[0] || project.currentPositionId;
+
+      if (isCurrentlyLastStep && targetStepOrder >= Math.max(1, steps.length)) {
+        newStatus = 'APPROVED';
+      } else {
+        newStatus = 'IN_REVIEW';
+      }
     }
-  } else if (action === 'NEEDS_REVISION') {
-    const rejectRule = currentConfig.onRejectAction || 'RETURN_PREV';
-    if (rejectRule === 'REJECT_PROJECT') {
+  } else if (resolvedOutcome === 'REVISION') {
+    const revRule = currentConfig.onRevisionAction || currentConfig.onRejectAction || 'RETURN_PREV';
+    const revStepOrder = currentConfig.onRevisionStepOrder ?? currentConfig.onRejectStepOrder;
+    if (revRule === 'REJECT_PROJECT') {
+      db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ?').run(projectId);
       newStatus = 'REJECTED';
-    } else if (rejectRule === 'RETURN_CREATOR') {
+    } else if (revRule === 'RETURN_CREATOR') {
       newStatus = 'NEEDS_REVISION';
       targetStepOrder = 1;
       const targetStep = steps.find((s) => s.stepOrder === 1);
       targetPositionId = parseStepPositionIds(targetStep)[0] || project.currentPositionId;
+      db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ? AND stepOrder >= ?')
+        .run(projectId, targetStepOrder);
+    } else if (revRule === 'CUSTOM_STEP' && revStepOrder) {
+      newStatus = 'NEEDS_REVISION';
+      targetStepOrder = Math.min(steps.length, Math.max(1, revStepOrder));
+      const targetStep = steps.find((s) => s.stepOrder === targetStepOrder);
+      targetPositionId = parseStepPositionIds(targetStep)[0] || project.currentPositionId;
+      db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ? AND stepOrder >= ?')
+        .run(projectId, targetStepOrder);
+    } else {
+      newStatus = 'NEEDS_REVISION';
+      targetStepOrder = Math.max(1, currentStepNum - 1);
+      const targetStep = steps.find((s) => s.stepOrder === targetStepOrder);
+      targetPositionId = parseStepPositionIds(targetStep)[0] || project.currentPositionId;
+      db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ? AND stepOrder >= ?')
+        .run(projectId, targetStepOrder);
+    }
+  } else {
+    // REJECT
+    const rejectRule =
+      currentConfig.onRevisionAction !== undefined
+        ? currentConfig.onRejectAction || 'REJECT_PROJECT'
+        : currentConfig.onRejectAction === 'RETURN_CREATOR' || currentConfig.onRejectAction === 'CUSTOM_STEP'
+        ? currentConfig.onRejectAction
+        : 'REJECT_PROJECT';
+    if (rejectRule === 'RETURN_CREATOR') {
+      newStatus = 'NEEDS_REVISION';
+      targetStepOrder = 1;
+      const targetStep = steps.find((s) => s.stepOrder === 1);
+      targetPositionId = parseStepPositionIds(targetStep)[0] || project.currentPositionId;
+      db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ? AND stepOrder >= ?')
+        .run(projectId, targetStepOrder);
+    } else if (rejectRule === 'RETURN_PREV') {
+      newStatus = 'NEEDS_REVISION';
+      targetStepOrder = Math.max(1, currentStepNum - 1);
+      const targetStep = steps.find((s) => s.stepOrder === targetStepOrder);
+      targetPositionId = parseStepPositionIds(targetStep)[0] || project.currentPositionId;
+      db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ? AND stepOrder >= ?')
+        .run(projectId, targetStepOrder);
     } else if (rejectRule === 'CUSTOM_STEP' && currentConfig.onRejectStepOrder) {
       newStatus = 'NEEDS_REVISION';
       targetStepOrder = Math.min(steps.length, Math.max(1, currentConfig.onRejectStepOrder));
       const targetStep = steps.find((s) => s.stepOrder === targetStepOrder);
       targetPositionId = parseStepPositionIds(targetStep)[0] || project.currentPositionId;
+      db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ? AND stepOrder >= ?')
+        .run(projectId, targetStepOrder);
     } else {
-      newStatus = 'NEEDS_REVISION';
-      targetStepOrder = Math.max(1, (project.currentStepOrder || 1) - 1);
-      const targetStep = steps.find((s) => s.stepOrder === targetStepOrder);
-      targetPositionId = parseStepPositionIds(targetStep)[0] || project.currentPositionId;
+      db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ?').run(projectId);
+      newStatus = 'REJECTED';
     }
-    db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ? AND stepOrder >= ?')
-      .run(projectId, targetStepOrder);
-  } else if (action === 'REJECTED') {
-    if (approvalMode === 'MAJORITY' && stepAssignees.length > 1) {
-      db.prepare(`
-        INSERT INTO workflow_step_approvals (id, projectId, stepOrder, userId, positionId, decision, comment, createdAt)
-        VALUES (?, ?, ?, ?, ?, 'REJECT', ?, ?)
-        ON CONFLICT(projectId, stepOrder, userId) DO UPDATE SET
-          decision = 'REJECT',
-          comment = excluded.comment,
-          createdAt = excluded.createdAt
-      `).run(
-        `wsa-${randomUUID().substring(0, 8)}`,
-        projectId,
-        project.currentStepOrder || 1,
-        currentUser.id,
-        currentUser.positionId || currentPosIds[0] || null,
-        comment || '',
-        now
-      );
-
-      const currentVotes = db.prepare(`
-        SELECT userId, COALESCE(decision, 'APPROVE') as decision FROM workflow_step_approvals
-        WHERE projectId = ? AND stepOrder = ?
-      `).all(projectId, project.currentStepOrder || 1) as Array<{ userId: string; decision: string }>;
-
-      const currentApprovals = currentVotes.filter((v) => v.decision !== 'REJECT');
-      const currentRejections = currentVotes.filter((v) => v.decision === 'REJECT');
-
-      const assigneeSet = new Set(stepAssignees.map((a) => a.id));
-      const matchedApproveCount = currentApprovals.filter((a) => assigneeSet.has(a.userId)).length;
-      const matchedRejectCount = currentRejections.filter((a) => assigneeSet.has(a.userId)).length;
-      const effectiveRejectedCount = adminOverride
-        ? Math.max(matchedRejectCount, currentRejections.length)
-        : matchedRejectCount;
-
-      const requiredCount = getRequiredApprovalsForMode('MAJORITY', stepAssignees.length);
-      const rejectRequiredCount = Math.max(1, Math.max(1, stepAssignees.length) - requiredCount + 1);
-
-      if (effectiveRejectedCount < rejectRequiredCount) {
-        const stepNote = `مخالفت در مرحله «${currentStep?.title || `گام ${project.currentStepOrder}`}» ثبت شد (${effectiveRejectedCount} از ${rejectRequiredCount} رای مخالف لازم)${comment ? ` — ${comment}` : ''}`;
-        db.prepare(`
-          INSERT INTO workflow_logs (id, projectId, stepOrder, fromUserId, toPositionId, action, comment, createdAt)
-          VALUES (?, ?, ?, ?, ?, 'STEP_REJECTED', ?, ?)
-        `).run(
-          logId,
-          projectId,
-          project.currentStepOrder || 1,
-          currentUser.id,
-          currentPosIds[0] || project.currentPositionId || null,
-          stepNote,
-          now
-        );
-
-        db.prepare('UPDATE projects SET updatedAt = ? WHERE id = ?').run(now, projectId);
-
-        return res.json({
-          success: true,
-          advanced: false,
-          approvedCount: matchedApproveCount,
-          rejectedCount: effectiveRejectedCount,
-          requiredCount,
-          rejectRequiredCount,
-          totalAssignees: stepAssignees.length,
-          currentStepOrder: project.currentStepOrder || 1,
-          currentPositionId: project.currentPositionId,
-          status: project.status,
-        });
-      }
-    }
-
-    db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ?').run(projectId);
-    newStatus = 'REJECTED';
   }
 
   const loggedAction =
-    (action === 'FORWARD' || action === 'APPROVED') && newStatus === 'APPROVED'
+    effectiveAction === 'FORWARD' && newStatus === 'APPROVED'
       ? 'FINAL_APPROVED'
-      : action;
+      : effectiveAction;
 
   db.prepare(`
     INSERT INTO workflow_logs (id, projectId, stepOrder, fromUserId, toPositionId, action, comment, createdAt)
@@ -1833,7 +1954,16 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
   `).run(targetStepOrder, targetPositionId, newStatus, now, projectId);
 
   // Send group notification to chat
-  const actionText = loggedAction === 'FINAL_APPROVED' ? 'تصویب نهایی و اتمام گردش کار' : action === 'FORWARD' ? 'تایید و ارجاع به مرحله بعد' : action === 'NEEDS_REVISION' ? 'درخواست اصلاح و ارجاع به گام قبل' : action === 'REJECTED' ? 'رد طرح در گردش کار' : 'تایید نهایی';
+  const actionText =
+    loggedAction === 'FINAL_APPROVED'
+      ? 'تصویب نهایی و اتمام گردش کار'
+      : effectiveAction === 'FORWARD'
+      ? 'تایید و ارجاع در گردش کار'
+      : effectiveAction === 'NEEDS_REVISION'
+      ? 'درخواست اصلاح و ارجاع برای بازبینی'
+      : effectiveAction === 'REJECTED'
+      ? 'رد طرح در گردش کار'
+      : 'تایید نهایی';
   db.prepare(`
     INSERT INTO messages (id, senderId, receiverId, isGroup, content, projectId, createdAt)
     VALUES (?, ?, NULL, 1, ?, ?, ?)
@@ -2875,7 +3005,7 @@ apiRouter.get('/projects', (req: Request, res: Response) => {
       : buildStepApprovalProgress(
           prj.id,
           prj.currentStepOrder || 1,
-          currentStepObj?.config?.approvalMode,
+          currentStepObj?.config,
           currentAssignees,
           currentUser.id,
           canInspectWorkflowHistory

@@ -745,18 +745,21 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
 
                     {item.currentStepApprovalProgress &&
                       (item.currentStepApprovalProgress.mode === 'MAJORITY' ||
-                        item.currentStepApprovalProgress.mode === 'ALL') &&
+                        item.currentStepApprovalProgress.mode === 'ALL' ||
+                        item.currentStepApprovalProgress.voteCollectionMode === 'WAIT_ALL') &&
                       !isFinished && (
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-slate-500 font-medium">
-                            {item.currentStepApprovalProgress.mode === 'MAJORITY' ? 'آرای مرحله:' : 'نصاب تایید مرحله:'}
-                          </span>
-                          <span className="font-bold text-violet-800 bg-violet-50 px-2 py-0.5 rounded-lg border border-violet-200 tabular-nums">
-                            {item.currentStepApprovalProgress.mode === 'MAJORITY'
-                              ? `${item.currentStepApprovalProgress.approvedUserIds.length} موافق / ${
-                                  item.currentStepApprovalProgress.rejectedUserIds?.length || 0
-                                } مخالف (لازم: ${item.currentStepApprovalProgress.requiredCount})`
-                              : `${item.currentStepApprovalProgress.approvedUserIds.length} از ${item.currentStepApprovalProgress.requiredCount} تایید لازم`}
+                          <span className="text-slate-500 font-medium">آرای مرحله:</span>
+                          <span className="font-bold text-violet-800 bg-violet-50 px-2 py-0.5 rounded-lg border border-violet-200 tabular-nums text-[11px]">
+                            {`${item.currentStepApprovalProgress.approvedUserIds.length} موافق / ${
+                              item.currentStepApprovalProgress.revisionUserIds?.length || 0
+                            } اصلاح / ${
+                              item.currentStepApprovalProgress.rejectedUserIds?.length || 0
+                            } مخالف (نصاب: ${item.currentStepApprovalProgress.requiredCount}${
+                              item.currentStepApprovalProgress.voteCollectionMode === 'WAIT_ALL'
+                                ? ' · صبر تا همه'
+                                : ''
+                            })`}
                           </span>
                         </div>
                       )}
@@ -810,9 +813,13 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                           const approvedEntry = item.currentStepApprovalProgress?.approvedUsers.find(
                             (au) => au.userId === assignee.id
                           );
+                          const revisionEntry = item.currentStepApprovalProgress?.revisionUsers?.find(
+                            (rv) => rv.userId === assignee.id
+                          );
                           const rejectedEntry = item.currentStepApprovalProgress?.rejectedUsers?.find(
                             (ru) => ru.userId === assignee.id
                           );
+                          const activeEntry = approvedEntry || revisionEntry || rejectedEntry;
                           const canSeeEntry = canViewHistory || assignee.id === currentUser.id;
 
                           return (
@@ -821,6 +828,8 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                               className={`p-2.5 rounded-xl border space-y-1.5 shadow-2xs ${
                                 canSeeEntry && approvedEntry
                                   ? 'bg-emerald-50/70 border-emerald-200'
+                                  : canSeeEntry && revisionEntry
+                                  ? 'bg-amber-50/70 border-amber-300'
                                   : canSeeEntry && rejectedEntry
                                   ? 'bg-rose-50/70 border-rose-200'
                                   : 'bg-white border-indigo-200/80'
@@ -845,20 +854,24 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-800 border border-emerald-300 shrink-0">
                                     تایید کرده
                                   </span>
+                                ) : canSeeEntry && revisionEntry ? (
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-amber-100 text-amber-900 border border-amber-300 shrink-0">
+                                    درخواست اصلاح
+                                  </span>
                                 ) : canSeeEntry && rejectedEntry ? (
                                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-rose-100 text-rose-800 border border-rose-300 shrink-0">
                                     رای مخالف
                                   </span>
                                 ) : canViewHistory ? (
-                                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 shrink-0">
+                                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 shrink-0">
                                     در انتظار
                                   </span>
                                 ) : null}
                               </div>
-                              {canSeeEntry && (approvedEntry?.comment || rejectedEntry?.comment) && (
+                              {canSeeEntry && activeEntry?.comment && (
                                 <div className="text-[11px] text-slate-700 bg-white/90 px-2.5 py-1.5 rounded-lg border border-slate-200/80 leading-relaxed">
                                   <span className="font-bold text-indigo-700 ml-1">توضیح:</span>
-                                  {(approvedEntry || rejectedEntry)?.comment}
+                                  {activeEntry.comment}
                                 </div>
                               )}
                             </div>

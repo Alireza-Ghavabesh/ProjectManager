@@ -421,6 +421,9 @@ export function initDatabase() {
   try {
     db.prepare('ALTER TABLE projects ADD COLUMN projectTypeId TEXT REFERENCES project_types(id) ON DELETE SET NULL').run();
   } catch (e) {}
+  try {
+    db.prepare('ALTER TABLE workflows ADD COLUMN diagramJson TEXT').run();
+  } catch (e) {}
 
   try {
     seedInitialData();
