@@ -27,6 +27,9 @@ import {
   Bell,
   Inbox,
   MessageSquareText,
+  Move,
+  Paperclip,
+  ShieldCheck,
 } from 'lucide-react';
 import type { WorkflowNotificationRule } from '../types';
 
@@ -206,6 +209,51 @@ function buildRoundedOrthogonalPath(pts: Array<{ x: number; y: number }>, radius
   return cmds.join(' ');
 }
 
+function buildSmoothCurveThroughPoints(pts: Array<{ x: number; y: number }>) {
+  if (pts.length < 2) return '';
+  if (pts.length === 2) {
+    return `M ${pts[0].x} ${pts[0].y} L ${pts[1].x} ${pts[1].y}`;
+  }
+  const cmds: string[] = [`M ${pts[0].x} ${pts[0].y}`];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const curr = pts[i];
+    const next = pts[i + 1];
+    if (i === pts.length - 2) {
+      cmds.push(`Q ${curr.x} ${curr.y} ${next.x} ${next.y}`);
+    } else {
+      const midX = Math.round((curr.x + next.x) / 2);
+      const midY = Math.round((curr.y + next.y) / 2);
+      cmds.push(`Q ${curr.x} ${curr.y} ${midX} ${midY}`);
+    }
+  }
+  return cmds.join(' ');
+}
+
+function findBestSegmentInsertIndex(
+  pts: Array<{ x: number; y: number }>,
+  target: { x: number; y: number }
+): number {
+  if (pts.length <= 2) return 0;
+  let bestIdx = 0;
+  let bestDist = Infinity;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i];
+    const b = pts[i + 1];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const lenSq = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((target.x - a.x) * dx + (target.y - a.y) * dy) / lenSq));
+    const px = a.x + t * dx;
+    const py = a.y + t * dy;
+    const dist = Math.hypot(target.x - px, target.y - py);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
 export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
   steps,
   selectedStepIdx,
@@ -263,9 +311,46 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
     offsetY: number;
   } | null>(null);
 
+  const [edgeEditMode, setEdgeEditMode] = useState<boolean>(false);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [draggingWaypoint, setDraggingWaypoint] = useState<{
+    edgeId: string;
+    wpIdx: number;
+  } | null>(null);
+
   const activeSelection: BpmnSelection = selection || { kind: 'step', idx: selectedStepIdx };
   const snapEnabled = diagram.snapToGrid !== false;
   const connectorStyle = diagram.connectorStyle || 'ORTHOGONAL';
+  const edgeWaypointsMap = diagram.edgeWaypoints || {};
+  const hasAnyCustomWaypoints = Object.values(edgeWaypointsMap).some(
+    (arr) => Array.isArray(arr) && arr.length > 0
+  );
+
+  const updateEdgeWaypoints = useCallback(
+    (edgeId: string, nextPoints: Array<{ x: number; y: number }>) => {
+      const nextMap: Record<string, Array<{ x: number; y: number }>> = {
+        ...(diagram.edgeWaypoints || {}),
+      };
+      if (nextPoints.length === 0) {
+        delete nextMap[edgeId];
+      } else {
+        nextMap[edgeId] = nextPoints;
+      }
+      onDiagramChange({
+        ...diagram,
+        edgeWaypoints: nextMap,
+      });
+    },
+    [diagram, onDiagramChange]
+  );
+
+  const resetAllEdgeWaypoints = useCallback(() => {
+    onDiagramChange({
+      ...diagram,
+      edgeWaypoints: {},
+    });
+    setSelectedEdgeId(null);
+  }, [diagram, onDiagramChange]);
 
   const selectEl = useCallback(
     (sel: BpmnSelection) => {
@@ -418,11 +503,26 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = (document.activeElement?.tagName || '').toLowerCase();
       if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
-      if (e.key === 'Escape' && connecting) {
-        setConnecting(null);
-        return;
+      if (e.key === 'Escape') {
+        if (connecting) {
+          setConnecting(null);
+          return;
+        }
+        if (selectedEdgeId) {
+          setSelectedEdgeId(null);
+          return;
+        }
+        if (edgeEditMode) {
+          setEdgeEditMode(false);
+          return;
+        }
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedEdgeId && edgeWaypointsMap[selectedEdgeId]?.length) {
+          e.preventDefault();
+          updateEdgeWaypoints(selectedEdgeId, []);
+          return;
+        }
         if (activeSelection.kind === 'notification' && onDeleteNotification) {
           e.preventDefault();
           onDeleteNotification(activeSelection.notifId);
@@ -438,7 +538,19 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeSelection, steps.length, connecting, onDeleteStep, onDeleteNotification, onUpdateStepConfig, selectEl]);
+  }, [
+    activeSelection,
+    steps.length,
+    connecting,
+    selectedEdgeId,
+    edgeEditMode,
+    edgeWaypointsMap,
+    updateEdgeWaypoints,
+    onDeleteStep,
+    onDeleteNotification,
+    onUpdateStepConfig,
+    selectEl,
+  ]);
 
   const toCanvasCoords = (clientX: number, clientY: number) => {
     const el = canvasRef.current;
@@ -456,6 +568,20 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
       const dy = e.clientY - isPanning.startClientY;
       viewportRef.current.scrollLeft = isPanning.scrollLeft - dx;
       viewportRef.current.scrollTop = isPanning.scrollTop - dy;
+      return;
+    }
+
+    if (draggingWaypoint) {
+      const pt = toCanvasCoords(e.clientX, e.clientY);
+      const nextPt = {
+        x: snapCoord(Math.max(20, Math.min(canvasDimensions.width - 20, pt.x)), snapEnabled),
+        y: snapCoord(Math.max(20, Math.min(canvasDimensions.height - 20, pt.y)), snapEnabled),
+      };
+      const existing = edgeWaypointsMap[draggingWaypoint.edgeId] || [];
+      if (draggingWaypoint.wpIdx >= 0 && draggingWaypoint.wpIdx < existing.length) {
+        const updated = existing.map((p, i) => (i === draggingWaypoint.wpIdx ? nextPt : p));
+        updateEdgeWaypoints(draggingWaypoint.edgeId, updated);
+      }
       return;
     }
 
@@ -514,6 +640,7 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
   };
 
   const handleCanvasPointerUp = () => {
+    if (draggingWaypoint) setDraggingWaypoint(null);
     if (draggingNode) setDraggingNode(null);
     if (isPanning) setIsPanning(null);
   };
@@ -659,19 +786,44 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
       from: { x: number; y: number },
       to: { x: number; y: number },
       branch: BpmnBranchKind | 'start' | 'task_to_gateway' | 'creator_return',
-      isBackwardLoop: boolean
+      isBackwardLoop: boolean,
+      customWaypoints?: Array<{ x: number; y: number }>,
+      stepIdx = 0
     ) => {
+      if (Array.isArray(customWaypoints) && customWaypoints.length > 0) {
+        const pts = [from, ...customWaypoints, to];
+        const path =
+          connectorStyle === 'ORTHOGONAL'
+            ? buildRoundedOrthogonalPath(pts, 12)
+            : buildSmoothCurveThroughPoints(pts);
+        const midSegIdx = Math.floor((pts.length - 1) / 2);
+        const a = pts[midSegIdx];
+        const b = pts[midSegIdx + 1] || pts[pts.length - 1];
+        return {
+          path,
+          midX: Math.round((a.x + b.x) / 2),
+          midY: Math.round((a.y + b.y) / 2),
+          points: pts,
+        };
+      }
+
       if (branch === 'task_to_gateway') {
+        const midX = Math.round((from.x + to.x) / 2);
         const path =
           connectorStyle === 'ORTHOGONAL'
             ? buildRoundedOrthogonalPath([
                 from,
-                { x: Math.round((from.x + to.x) / 2), y: from.y },
-                { x: Math.round((from.x + to.x) / 2), y: to.y },
+                { x: midX, y: from.y },
+                { x: midX, y: to.y },
                 to,
               ])
             : `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
-        return { path, midX: (from.x + to.x) / 2, midY: (from.y + to.y) / 2 };
+        return {
+          path,
+          midX: (from.x + to.x) / 2,
+          midY: (from.y + to.y) / 2,
+          points: [from, to],
+        };
       }
 
       if (connectorStyle === 'ORTHOGONAL') {
@@ -686,6 +838,7 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
             ]),
             midX,
             midY: Math.round((from.y + to.y) / 2),
+            points: [from, to],
           };
         }
 
@@ -702,11 +855,13 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
             path: buildRoundedOrthogonalPath(pts),
             midX: Math.round((from.x + laneX) / 2),
             midY: from.y - 24,
+            points: [from, to],
           };
         }
 
         if (isBackwardLoop) {
-          const offset = branch === 'revision' ? 68 : 104;
+          const laneSlot = stepIdx % 4;
+          const offset = branch === 'revision' ? 62 + laneSlot * 28 : 112 + laneSlot * 28;
           const laneY = Math.max(from.y, to.y) + offset;
           const pts = [
             from,
@@ -718,23 +873,25 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
             path: buildRoundedOrthogonalPath(pts),
             midX: Math.round((from.x + to.x) / 2),
             midY: laneY,
+            points: [from, to],
           };
         }
 
         // Standard forward or branch orthogonal Visio elbow
         if (branch === 'revision') {
-          const dropY = from.y + 34;
+          const dropY = from.y + 34 + (stepIdx % 3) * 14;
           if (to.y >= from.y + 20) {
             const pts = [from, { x: from.x, y: dropY }, { x: to.x, y: dropY }, to];
             return {
               path: buildRoundedOrthogonalPath(pts),
               midX: Math.round((from.x + to.x) / 2),
               midY: dropY,
+              points: [from, to],
             };
           }
         }
         if (branch === 'reject') {
-          const riseY = from.y - 38;
+          const riseY = from.y - 38 - (stepIdx % 3) * 18;
           const midX = Math.round((from.x + to.x) / 2);
           const pts = [
             from,
@@ -747,6 +904,7 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
             path: buildRoundedOrthogonalPath(pts),
             midX: Math.round((from.x + midX) / 2),
             midY: riseY,
+            points: [from, to],
           };
         }
 
@@ -759,6 +917,7 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
           path: buildRoundedOrthogonalPath(pts),
           midX,
           midY: Math.round((from.y + to.y) / 2),
+          points: [from, to],
         };
       }
 
@@ -769,22 +928,25 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
           path: `M ${from.x} ${from.y} C ${from.x + dx} ${from.y}, ${to.x - dx} ${to.y}, ${to.x} ${to.y}`,
           midX: (from.x + to.x) / 2,
           midY: (from.y + to.y) / 2,
+          points: [from, to],
         };
       }
 
       if (branch === 'creator_return') {
         const path = `M ${from.x} ${from.y} C ${from.x} ${from.y - 45}, ${to.x - 55} ${to.y}, ${to.x} ${to.y}`;
-        return { path, midX: (from.x + to.x) / 2 - 16, midY: (from.y + to.y) / 2 };
+        return { path, midX: (from.x + to.x) / 2 - 16, midY: (from.y + to.y) / 2, points: [from, to] };
       }
 
       if (isBackwardLoop) {
-        const arcDepth = branch === 'revision' ? 75 : 108;
+        const laneSlot = stepIdx % 4;
+        const arcDepth = branch === 'revision' ? 72 + laneSlot * 30 : 116 + laneSlot * 30;
         const peakY = Math.max(from.y, to.y) + arcDepth;
         const path = `M ${from.x} ${from.y} C ${from.x} ${peakY}, ${to.x} ${peakY}, ${to.x} ${to.y}`;
         return {
           path,
           midX: (from.x + to.x) / 2,
           midY: 0.125 * from.y + 0.75 * peakY + 0.125 * to.y,
+          points: [from, to],
         };
       }
 
@@ -797,6 +959,7 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
         path: `M ${from.x} ${from.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${to.x} ${to.y}`,
         midX: 0.125 * from.x + 0.375 * c1x + 0.375 * c2x + 0.125 * to.x,
         midY: 0.125 * from.y + 0.375 * c1y + 0.375 * c2y + 0.125 * to.y,
+        points: [from, to],
       };
     },
     [connectorStyle]
@@ -844,13 +1007,18 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
       path: string;
       midX: number;
       midY: number;
+      from: { x: number; y: number };
+      to: { x: number; y: number };
+      waypoints: Array<{ x: number; y: number }>;
+      points: Array<{ x: number; y: number }>;
       isDashed?: boolean;
     }> = [];
 
     if (steps.length > 0) {
       const sFrom = { x: startPos.x + CIRCLE_SIZE, y: startPos.y + CIRCLE_SIZE / 2 };
       const sTo = getTargetAnchor(sFrom, { kind: 'step', idx: 0 });
-      const { path, midX, midY } = buildEdgePath(sFrom, sTo, 'start', false);
+      const sWps = edgeWaypointsMap['edge-start'] || [];
+      const { path, midX, midY, points } = buildEdgePath(sFrom, sTo, 'start', false, sWps, 0);
       list.push({
         id: 'edge-start',
         fromIdx: 0,
@@ -865,17 +1033,24 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
         path,
         midX,
         midY,
+        from: sFrom,
+        to: sTo,
+        waypoints: sWps,
+        points,
       });
 
       if (hasAnyCreatorReturnRoute) {
         const cFrom = { x: creatorPos.x + CREATOR_W / 2, y: creatorPos.y };
         const step0 = getStepPos(0);
         const cTo = { x: step0.x, y: step0.y + NODE_H * 0.72 };
-        const { path: cPath, midX: cMidX, midY: cMidY } = buildEdgePath(
+        const cWps = edgeWaypointsMap['edge-creator-return'] || [];
+        const { path: cPath, midX: cMidX, midY: cMidY, points: cPts } = buildEdgePath(
           cFrom,
           cTo,
           'creator_return',
-          false
+          false,
+          cWps,
+          0
         );
         list.push({
           id: 'edge-creator-return',
@@ -891,6 +1066,10 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
           path: cPath,
           midX: cMidX,
           midY: cMidY,
+          from: cFrom,
+          to: cTo,
+          waypoints: cWps,
+          points: cPts,
           isDashed: true,
         });
       }
@@ -906,9 +1085,11 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
       if (hasGw) {
         const tFrom = { x: sPos.x + NODE_W, y: sPos.y + Math.round(NODE_H / 2) };
         const gTo = { x: gPos.x, y: gPos.y + Math.round(GW_SIZE / 2) };
-        const { path, midX, midY } = buildEdgePath(tFrom, gTo, 'task_to_gateway', false);
+        const gwEdgeId = `edge-${idx}-gw`;
+        const gwWps = edgeWaypointsMap[gwEdgeId] || [];
+        const { path, midX, midY, points } = buildEdgePath(tFrom, gTo, 'task_to_gateway', false, gwWps, idx);
         list.push({
-          id: `edge-${idx}-gw`,
+          id: gwEdgeId,
           fromIdx: idx,
           selectTarget: { kind: 'gateway', idx },
           branch: 'task_to_gateway',
@@ -921,6 +1102,10 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
           path,
           midX,
           midY,
+          from: tFrom,
+          to: gTo,
+          waypoints: gwWps,
+          points,
         });
       }
 
@@ -933,12 +1118,14 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
         const from = getPortOrigin(idx, 'approve');
         const to = getTargetAnchor(from, approveTarget);
         const isBack = approveTarget.kind === 'step' && approveTarget.idx <= idx;
-        const { path, midX, midY } = buildEdgePath(from, to, 'approve', isBack);
+        const appEdgeId = `edge-${idx}-approve`;
+        const appWps = edgeWaypointsMap[appEdgeId] || [];
+        const { path, midX, midY, points } = buildEdgePath(from, to, 'approve', isBack, appWps, idx);
         const customLbl = cfg.actionLabels?.APPROVE?.trim();
         const baseLbl = customLbl || (approveTarget.kind === 'end_approved' ? 'تایید نهایی' : 'تایید');
         const waitSuffix = cfg.approveBehavior === 'RECORD_AND_WAIT' ? ' · ثبت و صبر' : '';
         list.push({
-          id: `edge-${idx}-approve`,
+          id: appEdgeId,
           fromIdx: idx,
           selectTarget: targetSel,
           branch: 'approve',
@@ -954,6 +1141,10 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
           path,
           midX,
           midY,
+          from,
+          to,
+          waypoints: appWps,
+          points,
         });
       }
 
@@ -963,7 +1154,9 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
         const isBack =
           revisionTarget.kind === 'creator' ||
           (revisionTarget.kind === 'step' && revisionTarget.idx <= idx);
-        const { path, midX, midY } = buildEdgePath(from, to, 'revision', isBack);
+        const revEdgeId = `edge-${idx}-revision`;
+        const revWps = edgeWaypointsMap[revEdgeId] || [];
+        const { path, midX, midY, points } = buildEdgePath(from, to, 'revision', isBack, revWps, idx);
         const customLbl = cfg.actionLabels?.REVISION?.trim();
         const revLbl =
           customLbl ||
@@ -974,7 +1167,7 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
             : 'اصلاح');
         const waitSuffix = cfg.revisionBehavior === 'RECORD_AND_WAIT' ? ' · ثبت و صبر' : '';
         list.push({
-          id: `edge-${idx}-revision`,
+          id: revEdgeId,
           fromIdx: idx,
           selectTarget: targetSel,
           branch: 'revision',
@@ -987,6 +1180,10 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
           path,
           midX,
           midY,
+          from,
+          to,
+          waypoints: revWps,
+          points,
           isDashed: true,
         });
       }
@@ -997,7 +1194,9 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
         const isBack =
           rejectTarget.kind === 'creator' ||
           (rejectTarget.kind === 'step' && rejectTarget.idx <= idx);
-        const { path, midX, midY } = buildEdgePath(from, to, 'reject', isBack);
+        const rejEdgeId = `edge-${idx}-reject`;
+        const rejWps = edgeWaypointsMap[rejEdgeId] || [];
+        const { path, midX, midY, points } = buildEdgePath(from, to, 'reject', isBack, rejWps, idx);
         const customLbl = cfg.actionLabels?.REJECT?.trim();
         const rejLbl =
           customLbl ||
@@ -1008,7 +1207,7 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
             : 'رد ← گام');
         const waitSuffix = cfg.rejectBehavior === 'RECORD_AND_WAIT' ? ' · ثبت و صبر' : '';
         list.push({
-          id: `edge-${idx}-reject`,
+          id: rejEdgeId,
           fromIdx: idx,
           selectTarget: targetSel,
           branch: 'reject',
@@ -1021,6 +1220,10 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
           path,
           midX,
           midY,
+          from,
+          to,
+          waypoints: rejWps,
+          points,
           isDashed: true,
         });
       }
@@ -1032,6 +1235,7 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
     startPos,
     creatorPos,
     diagram.startTrigger,
+    edgeWaypointsMap,
     hasAnyCreatorReturnRoute,
     getAllowedActions,
     stepHasGateway,
@@ -1138,20 +1342,49 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
               y: nPos.y + NOTIF_H / 2,
             };
 
-      const midX = Math.round((origin.x + targetAnchor.x) / 2);
-      const midY = Math.round((origin.y + targetAnchor.y) / 2);
-      const path = `M ${origin.x} ${origin.y} Q ${origin.x} ${targetAnchor.y}, ${targetAnchor.x} ${targetAnchor.y}`;
+      const notifEdgeId = `notif-${rule.id}`;
+      const nWps = edgeWaypointsMap[notifEdgeId] || [];
+      let midX = Math.round((origin.x + targetAnchor.x) / 2);
+      let midY = Math.round((origin.y + targetAnchor.y) / 2);
+      let path = `M ${origin.x} ${origin.y} Q ${origin.x} ${targetAnchor.y}, ${targetAnchor.x} ${targetAnchor.y}`;
+      let points = [origin, targetAnchor];
+
+      if (nWps.length > 0) {
+        points = [origin, ...nWps, targetAnchor];
+        path =
+          connectorStyle === 'ORTHOGONAL'
+            ? buildRoundedOrthogonalPath(points, 12)
+            : buildSmoothCurveThroughPoints(points);
+        const mIdx = Math.floor((points.length - 1) / 2);
+        midX = Math.round((points[mIdx].x + points[mIdx + 1].x) / 2);
+        midY = Math.round((points[mIdx].y + points[mIdx + 1].y) / 2);
+      }
 
       return {
         id: rule.id,
+        edgeId: notifEdgeId,
         path,
         midX,
         midY,
         triggerText,
         color,
+        waypoints: nWps,
+        points,
       };
     });
-  }, [notificationsList, steps.length, startPos, creatorPos, endApprovedPos, endRejectedPos, getStepPos, getGatewayPos, getNotificationPos]);
+  }, [
+    notificationsList,
+    steps.length,
+    startPos,
+    creatorPos,
+    endApprovedPos,
+    endRejectedPos,
+    edgeWaypointsMap,
+    connectorStyle,
+    getStepPos,
+    getGatewayPos,
+    getNotificationPos,
+  ]);
 
   return (
     <div className="flex-1 min-h-0 flex flex-col bg-slate-100 overflow-hidden select-none">
@@ -1222,6 +1455,38 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Interactive Edge Routing Mode Toggle */}
+          <button
+            type="button"
+            onClick={() => {
+              setEdgeEditMode((prev) => {
+                if (prev) setSelectedEdgeId(null);
+                return !prev;
+              });
+            }}
+            className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-bold flex items-center gap-1 cursor-pointer transition ${
+              edgeEditMode
+                ? 'bg-amber-500 text-white border-amber-600 shadow-xs'
+                : 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
+            }`}
+            title="فعال‌سازی حالت جابه‌جایی و رسم مسیر دلخواه خطوط با موس روی بوم"
+          >
+            <Move className="w-3.5 h-3.5" />
+            <span>{edgeEditMode ? 'در حال ویرایش خطوط ✓' : 'ویرایش مسیر خطوط'}</span>
+          </button>
+
+          {hasAnyCustomWaypoints && (
+            <button
+              type="button"
+              onClick={resetAllEdgeWaypoints}
+              className="px-2 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 text-slate-600 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition"
+              title="بازنشانی تمام نقاط شکست دستی خطوط به مسیر خودکار"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>بازنشانی خطوط</span>
+            </button>
+          )}
+
           {/* Connector Style Switcher */}
           <button
             type="button"
@@ -1345,6 +1610,40 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
         </div>
       )}
 
+      {!connecting && (edgeEditMode || selectedEdgeId) && (
+        <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-amber-950 text-[11px] font-bold flex flex-wrap items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center gap-2">
+            <Move className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            <span>
+              {edgeEditMode
+                ? 'ویرایش مسیر خطوط فعال است: روی هر خط با موس بکشید یا دستگیره‌های (+) را جابه‌جا کنید تا خط از مسیر دلخواه عبور کند. برای حذف هر نقطه شکست، روی آن دابل‌کلیک کنید.'
+                : 'یک خط اتصال انتخاب شده است: می‌توانید دستگیره‌های روی خط را با موس بکشید و مسیر خط را دقیق تنظیم کنید (دابل‌کلیک روی نقطه برای حذف).'}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {selectedEdgeId && (edgeWaypointsMap[selectedEdgeId]?.length || 0) > 0 && (
+              <button
+                type="button"
+                onClick={() => updateEdgeWaypoints(selectedEdgeId, [])}
+                className="px-2.5 py-0.5 rounded-lg bg-white hover:bg-rose-50 text-rose-700 border border-rose-200 text-[11px] font-bold cursor-pointer transition"
+              >
+                بازنشانی این خط
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setEdgeEditMode(false);
+                setSelectedEdgeId(null);
+              }}
+              className="px-2.5 py-0.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold cursor-pointer transition"
+            >
+              پایان ویرایش خطوط
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Full-Screen Visio Blueprint Grid Viewport */}
       <div className="flex-1 min-h-0 relative overflow-hidden">
         <div
@@ -1376,6 +1675,7 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
             onPointerLeave={handleCanvasPointerUp}
             onClick={() => {
               if (connecting) setConnecting(null);
+              if (selectedEdgeId) setSelectedEdgeId(null);
             }}
             onDragOver={(e) => {
               if (
@@ -1478,40 +1778,288 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                 </defs>
 
                 {edges.map((edge) => {
+                  const isEdgeSelected = selectedEdgeId === edge.id;
                   const isFocused =
-                    edge.branch === 'start'
+                    isEdgeSelected ||
+                    (edge.branch === 'start'
                       ? activeSelection.kind === 'start'
                       : edge.branch === 'creator_return'
                       ? activeSelection.kind === 'creator_return'
                       : (activeSelection.kind === 'step' || activeSelection.kind === 'gateway') &&
-                        edge.fromIdx === activeSelection.idx;
+                        edge.fromIdx === activeSelection.idx);
+                  const showHandles = isEdgeSelected || edgeEditMode;
+
                   return (
-                    <path
-                      key={edge.id}
-                      d={edge.path}
-                      fill="none"
-                      stroke={edge.color}
-                      strokeWidth={isFocused ? 2.5 : 1.75}
-                      strokeDasharray={edge.isDashed ? '6 4' : undefined}
-                      markerEnd={`url(#${edge.markerId})`}
-                      opacity={isFocused ? 1 : 0.78}
-                    />
+                    <g key={edge.id}>
+                      {isEdgeSelected && (
+                        <path
+                          d={edge.path}
+                          fill="none"
+                          stroke="#f59e0b"
+                          strokeWidth={6}
+                          opacity={0.35}
+                          strokeLinecap="round"
+                        />
+                      )}
+                      <path
+                        d={edge.path}
+                        fill="none"
+                        stroke={edge.color}
+                        strokeWidth={isEdgeSelected ? 3 : isFocused ? 2.5 : 1.75}
+                        strokeDasharray={edge.isDashed ? '6 4' : undefined}
+                        markerEnd={`url(#${edge.markerId})`}
+                        opacity={isFocused || edgeEditMode ? 1 : 0.78}
+                      />
+                      {/* Wide interactive hit area so users can click or drag any line */}
+                      <path
+                        d={edge.path}
+                        fill="none"
+                        stroke="transparent"
+                        strokeWidth={16}
+                        className={`pointer-events-auto ${edgeEditMode ? 'cursor-grab' : 'cursor-pointer'}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedEdgeId(edge.id);
+                          if (!edgeEditMode) {
+                            selectEl(edge.selectTarget);
+                          }
+                        }}
+                        onPointerDown={(e) => {
+                          if (e.button !== 0 || connecting) return;
+                          e.stopPropagation();
+                          setSelectedEdgeId(edge.id);
+                          if (edgeEditMode) {
+                            const pt = toCanvasCoords(e.clientX, e.clientY);
+                            const snapped = {
+                              x: snapCoord(pt.x, snapEnabled),
+                              y: snapCoord(pt.y, snapEnabled),
+                            };
+                            const insertIdx = findBestSegmentInsertIndex(edge.points, snapped);
+                            const nextWps = [...edge.waypoints];
+                            nextWps.splice(insertIdx, 0, snapped);
+                            updateEdgeWaypoints(edge.id, nextWps);
+                            setDraggingWaypoint({ edgeId: edge.id, wpIdx: insertIdx });
+                          }
+                        }}
+                      />
+
+                      {/* Draggable midpoint insert handles & existing waypoint handles */}
+                      {showHandles && (
+                        <>
+                          {edge.points.slice(0, -1).map((pA, segIdx) => {
+                            const pB = edge.points[segIdx + 1];
+                            const mx = Math.round((pA.x + pB.x) / 2);
+                            const my = Math.round((pA.y + pB.y) / 2);
+                            if (Math.hypot(pB.x - pA.x, pB.y - pA.y) < 36) return null;
+                            return (
+                              <g
+                                key={`${edge.id}-mid-${segIdx}`}
+                                className="pointer-events-auto cursor-grab"
+                                onClick={(e) => e.stopPropagation()}
+                                onPointerDown={(e) => {
+                                  if (e.button !== 0) return;
+                                  e.stopPropagation();
+                                  setSelectedEdgeId(edge.id);
+                                  const nextWps = [...edge.waypoints];
+                                  const newPt = {
+                                    x: snapCoord(mx, snapEnabled),
+                                    y: snapCoord(my, snapEnabled),
+                                  };
+                                  nextWps.splice(segIdx, 0, newPt);
+                                  updateEdgeWaypoints(edge.id, nextWps);
+                                  setDraggingWaypoint({ edgeId: edge.id, wpIdx: segIdx });
+                                }}
+                              >
+                                <circle
+                                  cx={mx}
+                                  cy={my}
+                                  r={isEdgeSelected ? 7 : 5.5}
+                                  fill="#ffffff"
+                                  stroke={edge.color}
+                                  strokeWidth={1.75}
+                                  opacity={isEdgeSelected ? 0.96 : 0.72}
+                                />
+                                <line
+                                  x1={mx - 3}
+                                  y1={my}
+                                  x2={mx + 3}
+                                  y2={my}
+                                  stroke={edge.color}
+                                  strokeWidth={1.5}
+                                />
+                                <line
+                                  x1={mx}
+                                  y1={my - 3}
+                                  x2={mx}
+                                  y2={my + 3}
+                                  stroke={edge.color}
+                                  strokeWidth={1.5}
+                                />
+                              </g>
+                            );
+                          })}
+
+                          {edge.waypoints.map((wp, wpIdx) => (
+                            <g
+                              key={`${edge.id}-wp-${wpIdx}`}
+                              className="pointer-events-auto cursor-move"
+                              onClick={(e) => e.stopPropagation()}
+                              onPointerDown={(e) => {
+                                if (e.button !== 0) return;
+                                e.stopPropagation();
+                                setSelectedEdgeId(edge.id);
+                                setDraggingWaypoint({ edgeId: edge.id, wpIdx });
+                              }}
+                              onDoubleClick={(e) => {
+                                e.stopPropagation();
+                                const nextWps = edge.waypoints.filter((_, i) => i !== wpIdx);
+                                updateEdgeWaypoints(edge.id, nextWps);
+                              }}
+                              onContextMenu={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const nextWps = edge.waypoints.filter((_, i) => i !== wpIdx);
+                                updateEdgeWaypoints(edge.id, nextWps);
+                              }}
+                            >
+                              <circle
+                                cx={wp.x}
+                                cy={wp.y}
+                                r={8}
+                                fill="#f59e0b"
+                                stroke="#ffffff"
+                                strokeWidth={2.5}
+                              />
+                            </g>
+                          ))}
+                        </>
+                      )}
+                    </g>
                   );
                 })}
 
                 {notifEdges.map((ne) => {
-                  const isFocused = activeSelection.kind === 'notification' && activeSelection.notifId === ne.id;
+                  const isEdgeSelected = selectedEdgeId === ne.edgeId;
+                  const isFocused =
+                    isEdgeSelected ||
+                    (activeSelection.kind === 'notification' && activeSelection.notifId === ne.id);
+                  const showHandles = isEdgeSelected || edgeEditMode;
                   return (
-                    <path
-                      key={`notif-edge-${ne.id}`}
-                      d={ne.path}
-                      fill="none"
-                      stroke={ne.color}
-                      strokeWidth={isFocused ? 2.5 : 1.75}
-                      strokeDasharray="5 4"
-                      markerEnd="url(#arrow-notif)"
-                      opacity={isFocused ? 1 : 0.82}
-                    />
+                    <g key={`notif-edge-${ne.id}`}>
+                      {isEdgeSelected && (
+                        <path
+                          d={ne.path}
+                          fill="none"
+                          stroke="#f59e0b"
+                          strokeWidth={6}
+                          opacity={0.35}
+                        />
+                      )}
+                      <path
+                        d={ne.path}
+                        fill="none"
+                        stroke={ne.color}
+                        strokeWidth={isEdgeSelected ? 3 : isFocused ? 2.5 : 1.75}
+                        strokeDasharray="5 4"
+                        markerEnd="url(#arrow-notif)"
+                        opacity={isFocused || edgeEditMode ? 1 : 0.82}
+                      />
+                      <path
+                        d={ne.path}
+                        fill="none"
+                        stroke="transparent"
+                        strokeWidth={16}
+                        className={`pointer-events-auto ${edgeEditMode ? 'cursor-grab' : 'cursor-pointer'}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedEdgeId(ne.edgeId);
+                          if (!edgeEditMode) {
+                            selectEl({ kind: 'notification', notifId: ne.id });
+                          }
+                        }}
+                        onPointerDown={(e) => {
+                          if (e.button !== 0 || connecting) return;
+                          e.stopPropagation();
+                          setSelectedEdgeId(ne.edgeId);
+                          if (edgeEditMode) {
+                            const pt = toCanvasCoords(e.clientX, e.clientY);
+                            const snapped = {
+                              x: snapCoord(pt.x, snapEnabled),
+                              y: snapCoord(pt.y, snapEnabled),
+                            };
+                            const insertIdx = findBestSegmentInsertIndex(ne.points, snapped);
+                            const nextWps = [...ne.waypoints];
+                            nextWps.splice(insertIdx, 0, snapped);
+                            updateEdgeWaypoints(ne.edgeId, nextWps);
+                            setDraggingWaypoint({ edgeId: ne.edgeId, wpIdx: insertIdx });
+                          }
+                        }}
+                      />
+                      {showHandles && (
+                        <>
+                          {ne.points.slice(0, -1).map((pA, segIdx) => {
+                            const pB = ne.points[segIdx + 1];
+                            const mx = Math.round((pA.x + pB.x) / 2);
+                            const my = Math.round((pA.y + pB.y) / 2);
+                            if (Math.hypot(pB.x - pA.x, pB.y - pA.y) < 36) return null;
+                            return (
+                              <g
+                                key={`${ne.edgeId}-mid-${segIdx}`}
+                                className="pointer-events-auto cursor-grab"
+                                onClick={(e) => e.stopPropagation()}
+                                onPointerDown={(e) => {
+                                  if (e.button !== 0) return;
+                                  e.stopPropagation();
+                                  setSelectedEdgeId(ne.edgeId);
+                                  const nextWps = [...ne.waypoints];
+                                  nextWps.splice(segIdx, 0, {
+                                    x: snapCoord(mx, snapEnabled),
+                                    y: snapCoord(my, snapEnabled),
+                                  });
+                                  updateEdgeWaypoints(ne.edgeId, nextWps);
+                                  setDraggingWaypoint({ edgeId: ne.edgeId, wpIdx: segIdx });
+                                }}
+                              >
+                                <circle
+                                  cx={mx}
+                                  cy={my}
+                                  r={isEdgeSelected ? 6.5 : 5}
+                                  fill="#ffffff"
+                                  stroke={ne.color}
+                                  strokeWidth={1.75}
+                                />
+                              </g>
+                            );
+                          })}
+                          {ne.waypoints.map((wp, wpIdx) => (
+                            <circle
+                              key={`${ne.edgeId}-wp-${wpIdx}`}
+                              cx={wp.x}
+                              cy={wp.y}
+                              r={7.5}
+                              fill="#f59e0b"
+                              stroke="#ffffff"
+                              strokeWidth={2}
+                              className="pointer-events-auto cursor-move"
+                              onClick={(e) => e.stopPropagation()}
+                              onPointerDown={(e) => {
+                                if (e.button !== 0) return;
+                                e.stopPropagation();
+                                setSelectedEdgeId(ne.edgeId);
+                                setDraggingWaypoint({ edgeId: ne.edgeId, wpIdx });
+                              }}
+                              onDoubleClick={(e) => {
+                                e.stopPropagation();
+                                updateEdgeWaypoints(
+                                  ne.edgeId,
+                                  ne.waypoints.filter((_, i) => i !== wpIdx)
+                                );
+                              }}
+                            />
+                          ))}
+                        </>
+                      )}
+                    </g>
                   );
                 })}
 
@@ -1540,28 +2088,37 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
               {/* Interactive Edge Labels */}
               {edges
                 .filter((e) => e.label)
-                .map((edge) => (
-                  <button
-                    key={`${edge.id}-label`}
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      selectEl(edge.selectTarget);
-                    }}
-                    style={{
-                      left: `${edge.midX}px`,
-                      top: `${edge.midY}px`,
-                      transform: 'translate(-50%, -50%)',
-                      backgroundColor: edge.badgeBg,
-                      borderColor: edge.badgeBorder,
-                      color: edge.badgeText,
-                    }}
-                    dir="rtl"
-                    className="absolute z-10 px-2 py-0.5 rounded-md border text-[10px] font-bold shadow-2xs hover:scale-105 transition cursor-pointer whitespace-nowrap"
-                  >
-                    {edge.label}
-                  </button>
-                ))}
+                .map((edge) => {
+                  const isEdgeSelected = selectedEdgeId === edge.id;
+                  return (
+                    <button
+                      key={`${edge.id}-label`}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedEdgeId(edge.id);
+                        if (!edgeEditMode) {
+                          selectEl(edge.selectTarget);
+                        }
+                      }}
+                      style={{
+                        left: `${edge.midX}px`,
+                        top: `${edge.midY}px`,
+                        transform: 'translate(-50%, -50%)',
+                        backgroundColor: edge.badgeBg,
+                        borderColor: isEdgeSelected ? '#f59e0b' : edge.badgeBorder,
+                        color: edge.badgeText,
+                      }}
+                      dir="rtl"
+                      className={`absolute z-10 px-2 py-0.5 rounded-md border text-[10px] font-bold shadow-2xs hover:scale-105 transition cursor-pointer whitespace-nowrap ${
+                        isEdgeSelected ? 'ring-2 ring-amber-400/70' : ''
+                      }`}
+                      title="برای ویرایش مسیر این خط کلیک کنید"
+                    >
+                      {edge.label}
+                    </button>
+                  );
+                })}
 
               {/* Interactive Notification Edge Labels */}
               {notifEdges.map((ne) => (
@@ -1570,7 +2127,10 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    selectEl({ kind: 'notification', notifId: ne.id });
+                    setSelectedEdgeId(ne.edgeId);
+                    if (!edgeEditMode) {
+                      selectEl({ kind: 'notification', notifId: ne.id });
+                    }
                   }}
                   style={{
                     left: `${ne.midX}px`,
@@ -1578,7 +2138,9 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                     transform: 'translate(-50%, -50%)',
                   }}
                   dir="rtl"
-                  className="absolute z-10 px-2 py-0.5 rounded-md border border-sky-200 bg-sky-50 text-sky-900 text-[9px] font-bold shadow-2xs hover:scale-105 transition cursor-pointer whitespace-nowrap"
+                  className={`absolute z-10 px-2 py-0.5 rounded-md border border-sky-200 bg-sky-50 text-sky-900 text-[9px] font-bold shadow-2xs hover:scale-105 transition cursor-pointer whitespace-nowrap ${
+                    selectedEdgeId === ne.edgeId ? 'ring-2 ring-amber-400 border-amber-500' : ''
+                  }`}
                 >
                   {ne.triggerText}
                 </button>
@@ -2008,24 +2570,50 @@ export const BpmnWorkflowCanvas: React.FC<BpmnWorkflowCanvasProps> = ({
                         </div>
                       </div>
 
-                      {/* Footer Strip: Gateway toggle or direct ports */}
+                      {/* Footer Strip: Controls, Gateway toggle or direct ports */}
                       <div className="px-2.5 py-1.5 border-t border-slate-100 bg-slate-50/70 rounded-b-xl flex items-center justify-between gap-1 text-[10px]">
                         <div className="flex items-center gap-1.5 text-slate-500 font-semibold truncate">
+                          {st.config.requireAttachment && (
+                            <span
+                              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 font-bold"
+                              title={
+                                st.config.requireNewAttachmentInStep
+                                  ? 'الزام بارگذاری فایل جدید در همین مرحله پیش از ارجاع'
+                                  : 'الزام وجود فایل پیوست در پروژه پیش از ارجاع'
+                              }
+                            >
+                              <Paperclip className="w-2.5 h-2.5" />
+                              الزام فایل
+                            </span>
+                          )}
+                          {(st.config.requireCommentOnApprove || st.config.requireCommentOnReject) && (
+                            <span
+                              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-bold"
+                              title="الزام ثبت توضیحات پیش از اقدام"
+                            >
+                              <ShieldCheck className="w-2.5 h-2.5" />
+                              الزام توضیح
+                            </span>
+                          )}
                           {isWaitAll && (
                             <span className="inline-flex items-center gap-0.5 text-indigo-700 font-bold">
                               <Clock className="w-2.5 h-2.5" />
                               صبر همه
                             </span>
                           )}
-                          {leavesCartable && (
+                          {leavesCartable && !st.config.requireAttachment && (
                             <span className="inline-flex items-center gap-0.5 text-slate-600" title="خروج از کارتابل کاربر پس از رای">
                               <LogOut className="w-2.5 h-2.5" />
                               خروج پس از رای
                             </span>
                           )}
-                          {!isWaitAll && !leavesCartable && (
-                            <span>{hasGw ? 'متصل به دروازه لوزی' : 'خروجی مستقیم'}</span>
-                          )}
+                          {!isWaitAll &&
+                            !leavesCartable &&
+                            !st.config.requireAttachment &&
+                            !st.config.requireCommentOnApprove &&
+                            !st.config.requireCommentOnReject && (
+                              <span>{hasGw ? 'متصل به دروازه لوزی' : 'خروجی مستقیم'}</span>
+                            )}
                         </div>
 
                         {!hasGw ? (

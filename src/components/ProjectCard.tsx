@@ -286,7 +286,8 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   const canManageAttachmentsEffective =
     canManageAttachments ||
     (isCreatorRevisionTurn && project.createdById === currentUser.id) ||
-    isCreatorAssignedStep;
+    isCreatorAssignedStep ||
+    (isMyTurnInWorkflow && currentStep?.config?.allowAttachmentUploadInStep !== false);
   const singleStepActionLabel =
     !isCreatorRevisionTurn &&
     currentStep?.config?.allowedActions?.length === 1 &&

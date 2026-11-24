@@ -1823,6 +1823,31 @@ apiRouter.get('/workflows', (_req: Request, res: Response) => {
 
   const posMap = getPositionsLookupMap();
 
+  const projectCountMap = new Map<string, number>();
+  (
+    db
+      .prepare('SELECT workflowId, COUNT(*) as cnt FROM projects WHERE workflowId IS NOT NULL GROUP BY workflowId')
+      .all() as Array<{ workflowId: string; cnt: number }>
+  ).forEach((row) => projectCountMap.set(row.workflowId, Number(row.cnt || 0)));
+
+  const structureCountMap = new Map<string, number>();
+  (
+    db
+      .prepare(
+        'SELECT defaultWorkflowId as workflowId, COUNT(*) as cnt FROM project_structures WHERE defaultWorkflowId IS NOT NULL GROUP BY defaultWorkflowId'
+      )
+      .all() as Array<{ workflowId: string; cnt: number }>
+  ).forEach((row) => structureCountMap.set(row.workflowId, Number(row.cnt || 0)));
+
+  const typeCountMap = new Map<string, number>();
+  (
+    db
+      .prepare(
+        'SELECT defaultWorkflowId as workflowId, COUNT(*) as cnt FROM project_types WHERE defaultWorkflowId IS NOT NULL GROUP BY defaultWorkflowId'
+      )
+      .all() as Array<{ workflowId: string; cnt: number }>
+  ).forEach((row) => typeCountMap.set(row.workflowId, Number(row.cnt || 0)));
+
   const result = workflows.map((wf) => {
     const wfSteps = steps
       .filter((s) => s.workflowId === wf.id)
@@ -1838,6 +1863,9 @@ apiRouter.get('/workflows', (_req: Request, res: Response) => {
     return {
       ...wf,
       diagram,
+      projectCount: projectCountMap.get(wf.id) || 0,
+      linkedStructureCount: structureCountMap.get(wf.id) || 0,
+      linkedTypeCount: typeCountMap.get(wf.id) || 0,
       steps: wfSteps,
     };
   });
@@ -2309,18 +2337,48 @@ apiRouter.delete('/workflows/:id', (req: Request, res: Response) => {
   }
 
   const { id } = req.params;
-  const activeCount = (db.prepare('SELECT count(*) as count FROM projects WHERE workflowId = ?').get(id) as any)?.count || 0;
-  if (activeCount > 0) {
-    return res.status(400).json({ error: `تعداد ${activeCount} پروژه در حال حاضر از این فرآیند گردش کار استفاده می‌کنند و امکان حذف مستقیم وجود ندارد.` });
+  const wf = db.prepare('SELECT id, title, isDefault FROM workflows WHERE id = ?').get(id) as
+    | { id: string; title: string; isDefault: number }
+    | undefined;
+  if (!wf) {
+    return res.status(404).json({ error: 'گردش کار مورد نظر یافت نشد.' });
   }
 
-  const tx = db.transaction(() => {
-    db.prepare('DELETE FROM workflow_steps WHERE workflowId = ?').run(id);
-    db.prepare('DELETE FROM workflows WHERE id = ?').run(id);
-  });
-  tx();
+  if (wf.isDefault) {
+    return res.status(400).json({
+      error: `گردش کار «${wf.title}» به عنوان گردش کار پیش‌فرض سیستم تنظیم شده و قابل حذف نیست. ابتدا گردش کار دیگری را به عنوان پیش‌فرض انتخاب کنید و سپس اقدام به حذف نمایید.`,
+    });
+  }
 
-  res.json({ success: true });
+  const linkedProjects = db
+    .prepare('SELECT id, code, title FROM projects WHERE workflowId = ? ORDER BY updatedAt DESC')
+    .all(id) as Array<{ id: string; code: string; title: string }>;
+  if (linkedProjects.length > 0) {
+    const preview = linkedProjects
+      .slice(0, 5)
+      .map((p) => `${p.code} (${p.title})`)
+      .join('، ');
+    const moreText = linkedProjects.length > 5 ? ` و ${linkedProjects.length - 5} پروژه دیگر` : '';
+    return res.status(400).json({
+      error: `امکان حذف وجود ندارد: تعداد ${linkedProjects.length} پروژه به این گردش کار متصل هستند (${preview}${moreText}). برای حذف این گردش کار، ابتدا گردش کار این پروژه‌ها را در بخش ویرایش پروژه تغییر دهید یا پروژه‌های وابسته را حذف کنید.`,
+    });
+  }
+
+  try {
+    const tx = db.transaction(() => {
+      db.prepare('UPDATE project_structures SET defaultWorkflowId = NULL WHERE defaultWorkflowId = ?').run(id);
+      db.prepare('UPDATE project_types SET defaultWorkflowId = NULL WHERE defaultWorkflowId = ?').run(id);
+      db.prepare('DELETE FROM workflow_steps WHERE workflowId = ?').run(id);
+      db.prepare('DELETE FROM workflows WHERE id = ?').run(id);
+    });
+    tx();
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error('Error deleting workflow:', err);
+    res.status(400).json({
+      error: `خطای فنی در حذف گردش کار (وابستگی پایگاه داده): ${err?.message || 'امکان حذف به دلیل وابستگی رکوردها وجود ندارد.'}`,
+    });
+  }
 });
 
 apiRouter.post('/workflows/:id/set-default', (req: Request, res: Response) => {
@@ -2543,6 +2601,66 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
     if (!adminOverride) {
       return res.status(400).json({
         error: 'این مرحله در نوبت کارتابل سمت دیگری است؛ برای اقدام مدیریتی خارج از نوبت، گزینه مربوطه را در فرم تایید کنید.',
+      });
+    }
+  }
+
+  // Enforce configured step prerequisite controls (unless Admin explicitly overrides)
+  const isAdminBypassingControls = currentUser.role === 'ADMIN' && Boolean(adminOverride);
+  if (!isAdminBypassingControls) {
+    if (action === 'FORWARD') {
+      if (currentConfig.requireAttachment) {
+        const minRequired = Math.max(1, Number(currentConfig.minAttachmentsCount || 1));
+        let matchingCount = 0;
+        if (currentConfig.requireNewAttachmentInStep) {
+          const lastEntry = db
+            .prepare(
+              `SELECT createdAt FROM workflow_logs
+               WHERE projectId = ? AND action IN ('PROJECT_CREATED', 'FORWARD', 'NEEDS_REVISION')
+               ORDER BY createdAt DESC, rowid DESC LIMIT 1`
+            )
+            .get(projectId) as { createdAt?: string } | undefined;
+          const stepEnteredAt = lastEntry?.createdAt || project.createdAt || '';
+          matchingCount =
+            (
+              db
+                .prepare(
+                  'SELECT COUNT(*) as cnt FROM project_attachments WHERE projectId = ? AND createdAt >= ?'
+                )
+                .get(projectId, stepEnteredAt) as any
+            )?.cnt || 0;
+        } else {
+          matchingCount =
+            (
+              db
+                .prepare('SELECT COUNT(*) as cnt FROM project_attachments WHERE projectId = ?')
+                .get(projectId) as any
+            )?.cnt || 0;
+        }
+        if (matchingCount < minRequired) {
+          const defaultMsg = currentConfig.requireNewAttachmentInStep
+            ? minRequired === 1
+              ? 'بر اساس کنترل تعریف‌شده در این مرحله، بارگذاری حداقل یک فایل پیوست جدید در همین مرحله پیش از تایید و ارجاع الزامی است.'
+              : `بر اساس کنترل تعریف‌شده در این مرحله، بارگذاری حداقل ${minRequired} فایل پیوست جدید در همین مرحله پیش از تایید و ارجاع الزامی است (تاکنون ${matchingCount} فایل بارگذاری شده).`
+            : minRequired === 1
+            ? 'بر اساس کنترل تعریف‌شده در این مرحله، وجود حداقل یک فایل پیوست در پروژه پیش از تایید و ارجاع الزامی است.'
+            : `بر اساس کنترل تعریف‌شده در این مرحله، وجود حداقل ${minRequired} فایل پیوست در پروژه پیش از تایید و ارجاع الزامی است (تاکنون ${matchingCount} فایل پیوست شده).`;
+          return res.status(400).json({
+            error: currentConfig.attachmentRequirementMessage?.trim() || defaultMsg,
+          });
+        }
+      }
+
+      if (currentConfig.requireCommentOnApprove && (!comment || !String(comment).trim())) {
+        return res.status(400).json({
+          error: 'بر اساس کنترل تعریف‌شده در این مرحله، ثبت توضیحات / هامش برای تایید و ارجاع الزامی است.',
+        });
+      }
+    }
+
+    if (action === 'REJECTED' && currentConfig.requireCommentOnReject && (!comment || !String(comment).trim())) {
+      return res.status(400).json({
+        error: 'بر اساس کنترل تعریف‌شده در این مرحله، ثبت دلیل / توضیحات برای رد طرح الزامی است.',
       });
     }
   }
@@ -4653,6 +4771,64 @@ function isUserActiveCreatorStepTurn(project: any, userId: string): boolean {
   return cfg?.assigneeMode === 'CREATOR';
 }
 
+function isUserActiveWorkflowStepAssignee(
+  project: any,
+  currentUser: { id: string; positionId?: string | null }
+): { isAssignee: boolean; allowUpload: boolean } {
+  if (!project || !currentUser) return { isAssignee: false, allowUpload: false };
+  if (project.status === 'APPROVED' || project.status === 'REJECTED') {
+    return { isAssignee: false, allowUpload: false };
+  }
+  if (project.status === 'NEEDS_REVISION' && Number(project.currentStepOrder) === 0) {
+    const isCreator = Boolean(project.createdById && project.createdById === currentUser.id);
+    return { isAssignee: isCreator, allowUpload: isCreator };
+  }
+  if (!project.workflowId) return { isAssignee: false, allowUpload: false };
+
+  const stepOrder = Number(project.currentStepOrder || 1);
+  const stepRow = db
+    .prepare('SELECT * FROM workflow_steps WHERE workflowId = ? AND stepOrder = ?')
+    .get(project.workflowId, stepOrder) as any;
+  if (!stepRow) return { isAssignee: false, allowUpload: false };
+
+  const cfg = parseStepConfig(stepRow.configJson);
+  const allowUploadSetting = cfg?.allowAttachmentUploadInStep !== false;
+
+  if (cfg?.assigneeMode === 'CREATOR') {
+    const isCreator = Boolean(project.createdById && project.createdById === currentUser.id);
+    return { isAssignee: isCreator, allowUpload: isCreator && allowUploadSetting };
+  }
+
+  const posIds = parseStepPositionIds(stepRow);
+  const allUsers = db
+    .prepare(
+      `SELECT u.id, u.username, u.name, u.role, u.positionId, p.title as positionTitle
+       FROM users u LEFT JOIN positions p ON u.positionId = p.id`
+    )
+    .all() as any[];
+  const structAssignments = db
+    .prepare(
+      `SELECT spu.userId, sp.positionId, sp.structureId, ps.title as structureTitle
+       FROM structure_position_users spu
+       JOIN structure_positions sp ON spu.structurePositionId = sp.id
+       LEFT JOIN project_structures ps ON sp.structureId = ps.id`
+    )
+    .all() as Array<{ userId: string; positionId: string; structureId: string; structureTitle?: string }>;
+  const creatorObj = project.createdById ? allUsers.find((u) => u.id === project.createdById) : null;
+  const assignees = resolveAssigneesForStepPositions(
+    posIds,
+    stepRow.structureId || null,
+    allUsers,
+    structAssignments,
+    undefined,
+    cfg?.userIds,
+    cfg?.assigneeMode,
+    creatorObj
+  );
+  const isAssignee = assignees.some((a) => a.id === currentUser.id);
+  return { isAssignee, allowUpload: isAssignee && allowUploadSetting };
+}
+
 apiRouter.put('/projects/:id', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
   if (!currentUser) {
@@ -4986,9 +5162,11 @@ apiRouter.post('/projects/:id/attachments/stream', async (req: Request, res: Res
   }
 
   const isCreatorStepTurn = isUserActiveCreatorStepTurn(project, currentUser.id);
+  const activeStepTurn = isUserActiveWorkflowStepAssignee(project, currentUser);
   const canUpload =
     hasPermission(currentUser, ['projects.edit', 'project_list.edit']) ||
     isCreatorStepTurn ||
+    activeStepTurn.allowUpload ||
     (hasPermission(currentUser, ['projects.create', 'project_list.create']) && project.createdById === currentUser.id);
   if (!canUpload) {
     return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به پیوست فایل برای این پروژه نیستید.' });
@@ -5113,9 +5291,11 @@ apiRouter.post('/projects/:id/attachments', (req: Request, res: Response) => {
   }
 
   const isCreatorStepTurn = isUserActiveCreatorStepTurn(project, currentUser.id);
+  const activeStepTurn = isUserActiveWorkflowStepAssignee(project, currentUser);
   const canUpload =
     hasPermission(currentUser, ['projects.edit', 'project_list.edit']) ||
     isCreatorStepTurn ||
+    activeStepTurn.allowUpload ||
     (hasPermission(currentUser, ['projects.create', 'project_list.create']) && project.createdById === currentUser.id);
   if (!canUpload) {
     return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به پیوست فایل برای این پروژه نیستید.' });
@@ -5200,15 +5380,26 @@ apiRouter.delete('/projects/:id/attachments/:attachmentId', (req: Request, res: 
   const currentUser = getCurrentUser(req);
   const { id: projectId, attachmentId } = req.params;
   const project = db.prepare('SELECT id, title, createdById, status, workflowId, currentStepOrder FROM projects WHERE id = ?').get(projectId) as any;
-  const isCreatorStepTurn = Boolean(currentUser && isUserActiveCreatorStepTurn(project, currentUser.id));
-  if (!currentUser || (!hasPermission(currentUser, ['projects.edit', 'project_list.edit']) && !isCreatorStepTurn)) {
-    return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به حذف فایل‌های پروژه نیستید.' });
-  }
-
   const existing = db.prepare('SELECT * FROM project_attachments WHERE id = ? AND projectId = ?').get(attachmentId, projectId) as any;
 
   if (!existing) {
     return res.status(404).json({ error: 'فایل پیوست یافت نشد.' });
+  }
+
+  const isCreatorStepTurn = Boolean(currentUser && isUserActiveCreatorStepTurn(project, currentUser.id));
+  const activeStepTurn = currentUser
+    ? isUserActiveWorkflowStepAssignee(project, currentUser)
+    : { isAssignee: false, allowUpload: false };
+  const canDeleteOwnInStep = Boolean(
+    currentUser && activeStepTurn.allowUpload && existing.uploadedBy === currentUser.id
+  );
+  if (
+    !currentUser ||
+    (!hasPermission(currentUser, ['projects.edit', 'project_list.edit']) &&
+      !isCreatorStepTurn &&
+      !canDeleteOwnInStep)
+  ) {
+    return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به حذف فایل‌های پروژه نیستید.' });
   }
 
   try {

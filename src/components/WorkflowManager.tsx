@@ -67,6 +67,8 @@ import {
   Bell,
   Inbox,
   MessageSquareText,
+  Paperclip,
+  ShieldCheck,
 } from 'lucide-react';
 
 interface WorkflowManagerProps {
@@ -467,6 +469,13 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
           conditionLabel: parsedCfg.conditionLabel || '',
           userIds: Array.isArray(parsedCfg.userIds) ? parsedCfg.userIds : [],
           nodePosition: nodePos,
+          requireAttachment: Boolean(parsedCfg.requireAttachment),
+          requireNewAttachmentInStep: Boolean(parsedCfg.requireNewAttachmentInStep),
+          minAttachmentsCount: parsedCfg.minAttachmentsCount ? Number(parsedCfg.minAttachmentsCount) : 1,
+          attachmentRequirementMessage: parsedCfg.attachmentRequirementMessage || '',
+          requireCommentOnApprove: Boolean(parsedCfg.requireCommentOnApprove),
+          requireCommentOnReject: Boolean(parsedCfg.requireCommentOnReject),
+          allowAttachmentUploadInStep: parsedCfg.allowAttachmentUploadInStep !== false,
         },
       };
     });
@@ -530,6 +539,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
         onRevisionAction: 'RETURN_PREV',
         onRejectAction: 'REJECT_PROJECT',
         nodePosition: nodePos,
+        allowAttachmentUploadInStep: true,
       },
     };
   };
@@ -656,6 +666,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
       endApprovedLabel: prev.endApprovedLabel,
       endRejectedLabel: prev.endRejectedLabel,
       notifications: (prev.notifications || []).map((n) => ({ ...n, pos: undefined })),
+      edgeWaypoints: {},
     }));
   };
 
@@ -1034,10 +1045,18 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
     }
   };
 
-  const handleDeleteWorkflow = async (id: string, titleStr: string) => {
-    if (!confirm(`آیا از حذف گردش کار «${titleStr}» اطمینان دارید؟`)) return;
+  const handleDeleteWorkflow = async (wf: Workflow) => {
+    setError('');
+    if (wf.isDefault) {
+      setError(
+        `گردش کار «${wf.title}» به عنوان گردش کار پیش‌فرض سیستم تنظیم شده و قابل حذف نیست. ابتدا گردش کار دیگری را به عنوان پیش‌فرض انتخاب کنید و سپس اقدام به حذف نمایید.`
+      );
+      return;
+    }
+    if (!confirm(`آیا از حذف گردش کار «${wf.title}» اطمینان دارید؟`)) return;
     try {
-      await api.deleteWorkflow(id);
+      await api.deleteWorkflow(wf.id);
+      setError('');
       onRefresh();
     } catch (err: any) {
       setError(err.message || 'خطا در حذف گردش کار');
@@ -1045,6 +1064,7 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
   };
 
   const handleSetDefault = async (id: string) => {
+    setError('');
     try {
       await api.setDefaultWorkflow(id);
       onRefresh();
@@ -1164,6 +1184,26 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
             </p>
           </div>
 
+          {error && !modalOpen && (
+            <div className="p-4 rounded-2xl bg-rose-50 border border-rose-300 text-rose-900 text-xs flex items-start justify-between gap-3 shadow-xs">
+              <div className="flex items-start gap-2.5 leading-relaxed">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="font-black block mb-0.5">عملیات انجام نشد:</strong>
+                  <span>{error}</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setError('')}
+                className="p-1 rounded-lg text-rose-500 hover:text-rose-800 hover:bg-rose-100 cursor-pointer shrink-0"
+                title="بستن پیام خطا"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
           {/* Workflows List */}
           <div className="space-y-4">
             {workflows.length === 0 ? (
@@ -1191,6 +1231,15 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                         <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
                           <Star className="w-3 h-3 text-emerald-600 fill-emerald-600" />
                           گردش پیش‌فرض
+                        </span>
+                      )}
+                      {(wf.projectCount || 0) > 0 && (
+                        <span
+                          className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 tabular-nums"
+                          title="تا زمانی که پروژه‌ای به این گردش کار متصل باشد، امکان حذف مستقیم وجود ندارد"
+                        >
+                          <Layers className="w-3 h-3 text-amber-600" />
+                          متصل به {wf.projectCount} پروژه
                         </span>
                       )}
                       {(() => {
@@ -1230,11 +1279,21 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                             <span>طراحی Visio / ویرایش</span>
                           </button>
                         )}
-                        {canDeleteWf && !wf.isDefault && (
+                        {canDeleteWf && (
                           <button
-                            onClick={() => handleDeleteWorkflow(wf.id, wf.title)}
-                            className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
-                            title="حذف گردش کار"
+                            onClick={() => handleDeleteWorkflow(wf)}
+                            className={`p-2 rounded-xl transition cursor-pointer ${
+                              wf.isDefault || (wf.projectCount || 0) > 0
+                                ? 'text-slate-300 hover:text-amber-600 hover:bg-amber-50'
+                                : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
+                            }`}
+                            title={
+                              wf.isDefault
+                                ? 'گردش کار پیش‌فرض قابل حذف نیست (برای مشاهده جزئیات کلیک کنید)'
+                                : (wf.projectCount || 0) > 0
+                                ? `متصل به ${wf.projectCount} پروژه — برای مشاهده دلیل عدم حذف کلیک کنید`
+                                : 'حذف گردش کار'
+                            }
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -1356,6 +1415,18 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                                     {stepCfg.approveTarget === 'END_APPROVED'
                                       ? 'تصویب نهایی'
                                       : `گام ${stepCfg.onApproveStepOrder}`}
+                                  </span>
+                                )}
+                                {stepCfg.requireAttachment && (
+                                  <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md bg-rose-50 border border-rose-200 text-rose-700 font-bold">
+                                    <Paperclip className="w-3 h-3" />
+                                    {stepCfg.requireNewAttachmentInStep ? 'الزام آپلود فایل جدید' : 'الزام فایل پیوست'}
+                                  </span>
+                                )}
+                                {(stepCfg.requireCommentOnApprove || stepCfg.requireCommentOnReject) && (
+                                  <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-800 font-bold">
+                                    <ShieldCheck className="w-3 h-3" />
+                                    الزام ثبت توضیح
                                   </span>
                                 )}
                                 {stepCfg.onRevisionAction && stepCfg.onRevisionAction !== 'RETURN_PREV' && (
@@ -2682,6 +2753,163 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                                 <Eye className="w-3 h-3 text-indigo-600" />
                                 ثبت رای و توضیحات هر کاربر در تاریخچه وضعیت پروژه
                               </strong>
+                            </span>
+                          </label>
+                        </div>
+
+                        {/* Step Validation Controls & Direct File Attachment */}
+                        <div className="p-3 rounded-xl bg-rose-50/50 border border-rose-200/80 space-y-2.5">
+                          <div className="text-[11px] font-black text-rose-950 flex items-center gap-1.5">
+                            <ShieldCheck className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                            <span>کنترل‌ها، الزامات پیش از ارجاع و بارگذاری فایل</span>
+                          </div>
+
+                          <label className="flex items-start gap-2 cursor-pointer text-[11px] text-slate-800">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(selectedStep.config.requireAttachment)}
+                              onChange={(e) =>
+                                handleStepConfigChange(
+                                  selectedStepIdx,
+                                  'requireAttachment',
+                                  e.target.checked
+                                )
+                              }
+                              className="mt-0.5 rounded text-rose-600"
+                            />
+                            <span className="leading-relaxed">
+                              <strong className="flex items-center gap-1 text-rose-950">
+                                <Paperclip className="w-3 h-3 text-rose-600" />
+                                الزام بارگذاری / وجود فایل پیوست پیش از تایید و ارجاع
+                              </strong>
+                              <span className="text-[10px] text-slate-500 block">
+                                تا زمانی که فایل پروژه پیوست نشده باشد، کاربر نتواند این گام را ارجاع دهد و پیام خطا دریافت کند.
+                              </span>
+                            </span>
+                          </label>
+
+                          {selectedStep.config.requireAttachment && (
+                            <div className="pr-5 space-y-2 pt-1 border-t border-rose-200/70">
+                              <label className="flex items-start gap-2 cursor-pointer text-[11px] text-slate-800">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(selectedStep.config.requireNewAttachmentInStep)}
+                                  onChange={(e) =>
+                                    handleStepConfigChange(
+                                      selectedStepIdx,
+                                      'requireNewAttachmentInStep',
+                                      e.target.checked
+                                    )
+                                  }
+                                  className="mt-0.5 rounded text-rose-600"
+                                />
+                                <span className="leading-relaxed">
+                                  <strong className="text-slate-900">
+                                    الزام بارگذاری فایل جدید در همین مرحله
+                                  </strong>
+                                  <span className="text-[10px] text-slate-500 block">
+                                    اگر فعال باشد، فایل‌های مراحل قبلی کافی نیست و باید پس از ورود به این مرحله فایل جدید آپلود شود.
+                                  </span>
+                                </span>
+                              </label>
+
+                              <div className="flex items-center justify-between gap-2">
+                                <label className="text-[10px] font-bold text-slate-700">
+                                  حداقل تعداد فایل الزامی:
+                                </label>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={20}
+                                  value={selectedStep.config.minAttachmentsCount || 1}
+                                  onChange={(e) =>
+                                    handleStepConfigChange(
+                                      selectedStepIdx,
+                                      'minAttachmentsCount',
+                                      Math.max(1, parseInt(e.target.value, 10) || 1)
+                                    )
+                                  }
+                                  className="w-16 rounded-lg bg-white border border-slate-300 px-2 py-1 text-xs text-center font-bold text-slate-900 tabular-nums"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="block text-[10px] font-bold text-slate-700 mb-1">
+                                  متن خطای سفارشی در صورت نبود فایل (اختیاری):
+                                </label>
+                                <input
+                                  type="text"
+                                  value={selectedStep.config.attachmentRequirementMessage || ''}
+                                  onChange={(e) =>
+                                    handleStepConfigChange(
+                                      selectedStepIdx,
+                                      'attachmentRequirementMessage',
+                                      e.target.value
+                                    )
+                                  }
+                                  placeholder="مثلاً: لطفاً ابتدا فایل نهایی پروژه را بارگذاری کنید."
+                                  className="w-full rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-[11px] text-slate-800 focus:outline-none focus:border-rose-500"
+                                />
+                              </div>
+                            </div>
+                          )}
+
+                          <label className="flex items-start gap-2 cursor-pointer text-[11px] text-slate-800">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(selectedStep.config.requireCommentOnApprove)}
+                              onChange={(e) =>
+                                handleStepConfigChange(
+                                  selectedStepIdx,
+                                  'requireCommentOnApprove',
+                                  e.target.checked
+                                )
+                              }
+                              className="mt-0.5 rounded text-rose-600"
+                            />
+                            <span className="leading-relaxed">
+                              <strong className="text-slate-900">الزام ثبت توضیحات هنگام تایید و ارجاع</strong>
+                            </span>
+                          </label>
+
+                          <label className="flex items-start gap-2 cursor-pointer text-[11px] text-slate-800">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(selectedStep.config.requireCommentOnReject)}
+                              onChange={(e) =>
+                                handleStepConfigChange(
+                                  selectedStepIdx,
+                                  'requireCommentOnReject',
+                                  e.target.checked
+                                )
+                              }
+                              className="mt-0.5 rounded text-rose-600"
+                            />
+                            <span className="leading-relaxed">
+                              <strong className="text-slate-900">الزام ثبت دلیل هنگام رد طرح</strong>
+                            </span>
+                          </label>
+
+                          <label className="flex items-start gap-2 cursor-pointer text-[11px] text-slate-800 pt-1 border-t border-rose-200/70">
+                            <input
+                              type="checkbox"
+                              checked={selectedStep.config.allowAttachmentUploadInStep !== false}
+                              onChange={(e) =>
+                                handleStepConfigChange(
+                                  selectedStepIdx,
+                                  'allowAttachmentUploadInStep',
+                                  e.target.checked
+                                )
+                              }
+                              className="mt-0.5 rounded text-indigo-600"
+                            />
+                            <span className="leading-relaxed">
+                              <strong className="text-indigo-950">
+                                نمایش بخش افزودن مستقیم فایل پروژه در پنجره اقدام این گام
+                              </strong>
+                              <span className="text-[10px] text-slate-500 block">
+                                کاربر این مرحله بدون نیاز به ویرایش پروژه می‌تواند مستقیماً فایل پیوست اضافه کند.
+                              </span>
                             </span>
                           </label>
                         </div>

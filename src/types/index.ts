@@ -201,6 +201,13 @@ export interface WorkflowStepConfig {
   color?: string;
   userIds?: string[];
   nodePosition?: { x: number; y: number };
+  requireAttachment?: boolean;
+  requireNewAttachmentInStep?: boolean;
+  minAttachmentsCount?: number;
+  attachmentRequirementMessage?: string;
+  requireCommentOnApprove?: boolean;
+  requireCommentOnReject?: boolean;
+  allowAttachmentUploadInStep?: boolean;
 }
 
 export interface WorkflowStepApprovalProgress {
@@ -325,6 +332,7 @@ export interface WorkflowDiagramLayout {
   endApprovedLabel?: string;
   endRejectedLabel?: string;
   notifications?: WorkflowNotificationRule[];
+  edgeWaypoints?: Record<string, Array<{ x: number; y: number }>>;
 }
 
 export interface Workflow {
@@ -335,6 +343,9 @@ export interface Workflow {
   diagramJson?: string;
   diagram?: WorkflowDiagramLayout | null;
   createdAt?: string;
+  projectCount?: number;
+  linkedStructureCount?: number;
+  linkedTypeCount?: number;
   steps: WorkflowStep[];
 }
 

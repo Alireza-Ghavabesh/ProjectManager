@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { Project, User } from '../types';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { Project, ProjectAttachment, User } from '../types';
 import { api } from '../services/api';
 import { hasPerm } from '../utils/permissions';
 import { getActionBadgeMeta } from '../utils/workflowActions';
+import { ProjectAttachments } from './ProjectAttachments';
 import { 
   GitBranch, 
   CheckCircle2, 
@@ -14,7 +15,9 @@ import {
   Send,
   History,
   Lock,
-  Edit3
+  Edit3,
+  Paperclip,
+  ShieldCheck
 } from 'lucide-react';
 
 interface WorkflowTransitionModalProps {
@@ -37,6 +40,25 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
   const [adminOverride, setAdminOverride] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [attachments, setAttachments] = useState<ProjectAttachment[]>(project.attachments || []);
+
+  const refreshAttachments = useCallback(async () => {
+    try {
+      const fresh = await api.getProjectAttachments(project.id);
+      setAttachments(fresh);
+      onSuccess();
+    } catch {
+      // Keep current attachments state on transient error
+    }
+  }, [project.id, onSuccess]);
+
+  useEffect(() => {
+    setAttachments(project.attachments || []);
+    api
+      .getProjectAttachments(project.id)
+      .then((fresh) => setAttachments(fresh))
+      .catch(() => {});
+  }, [project.id, project.attachments]);
 
   const steps = project.workflowSteps || [];
   const rawStepOrder = project.currentStepOrder ?? 1;
@@ -221,8 +243,71 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
 
   const visibleActionCount = [allowApprove, allowRevision, allowReject].filter(Boolean).length;
 
+  const allowStepAttachmentUpload =
+    !isCompletedOrRejected &&
+    (isCreatorRevisionTurn || currentStep?.config?.allowAttachmentUploadInStep !== false);
+  const canUploadAttachmentsInModal =
+    allowStepAttachmentUpload &&
+    (isAssignee ||
+      isAdminOverriding ||
+      hasPerm(currentUser, ['projects.edit', 'project_list.edit']));
+
+  const requireAttachment =
+    !isCreatorRevisionTurn && Boolean(currentStep?.config?.requireAttachment);
+  const requireNewAttachmentInStep = Boolean(currentStep?.config?.requireNewAttachmentInStep);
+  const minAttachmentsRequired = Math.max(
+    1,
+    Number(currentStep?.config?.minAttachmentsCount || 1)
+  );
+  const requireCommentOnApprove =
+    !isCreatorRevisionTurn && Boolean(currentStep?.config?.requireCommentOnApprove);
+  const requireCommentOnReject =
+    !isCreatorRevisionTurn && Boolean(currentStep?.config?.requireCommentOnReject);
+
+  const stepEnteredAt = useMemo(() => {
+    let latest = project.createdAt || '';
+    for (const l of logs) {
+      if (['PROJECT_CREATED', 'FORWARD', 'NEEDS_REVISION'].includes(l.action)) {
+        if (l.createdAt && l.createdAt > latest) {
+          latest = l.createdAt;
+        }
+      }
+    }
+    return latest;
+  }, [logs, project.createdAt]);
+
+  const matchingAttachmentsCount = useMemo(() => {
+    if (!requireNewAttachmentInStep) return attachments.length;
+    if (!stepEnteredAt) return attachments.length;
+    return attachments.filter((a) => a.createdAt >= stepEnteredAt).length;
+  }, [attachments, requireNewAttachmentInStep, stepEnteredAt]);
+
+  const attachmentReqSatisfied =
+    !requireAttachment || matchingAttachmentsCount >= minAttachmentsRequired;
+
   const handleTransition = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isAdminOverriding) {
+      if (action === 'FORWARD' && requireAttachment && !attachmentReqSatisfied) {
+        const defaultMsg = requireNewAttachmentInStep
+          ? minAttachmentsRequired === 1
+            ? 'بارگذاری حداقل یک فایل پیوست جدید در همین مرحله پیش از تایید و ارجاع الزامی است.'
+            : `بارگذاری حداقل ${minAttachmentsRequired} فایل پیوست جدید در همین مرحله پیش از تایید و ارجاع الزامی است.`
+          : minAttachmentsRequired === 1
+          ? 'وجود حداقل یک فایل پیوست در پروژه پیش از تایید و ارجاع الزامی است.'
+          : `وجود حداقل ${minAttachmentsRequired} فایل پیوست در پروژه پیش از تایید و ارجاع الزامی است.`;
+        setError(currentStep?.config?.attachmentRequirementMessage?.trim() || defaultMsg);
+        return;
+      }
+      if (action === 'FORWARD' && requireCommentOnApprove && !comment.trim()) {
+        setError('ثبت توضیحات / هامش برای تایید و ارجاع در این مرحله الزامی است.');
+        return;
+      }
+      if (action === 'REJECTED' && requireCommentOnReject && !comment.trim()) {
+        setError('ثبت دلیل / توضیحات برای رد طرح در این مرحله الزامی است.');
+        return;
+      }
+    }
     if (action === 'NEEDS_REVISION' && !comment.trim()) {
       setError('ثبت توضیحات و موارد اصلاحی جهت عودت در گردش کار الزامی است.');
       return;
@@ -567,9 +652,9 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
               (isCreatorAssignedStep && currentStep?.config?.approveTarget !== 'END_APPROVED')) && (
               <div className="p-3.5 rounded-2xl bg-indigo-50/70 border border-indigo-200 flex flex-wrap items-center justify-between gap-2.5 text-xs">
                 <div className="text-indigo-950 font-medium leading-relaxed">
-                  <strong className="font-bold block">ویرایش پروژه و بارگذاری فایل‌های تولیدی</strong>
+                  <strong className="font-bold block">ویرایش مشخصات پروژه</strong>
                   <span className="text-[11px] text-indigo-800">
-                    پیش از ارسال به مرحله بعد می‌توانید مشخصات پروژه را ویرایش و فایل‌ها را در بخش پیوست‌های کارت پروژه بارگذاری کنید.
+                    فایل‌های پروژه را می‌توانید مستقیماً در کادر پیوست زیر بارگذاری کنید؛ برای ویرایش عنوان، بودجه یا توضیحات روی دکمه روبه‌رو کلیک کنید.
                   </span>
                 </div>
                 <button
@@ -585,6 +670,53 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
                 </button>
               </div>
             )}
+
+          {/* Step Prerequisite Control Notice */}
+          {!isCompletedOrRejected && requireAttachment && (
+            <div
+              className={`p-3 rounded-2xl border text-xs flex items-start gap-2.5 ${
+                attachmentReqSatisfied
+                  ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
+                  : 'bg-rose-50/80 border-rose-200 text-rose-900'
+              }`}
+            >
+              {attachmentReqSatisfied ? (
+                <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+              ) : (
+                <Paperclip className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              )}
+              <div className="leading-relaxed">
+                <strong className="font-bold block">
+                  {attachmentReqSatisfied
+                    ? 'شرط فایل پیوست این مرحله برقرار است ✓'
+                    : 'الزام بارگذاری فایل پیش از تایید و ارجاع'}
+                </strong>
+                <span className="text-[11px]">
+                  {currentStep?.config?.attachmentRequirementMessage?.trim() ||
+                    (requireNewAttachmentInStep
+                      ? `در این مرحله باید حداقل ${minAttachmentsRequired} فایل پیوست جدید بارگذاری شود.`
+                      : `برای ارجاع در این مرحله وجود حداقل ${minAttachmentsRequired} فایل پیوست روی پروژه الزامی است.`)}{' '}
+                  <strong className="tabular-nums">
+                    ({matchingAttachmentsCount} از {minAttachmentsRequired} فایل)
+                  </strong>
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Direct Project File Upload right inside the workflow action modal */}
+          {(canUploadAttachmentsInModal || attachments.length > 0) && (
+            <div className="p-3.5 rounded-2xl bg-slate-50/80 border border-slate-200">
+              <ProjectAttachments
+                projectId={project.id}
+                projectTitle={project.title}
+                attachments={attachments}
+                canManage={canUploadAttachmentsInModal}
+                onAttachmentChange={refreshAttachments}
+                compact
+              />
+            </div>
+          )}
 
           {isCreatorRevisionTurn ? (
             <div className="space-y-3">
@@ -719,6 +851,16 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
               {action === 'NEEDS_REVISION' && (
                 <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
                   الزامی برای عودت
+                </span>
+              )}
+              {action === 'FORWARD' && requireCommentOnApprove && (
+                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                  الزامی برای تایید
+                </span>
+              )}
+              {action === 'REJECTED' && requireCommentOnReject && (
+                <span className="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded">
+                  الزامی برای رد
                 </span>
               )}
             </div>

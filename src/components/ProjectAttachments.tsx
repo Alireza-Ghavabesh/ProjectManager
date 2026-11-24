@@ -341,7 +341,7 @@ export const ProjectAttachments: React.FC<ProjectAttachmentsProps> = ({
 
       {/* Attachments List */}
       {attachments.length > 0 ? (
-        <div className="space-y-2">
+        <div className={compact ? 'space-y-1.5 max-h-40 overflow-y-auto' : 'space-y-2'}>
           {attachments.map((att) => {
             const isDeleting = deletingId === att.id;
             const isReplacing = replacingId === att.id;
@@ -434,7 +434,7 @@ export const ProjectAttachments: React.FC<ProjectAttachmentsProps> = ({
         </div>
       )}
 
-      {/* Drag & Drop Upload Zone for Admin */}
+      {/* Drag & Drop Upload Zone */}
       {canManage && (
         <div
           onDragOver={(e) => {
@@ -444,20 +444,22 @@ export const ProjectAttachments: React.FC<ProjectAttachmentsProps> = ({
           onDragLeave={() => setIsDragOver(false)}
           onDrop={handleDrop}
           onClick={() => fileInputRef.current?.click()}
-          className={`p-4 rounded-2xl border-2 border-dashed transition cursor-pointer text-center ${
+          className={`${compact ? 'p-2.5' : 'p-4'} rounded-2xl border-2 border-dashed transition cursor-pointer text-center ${
             isDragOver
               ? 'border-indigo-500 bg-indigo-50/70'
               : 'border-slate-200 hover:border-indigo-300 bg-white hover:bg-slate-50/60'
           }`}
         >
-          <div className="flex flex-col items-center justify-center gap-1.5 text-slate-600">
-            <Upload className={`w-5 h-5 ${isDragOver ? 'text-indigo-600 animate-bounce' : 'text-slate-400'}`} />
+          <div className="flex flex-col items-center justify-center gap-1 text-slate-600">
+            <Upload className={`${compact ? 'w-4 h-4' : 'w-5 h-5'} ${isDragOver ? 'text-indigo-600 animate-bounce' : 'text-slate-400'}`} />
             <div className="text-xs font-bold text-slate-800">
               کلیک برای انتخاب فایل یا رها کردن فایل در این کادر
             </div>
-            <div className="text-[10px] text-slate-500 font-medium">
-              پشتیبانی از انواع اسناد، فایل‌های ویدیو و فشرده (سقف مجاز: حداکثر {formatMaxLimitDisplay()})
-            </div>
+            {!compact && (
+              <div className="text-[10px] text-slate-500 font-medium">
+                پشتیبانی از انواع اسناد، فایل‌های ویدیو و فشرده (سقف مجاز: حداکثر {formatMaxLimitDisplay()})
+              </div>
+            )}
           </div>
         </div>
       )}
