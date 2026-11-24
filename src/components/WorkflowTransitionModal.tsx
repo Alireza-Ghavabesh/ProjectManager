@@ -12,7 +12,9 @@ import {
   X, 
   MessageSquare, 
   Send,
-  History
+  History,
+  Lock,
+  Edit3
 } from 'lucide-react';
 
 interface WorkflowTransitionModalProps {
@@ -20,6 +22,7 @@ interface WorkflowTransitionModalProps {
   currentUser: User;
   onClose: () => void;
   onSuccess: () => void;
+  onOpenEditProject?: (project: Project) => void;
 }
 
 export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = ({
@@ -27,6 +30,7 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
   currentUser,
   onClose,
   onSuccess,
+  onOpenEditProject,
 }) => {
   const [action, setAction] = useState<'FORWARD' | 'NEEDS_REVISION' | 'REJECTED'>('FORWARD');
   const [comment, setComment] = useState('');
@@ -83,6 +87,15 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
     'workflow.history.view',
     'voting.confidential.view_all',
   ]);
+  const canViewLiveStatus = hasPerm(currentUser, [
+    'workflow.live_status.view',
+    'voting.confidential.view_all',
+  ]);
+  const isCreatorAssignedStep = Boolean(
+    !isCreatorRevisionTurn &&
+      currentStep?.config?.assigneeMode === 'CREATOR' &&
+      project.createdById === currentUser.id
+  );
 
   const configuredAllowedActions: ('APPROVE' | 'REVISION' | 'REJECT')[] =
     currentStep?.config?.allowedActions && currentStep.config.allowedActions.length > 0
@@ -391,71 +404,94 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
                   </div>
                 </div>
 
-                {stepProgress.approvedUsers.length > 0 && (
-                  <div className="space-y-1 text-[11px]">
-                    <span className="text-slate-500 block">رای موافق تاکنون:</span>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {stepProgress.approvedUsers.map((au) => (
-                        <span
-                          key={au.userId}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold"
-                        >
-                          <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
-                          <span>{au.userName}</span>
-                          {(canViewWorkflowHistory || au.userId === currentUser.id) && au.comment && (
-                            <span className="text-[10px] font-normal text-emerald-700">
-                              («{au.comment}»)
-                            </span>
-                          )}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                {(() => {
+                  const visibleApproved = (stepProgress.approvedUsers || []).filter(
+                    (au) => canViewLiveStatus || au.userId === currentUser.id
+                  );
+                  const visibleRevision = (stepProgress.revisionUsers || []).filter(
+                    (rv) => canViewLiveStatus || rv.userId === currentUser.id
+                  );
+                  const visibleRejected = (stepProgress.rejectedUsers || []).filter(
+                    (ru) => canViewLiveStatus || ru.userId === currentUser.id
+                  );
 
-                {stepProgress.revisionUsers && stepProgress.revisionUsers.length > 0 && (
-                  <div className="space-y-1 text-[11px]">
-                    <span className="text-slate-500 block">درخواست اصلاح تاکنون:</span>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {stepProgress.revisionUsers.map((rv) => (
-                        <span
-                          key={rv.userId}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-50 text-amber-900 border border-amber-300 font-semibold"
-                        >
-                          <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
-                          <span>{rv.userName}</span>
-                          {(canViewWorkflowHistory || rv.userId === currentUser.id) && rv.comment && (
-                            <span className="text-[10px] font-normal text-amber-800">
-                              («{rv.comment}»)
-                            </span>
-                          )}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                  return (
+                    <>
+                      {visibleApproved.length > 0 && (
+                        <div className="space-y-1 text-[11px]">
+                          <span className="text-slate-500 block">رای موافق تاکنون:</span>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {visibleApproved.map((au) => (
+                              <span
+                                key={au.userId}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold"
+                              >
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                                <span>{au.userName}</span>
+                                {(canViewLiveStatus || au.userId === currentUser.id) && au.comment && (
+                                  <span className="text-[10px] font-normal text-emerald-700">
+                                    («{au.comment}»)
+                                  </span>
+                                )}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
-                {stepProgress.rejectedUsers && stepProgress.rejectedUsers.length > 0 && (
-                  <div className="space-y-1 text-[11px]">
-                    <span className="text-slate-500 block">رای مخالف تاکنون:</span>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {stepProgress.rejectedUsers.map((ru) => (
-                        <span
-                          key={ru.userId}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-rose-50 text-rose-800 border border-rose-200 font-semibold"
-                        >
-                          <XCircle className="w-3 h-3 text-rose-600 shrink-0" />
-                          <span>{ru.userName}</span>
-                          {(canViewWorkflowHistory || ru.userId === currentUser.id) && ru.comment && (
-                            <span className="text-[10px] font-normal text-rose-700">
-                              («{ru.comment}»)
-                            </span>
-                          )}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                      {visibleRevision.length > 0 && (
+                        <div className="space-y-1 text-[11px]">
+                          <span className="text-slate-500 block">درخواست اصلاح تاکنون:</span>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {visibleRevision.map((rv) => (
+                              <span
+                                key={rv.userId}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-50 text-amber-900 border border-amber-300 font-semibold"
+                              >
+                                <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                                <span>{rv.userName}</span>
+                                {(canViewLiveStatus || rv.userId === currentUser.id) && rv.comment && (
+                                  <span className="text-[10px] font-normal text-amber-800">
+                                    («{rv.comment}»)
+                                  </span>
+                                )}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {visibleRejected.length > 0 && (
+                        <div className="space-y-1 text-[11px]">
+                          <span className="text-slate-500 block">رای مخالف تاکنون:</span>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {visibleRejected.map((ru) => (
+                              <span
+                                key={ru.userId}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-rose-50 text-rose-800 border border-rose-200 font-semibold"
+                              >
+                                <XCircle className="w-3 h-3 text-rose-600 shrink-0" />
+                                <span>{ru.userName}</span>
+                                {(canViewLiveStatus || ru.userId === currentUser.id) && ru.comment && (
+                                  <span className="text-[10px] font-normal text-rose-700">
+                                    («{ru.comment}»)
+                                  </span>
+                                )}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {!canViewLiveStatus && (
+                        <div className="text-[10px] text-slate-500 flex items-center gap-1.5 pt-0.5">
+                          <Lock className="w-3 h-3 text-slate-400 shrink-0" />
+                          <span>مشاهده وضعیت لحظه‌ای و نام سایر رای‌دهندگان نیازمند دسترسی «دیدن وضعیت لحظه‌ای افراد» است.</span>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
 
                 {stepProgress.hasCurrentUserApproved && (
                   <div className="text-[11px] font-bold text-emerald-700">
@@ -506,7 +542,7 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
               <p className="text-[11px] leading-relaxed text-amber-800">
                 افراد/سمت‌های مسئول در مرحله فعلی:{' '}
                 <strong>
-                  {project.currentAssignees && project.currentAssignees.length > 0
+                  {canViewLiveStatus && project.currentAssignees && project.currentAssignees.length > 0
                     ? project.currentAssignees.map((a) => a.name).join('، ')
                     : project.currentPositionTitle || 'سمت فعلی'}
                 </strong>
@@ -524,6 +560,31 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
               )}
             </div>
           )}
+
+          {!isCompletedOrRejected &&
+            onOpenEditProject &&
+            (isCreatorRevisionTurn ||
+              (isCreatorAssignedStep && currentStep?.config?.approveTarget !== 'END_APPROVED')) && (
+              <div className="p-3.5 rounded-2xl bg-indigo-50/70 border border-indigo-200 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+                <div className="text-indigo-950 font-medium leading-relaxed">
+                  <strong className="font-bold block">ویرایش پروژه و بارگذاری فایل‌های تولیدی</strong>
+                  <span className="text-[11px] text-indigo-800">
+                    پیش از ارسال به مرحله بعد می‌توانید مشخصات پروژه را ویرایش و فایل‌ها را در بخش پیوست‌های کارت پروژه بارگذاری کنید.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenEditProject(project);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition cursor-pointer shrink-0"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>ویرایش مشخصات پروژه</span>
+                </button>
+              </div>
+            )}
 
           {isCreatorRevisionTurn ? (
             <div className="space-y-3">
@@ -675,56 +736,65 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
           </div>
 
           {/* Past Operation & Transition History Logs */}
-          {logs.length > 0 && (
-            <div className="pt-3 border-t border-slate-100">
-              <h4 className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-1.5">
-                <History className="w-3.5 h-3.5 text-blue-600" />
-                <span>تاریخچه وضعیت و عملیات ثبت‌شده روی این پروژه:</span>
-              </h4>
-              <div className="space-y-2 max-h-44 overflow-y-auto">
-                {logs.map((l) => {
-                  const actionMeta = getActionBadgeMeta(l.action);
-                  return (
-                    <div
-                      key={l.id}
-                      className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs"
-                    >
-                      <div className="flex items-center justify-between gap-2 text-[11px] mb-1">
-                        <span className="font-bold text-slate-900 flex items-center gap-1.5 flex-wrap">
-                          <span
-                            className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${actionMeta.badgeClass}`}
-                          >
-                            {actionMeta.label}
-                          </span>
-                          <span>{l.fromUserName || 'کاربر'}</span>
-                          {l.fromUserPosition && (
-                            <span className="text-[9px] px-1.5 py-0.5 bg-white border border-slate-200 text-slate-600 rounded font-semibold">
-                              {l.fromUserPosition}
+          {canViewWorkflowHistory ? (
+            logs.length > 0 && (
+              <div className="pt-3 border-t border-slate-100">
+                <h4 className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-1.5">
+                  <History className="w-3.5 h-3.5 text-blue-600" />
+                  <span>تاریخچه وضعیت و عملیات ثبت‌شده روی این پروژه:</span>
+                </h4>
+                <div className="space-y-2 max-h-44 overflow-y-auto">
+                  {logs.map((l) => {
+                    const actionMeta = getActionBadgeMeta(l.action);
+                    return (
+                      <div
+                        key={l.id}
+                        className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs"
+                      >
+                        <div className="flex items-center justify-between gap-2 text-[11px] mb-1">
+                          <span className="font-bold text-slate-900 flex items-center gap-1.5 flex-wrap">
+                            <span
+                              className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${actionMeta.badgeClass}`}
+                            >
+                              {actionMeta.label}
                             </span>
-                          )}
-                          {l.toPositionTitle &&
-                            ['FORWARD', 'NEEDS_REVISION', 'REJECTED', 'FINAL_APPROVED'].includes(l.action) && (
-                              <span className="text-[10px] font-normal text-slate-600">
-                                ← {l.toPositionTitle}
+                            <span>{l.fromUserName || 'کاربر'}</span>
+                            {l.fromUserPosition && (
+                              <span className="text-[9px] px-1.5 py-0.5 bg-white border border-slate-200 text-slate-600 rounded font-semibold">
+                                {l.fromUserPosition}
                               </span>
                             )}
-                        </span>
-                        <span className="text-slate-400 text-[10px] shrink-0">
-                          {new Date(l.createdAt).toLocaleDateString('fa-IR')} •{' '}
-                          {new Date(l.createdAt).toLocaleTimeString('fa-IR', {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </span>
+                            {l.toPositionTitle &&
+                              ['FORWARD', 'NEEDS_REVISION', 'REJECTED', 'FINAL_APPROVED'].includes(l.action) && (
+                                <span className="text-[10px] font-normal text-slate-600">
+                                  ← {l.toPositionTitle}
+                                </span>
+                              )}
+                          </span>
+                          <span className="text-slate-400 text-[10px] shrink-0">
+                            {new Date(l.createdAt).toLocaleDateString('fa-IR')} •{' '}
+                            {new Date(l.createdAt).toLocaleTimeString('fa-IR', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        </div>
+                        {l.comment && (
+                          <p className="text-slate-600 text-[11px] leading-relaxed">
+                            {l.comment}
+                          </p>
+                        )}
                       </div>
-                      {l.comment && (
-                        <p className="text-slate-600 text-[11px] leading-relaxed">
-                          {l.comment}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
+              </div>
+            )
+          ) : (
+            <div className="pt-3 border-t border-slate-100">
+              <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-500 flex items-center gap-2">
+                <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                <span>مشاهده تاریخچه کامل انتخاب‌ها و توضیحات افراد نیازمند دسترسی «دیدن تاریخچه کامل انتخاب‌ها و توضیحات افراد» است.</span>
               </div>
             </div>
           )}

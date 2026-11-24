@@ -593,7 +593,7 @@ export default function App() {
       { tab: 'projects', perms: ['projects.view', 'projects.cartable.view', 'projects.create', 'projects.edit', 'projects.delete', 'workflow.forward', 'voting.cast', 'voting.confidential.view_all'] },
       { tab: 'project_list', perms: ['project_list.view', 'project_list.create', 'project_list.edit', 'project_list.delete'] },
       { tab: 'structures', perms: ['structures.view', 'structures.create', 'structures.edit', 'structures.delete'] },
-      { tab: 'workflows', perms: ['workflow.view', 'workflow.history.view', 'workflow.create', 'workflow.edit', 'workflow.delete'] },
+      { tab: 'workflows', perms: ['workflow.view', 'workflow.history.view', 'workflow.live_status.view', 'workflow.create', 'workflow.edit', 'workflow.delete'] },
       { tab: 'users', perms: ['system.users.view', 'system.users.create', 'system.users.edit', 'system.users.delete', 'system.permissions.manage', 'org.positions.view', 'org.positions.create', 'org.positions.edit', 'org.positions.delete'] },
       { tab: 'fields', perms: ['projects.fields.view', 'projects.fields.create', 'projects.fields.edit', 'projects.fields.delete'] },
       { tab: 'settings', perms: ['settings.view', 'settings.edit', 'sms.rules.view', 'sms.rules.create', 'sms.rules.edit', 'sms.rules.delete'] },
@@ -1521,6 +1521,10 @@ export default function App() {
           currentUser={currentUser}
           onClose={() => setWorkflowProject(null)}
           onSuccess={refreshData}
+          onOpenEditProject={(prj) => {
+            setEditingProject(prj);
+            setShowCreateModal(true);
+          }}
         />
       )}
 

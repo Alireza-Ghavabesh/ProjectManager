@@ -88,6 +88,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   const canManualApprove = hasPerm(currentUser, 'projects.manual_approve');
   const canViewConfidential = hasPerm(currentUser, 'voting.confidential.view_all');
   const canViewWorkflowHistory = hasPerm(currentUser, ['workflow.history.view', 'voting.confidential.view_all']);
+  const canViewLiveStatus = hasPerm(currentUser, ['workflow.live_status.view', 'voting.confidential.view_all']);
   const canCastVote = hasPerm(currentUser, 'voting.cast');
   const canForwardWorkflow = hasPerm(currentUser, 'workflow.forward');
   const canManageAttachments = canEditProject || (canCreateProject && currentUser.id === project.createdById);
@@ -275,13 +276,17 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
     currentStep?.config?.assigneeMode === 'CREATOR' &&
     project.createdById === currentUser.id;
   const canEditEffective =
-    canEditProject || (isCreatorRevisionTurn && project.createdById === currentUser.id);
+    canEditProject ||
+    (isCreatorRevisionTurn && project.createdById === currentUser.id) ||
+    isCreatorAssignedStep;
   const canForwardEffective =
     canForwardWorkflow ||
     (isCreatorRevisionTurn && project.createdById === currentUser.id) ||
     isCreatorAssignedStep;
   const canManageAttachmentsEffective =
-    canManageAttachments || (isCreatorRevisionTurn && project.createdById === currentUser.id);
+    canManageAttachments ||
+    (isCreatorRevisionTurn && project.createdById === currentUser.id) ||
+    isCreatorAssignedStep;
   const singleStepActionLabel =
     !isCreatorRevisionTurn &&
     currentStep?.config?.allowedActions?.length === 1 &&
@@ -633,7 +638,11 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 transition cursor-pointer"
                   >
                     <Edit3 className="w-3.5 h-3.5" />
-                    <span>{isCreatorRevisionTurn ? 'ویرایش و اصلاح پروژه' : 'ویرایش پروژه'}</span>
+                    <span>
+                      {isCreatorRevisionTurn || isCreatorAssignedStep
+                        ? 'ویرایش و بارگذاری فایل‌ها'
+                        : 'ویرایش پروژه'}
+                    </span>
                   </button>
                 )}
                 {canDeleteProject && onDeleteProject && (
@@ -1031,6 +1040,11 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                     (تایید نهایی فقط با تکمیل گردش کار)
                   </span>
                 )}
+                {!isCompletedOrRejected && isCreatorAssignedStep && currentStep?.config?.approveTarget !== 'END_APPROVED' && (
+                  <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200">
+                    در این گام می‌توانید مشخصات پروژه را ویرایش و فایل‌های ساخته‌شده را در بخش پیوست‌ها بارگذاری کنید، سپس ارسال نمایید.
+                  </span>
+                )}
               </div>
 
               <div className="flex items-center gap-2 flex-wrap">
@@ -1077,7 +1091,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           )}
 
           {/* Project Status History & Workflow Audit Section */}
-          {hasWorkflow && (canViewWorkflowHistory || (project.workflowLogs && project.workflowLogs.length > 0)) && (
+          {hasWorkflow && (canViewWorkflowHistory || canViewLiveStatus || steps.length > 0) && (
             <div className="p-4 rounded-2xl bg-slate-50/90 border border-slate-200/90 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -1085,9 +1099,11 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   <span className="text-xs font-extrabold text-slate-900">
                     وضعیت پروژه، تاریخچه آرا و اقدامات گردش کار
                   </span>
-                  <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-white text-indigo-700 border border-indigo-200 tabular-nums">
-                    {(project.workflowLogs || []).length} رویداد ثبت‌شده
-                  </span>
+                  {canViewWorkflowHistory && (
+                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-white text-indigo-700 border border-indigo-200 tabular-nums">
+                      {(project.workflowLogs || []).length} رویداد ثبت‌شده
+                    </span>
+                  )}
                 </div>
                 <button
                   type="button"
@@ -1177,7 +1193,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                                     : st.positionTitle || 'سمت نامشخص'}
                                 </span>
                               </div>
-                              {st.assignees && st.assignees.length > 0 && (
+                              {canViewLiveStatus && st.assignees && st.assignees.length > 0 && (
                                 <div className="flex flex-wrap gap-1 pt-1 border-t border-slate-200/70">
                                   {st.assignees.map((u) => (
                                     <span
@@ -1197,7 +1213,13 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   )}
 
                   {/* 2. Live current step per-assignee status & comment */}
-                  {canViewWorkflowHistory &&
+                  {!isCompletedOrRejected && !canViewLiveStatus && (
+                    <div className="p-3 rounded-xl bg-white border border-slate-200 text-[11px] text-slate-500 flex items-center gap-2">
+                      <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span>مشاهده وضعیت لحظه‌ای افراد در مرحله فعلی نیازمند دسترسی «دیدن وضعیت لحظه‌ای افراد» است.</span>
+                    </div>
+                  )}
+                  {canViewLiveStatus &&
                     !isCompletedOrRejected &&
                     ((project.currentAssignees && project.currentAssignees.length > 0) ||
                       (project.currentStepApprovalProgress &&
@@ -1303,7 +1325,12 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                       <MessageSquare className="w-3.5 h-3.5 text-indigo-600" />
                       <span>تاریخچه کامل انتخاب‌ها و توضیحات افراد در تمام مراحل:</span>
                     </div>
-                    {project.workflowLogs && project.workflowLogs.length > 0 ? (
+                    {!canViewWorkflowHistory ? (
+                      <div className="p-3 rounded-xl bg-white border border-slate-200 text-[11px] text-slate-500 flex items-center gap-2">
+                        <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span>مشاهده تاریخچه کامل انتخاب‌ها و توضیحات افراد نیازمند دسترسی «دیدن تاریخچه کامل انتخاب‌ها و توضیحات افراد» است.</span>
+                      </div>
+                    ) : project.workflowLogs && project.workflowLogs.length > 0 ? (
                       <div className="space-y-2">
                         {project.workflowLogs.map((log, idx) => {
                           const actionMeta = getActionBadgeMeta(log.action);

@@ -58,6 +58,25 @@ export interface StructurePositionSummary {
   permissions: string[];
 }
 
+export interface UserGroup {
+  id: string;
+  title: string;
+  description?: string;
+  color?: string;
+  memberCount?: number;
+  permissionCount?: number;
+  members?: Array<{
+    id: string;
+    name: string;
+    username: string;
+    role: 'ADMIN' | 'COUNCIL';
+    positionTitle?: string;
+    avatar?: string;
+  }>;
+  permissions?: string[];
+  createdAt?: string;
+}
+
 export interface User {
   id: string;
   username: string;
@@ -70,6 +89,11 @@ export interface User {
   phone?: string;
   createdAt?: string;
   permissions?: string[];
+  groups?: Array<{
+    id: string;
+    title: string;
+    color?: string;
+  }>;
   structurePositions?: Array<{
     structurePositionId?: string;
     structureId: string;

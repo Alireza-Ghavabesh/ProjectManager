@@ -74,6 +74,7 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
 
   const canForwardWorkflow = hasPerm(currentUser, 'workflow.forward');
   const canViewHistory = hasPerm(currentUser, ['workflow.history.view', 'voting.confidential.view_all']);
+  const canViewLiveStatus = hasPerm(currentUser, ['workflow.live_status.view', 'voting.confidential.view_all']);
 
   const loadTracking = async () => {
     setLoading(true);
@@ -826,7 +827,7 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                           ? 'وضعیت کارتابل (پرونده مختومه / نهایی شده):'
                           : 'هم‌اکنون در کارتابل این اشخاص قرار دارد:'}
                       </span>
-                      {!isFinished && (
+                      {!isFinished && canViewLiveStatus && (
                         <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-white text-indigo-700 border border-indigo-200">
                           {item.currentAssignees.length} نفر
                         </span>
@@ -838,6 +839,11 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                         {item.status === 'APPROVED'
                           ? 'این پروژه در گردش کار به تصویب نهایی رسیده است و در انتظار اقدام هیچ شخصی نیست.'
                           : 'این پروژه در گردش کار رد و مختومه شده است.'}
+                      </div>
+                    ) : !canViewLiveStatus ? (
+                      <div className="p-3 rounded-xl bg-white border border-slate-200 text-xs text-slate-500 flex items-center gap-2">
+                        <Lock className="w-4 h-4 text-slate-400 shrink-0" />
+                        <span>مشاهده اسامی و وضعیت لحظه‌ای افراد در کارتابل نیازمند دسترسی «دیدن وضعیت لحظه‌ای افراد» است.</span>
                       </div>
                     ) : item.currentAssignees.length > 0 ? (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -852,7 +858,7 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                             (ru) => ru.userId === assignee.id
                           );
                           const activeEntry = approvedEntry || revisionEntry || rejectedEntry;
-                          const canSeeEntry = canViewHistory || assignee.id === currentUser.id;
+                          const canSeeEntry = canViewLiveStatus || assignee.id === currentUser.id;
 
                           return (
                             <div
@@ -894,7 +900,7 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-rose-100 text-rose-800 border border-rose-300 shrink-0">
                                     رای مخالف
                                   </span>
-                                ) : canViewHistory ? (
+                                ) : canViewLiveStatus ? (
                                   <span className="text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 shrink-0">
                                     در انتظار
                                   </span>
@@ -968,7 +974,8 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                       <>
                         <ChevronDown className="w-4 h-4" />
                         <span>
-                          مشاهده تاریخچه کامل وضعیت، عملیات و نقشه گام‌ها ({item.logs.length} رویداد)
+                          مشاهده نقشه گام‌ها و تاریخچه عملیات
+                          {canViewHistory ? ` (${item.logs.length} رویداد)` : ''}
                         </span>
                       </>
                     )}
@@ -1065,7 +1072,12 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                                 </div>
 
                                 <div className="pt-1 border-t border-slate-200/70 flex flex-wrap gap-1">
-                                  {st.assignees && st.assignees.length > 0 ? (
+                                  {!canViewLiveStatus ? (
+                                    <span className="text-[10px] text-slate-400 inline-flex items-center gap-1">
+                                      <Lock className="w-2.5 h-2.5" />
+                                      نیازمند دسترسی وضعیت لحظه‌ای افراد
+                                    </span>
+                                  ) : st.assignees && st.assignees.length > 0 ? (
                                     st.assignees.map((u) => (
                                       <span
                                         key={u.id}
@@ -1093,18 +1105,24 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                     )}
 
                     {/* Full Project Status & Operations Audit Timeline */}
-                    {(canViewHistory || item.logs.length > 0) && (
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                            <History className="w-3.5 h-3.5 text-blue-600" />
-                            <span>تاریخچه کامل وضعیت و عملیات انجام‌شده روی پروژه:</span>
-                          </div>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                          <History className="w-3.5 h-3.5 text-blue-600" />
+                          <span>تاریخچه کامل وضعیت و عملیات انجام‌شده روی پروژه:</span>
+                        </div>
+                        {canViewHistory && (
                           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
                             {item.logs.length} رویداد ثبت‌شده
                           </span>
+                        )}
+                      </div>
+                      {!canViewHistory ? (
+                        <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-[11px] text-slate-500 flex items-center gap-2">
+                          <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <span>مشاهده تاریخچه کامل انتخاب‌ها و توضیحات افراد نیازمند دسترسی «دیدن تاریخچه کامل انتخاب‌ها و توضیحات افراد» است.</span>
                         </div>
-                        {item.logs.length > 0 ? (
+                      ) : item.logs.length > 0 ? (
                           <div className="relative pr-5 space-y-3 before:content-[''] before:absolute before:top-2 before:bottom-2 before:right-2 before:w-0.5 before:bg-slate-200">
                             {item.logs.map((log, idx) => {
                               const actionMeta = getActionBadgeMeta(log.action);
@@ -1173,7 +1191,6 @@ export const WorkflowTrackingView: React.FC<WorkflowTrackingViewProps> = ({
                           </div>
                         )}
                       </div>
-                    )}
                   </div>
                 )}
               </div>

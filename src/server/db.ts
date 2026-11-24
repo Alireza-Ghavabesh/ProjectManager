@@ -254,6 +254,26 @@ export function initDatabase() {
       PRIMARY KEY (userId, permissionCode)
     );
 
+    CREATE TABLE IF NOT EXISTS user_groups (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL UNIQUE,
+      description TEXT,
+      color TEXT DEFAULT 'indigo',
+      createdAt TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS user_group_members (
+      groupId TEXT NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+      userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      PRIMARY KEY (groupId, userId)
+    );
+
+    CREATE TABLE IF NOT EXISTS group_permissions (
+      groupId TEXT NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+      permissionCode TEXT NOT NULL REFERENCES permissions(code) ON DELETE CASCADE,
+      PRIMARY KEY (groupId, permissionCode)
+    );
+
     CREATE TABLE IF NOT EXISTS structure_positions (
       id TEXT PRIMARY KEY,
       structureId TEXT NOT NULL REFERENCES project_structures(id) ON DELETE CASCADE,
@@ -503,6 +523,7 @@ function seedInitialData() {
   // 1. Seed & Synchronize Full Entity-Based CRUD Permissions Tree
   const isFirstCrudMigration = !db.prepare("SELECT 1 FROM permissions WHERE code = 'projects.view'").get();
   const isProjectListMigration = !db.prepare("SELECT 1 FROM permissions WHERE code = 'project_list.view'").get();
+  const isLiveStatusMigration = !db.prepare("SELECT 1 FROM permissions WHERE code = 'workflow.live_status.view'").get();
 
   const permissionsData: Array<[string, string, string, string, string | null, string, number]> = [
     // Entity 1: کارتابل پروژه‌ها
@@ -551,7 +572,8 @@ function seedInitialData() {
     ['p-45', 'workflow.edit', 'ویرایش گردش کار و مراحل', 'گردش کار', 'workflow', 'ویرایش گام‌ها، شروط تایید/رد و تعیین گردش کار پیش‌فرض', 0],
     ['p-46', 'workflow.delete', 'حذف گردش کار', 'گردش کار', 'workflow', 'حذف فرآیند گردش کار از سامانه', 1],
     ['p-20', 'workflow.forward', 'تایید و ارجاع در مراحل گردش کار', 'گردش کار', 'workflow', 'انتقال یا تایید پروژه در مراحل کارتابل (کاربر به‌صورت خودکار پروژه‌های نوبت خود را در کارتابل می‌بیند)', 0],
-    ['p-21', 'workflow.history.view', 'نمایش جزئیات، آرا و توضیحات کامل گردش کار', 'گردش کار', 'workflow', 'مشاهده اینکه در هر مرحله گردش کار هر کاربر چه انتخابی کرده، چه توضیحی نوشته و چه کسانی در انتظار اقدام هستند', 0],
+    ['p-21', 'workflow.history.view', 'دیدن تاریخچه کامل انتخاب‌ها و توضیحات افراد', 'گردش کار', 'workflow', 'مشاهده کامل تاریخچه زمانی انتخاب‌ها، رای‌ها و توضیحات تمام افراد در همه مراحل گردش کار', 0],
+    ['p-63', 'workflow.live_status.view', 'دیدن وضعیت لحظه‌ای افراد در مراحل کارتابل', 'گردش کار', 'workflow', 'مشاهده اینکه هم‌اکنون پرونده در کارتابل چه کسانی است، چه کسانی اقدام کرده‌اند و چه کسانی در انتظار اقدام هستند', 0],
 
     // Entity 6: کاربران و سطوح دسترسی
     ['p-1', 'system', 'کاربران و سطوح دسترسی', 'کاربران و امنیت', null, 'مدیریت حساب‌های کاربری، رمز عبور و ماتریس دسترسی‌ها', 1],
@@ -690,6 +712,7 @@ function seedInitialData() {
       'workflow.view',
       'workflow.forward',
       'workflow.history.view',
+      'workflow.live_status.view',
       'voting',
       'voting.cast',
       'chat',
@@ -734,6 +757,22 @@ function seedInitialData() {
         for (const code of projectListCodes) {
           try { insertUsrPerm.run(adm.id, code); } catch (e) {}
         }
+      }
+    } catch (e) {}
+  }
+
+  // One-time migration for workflow.live_status.view: grant to admin positions & existing admin users
+  if (isLiveStatusMigration) {
+    for (const posId of ['pos-1', 'pos-root']) {
+      if (existingPosSet.has(posId)) {
+        try { insertPosPerm.run(posId, 'workflow.live_status.view'); } catch (e) {}
+      }
+    }
+    try {
+      const existingAdmins = db.prepare("SELECT id FROM users WHERE role = 'ADMIN'").all() as { id: string }[];
+      const insertUsrPerm = db.prepare('INSERT OR IGNORE INTO user_permissions (userId, permissionCode) VALUES (?, ?)');
+      for (const adm of existingAdmins) {
+        try { insertUsrPerm.run(adm.id, 'workflow.live_status.view'); } catch (e) {}
       }
     } catch (e) {}
   }
@@ -1036,6 +1075,302 @@ function seedInitialData() {
     }
   } catch (e) {
     console.warn('Warning during structure_position_permissions migration:', e);
+  }
+
+  // Idempotent seed: Sample Structure ("مدیر" -> "شورا") + External Submitter User + 7-Step Sample Workflow
+  try {
+    const sampleSeeded = db.prepare("SELECT value FROM system_settings WHERE key = 'seeded_sample_manager_council_v1'").get() as { value?: string } | undefined;
+    if (!sampleSeeded) {
+      const seedSampleTx = db.transaction(() => {
+        const ensureSamplePos = (fallbackId: string, title: string, desc: string, color: string): string => {
+          const existing = db.prepare('SELECT id FROM positions WHERE title = ?').get(title) as { id: string } | undefined;
+          if (existing) return existing.id;
+          db.prepare(`
+            INSERT INTO positions (id, title, description, color, parentId, level, orderIndex, createdAt)
+            VALUES (?, ?, ?, ?, NULL, 1, 0, ?)
+          `).run(fallbackId, title, desc, color, now);
+          return fallbackId;
+        };
+
+        const managerPosId = ensureSamplePos('pos-sample-manager', 'مدیر', 'مدیریت بررسی و تایید مراحل ارزیابی در ساختار نمونه', 'indigo');
+        const councilPosId = ensureSamplePos('pos-sample-council', 'شورا', 'اعضای شورای ارزیابی و رای‌گیری اکثریت و اجماع', 'emerald');
+
+        // Ensure non-structure submitter user exists (outside any structure)
+        let submitterRow = db.prepare("SELECT id FROM users WHERE username = 'karbar'").get() as { id: string } | undefined;
+        if (!submitterRow) {
+          const subId = 'usr-submitter';
+          db.prepare(`
+            INSERT INTO users (id, username, password, name, role, positionId, avatar, phone, hasCustomPermissions, createdAt)
+            VALUES (?, 'karbar', '123456', 'کاربر ثبت‌کننده (خارج از ساختار)', 'COUNCIL', NULL, ?, '09120001122', 1, ?)
+          `).run(subId, generateOfflineAvatarSvg('کاربر ثبت‌کننده', subId), now);
+          submitterRow = { id: subId };
+        }
+        const insUsrPerm = db.prepare('INSERT OR IGNORE INTO user_permissions (userId, permissionCode) VALUES (?, ?)');
+        for (const pCode of ['projects', 'projects.view', 'projects.cartable.view', 'projects.create', 'workflow.forward']) {
+          insUsrPerm.run(submitterRow.id, pCode);
+        }
+
+        // Create Sample Structure: ساختار نمونه ارزیابی (مدیر و شورا)
+        const sampleStructId = 'pstr-sample-mc';
+        const sampleWfId = 'wf-sample-manager-council';
+
+        db.prepare(`
+          INSERT OR IGNORE INTO workflows (id, title, description, isDefault, diagramJson, createdAt)
+          VALUES (?, ?, ?, 0, ?, ?)
+        `).run(
+          sampleWfId,
+          'فرآیند نمونه مدیر و شورا (۷ مرحله‌ای)',
+          'ثبت پروژه خارج از ساختار ← مدیر ← اکثریت شورا ← مدیر ← ویرایش و آپلود فایل ثبت‌کننده ← اجماع همه شورا ← مدیر ← تصویب نهایی ثبت‌کننده',
+          JSON.stringify({
+            startPos: { x: 40, y: 120 },
+            creatorPos: { x: 40, y: 400 },
+            endApprovedPos: { x: 1120, y: 420 },
+            endRejectedPos: { x: 1120, y: 120 },
+            startTrigger: { event: 'PROJECT_CREATED', creatorPositionId: null },
+            connectorStyle: 'ORTHOGONAL',
+            snapToGrid: true,
+            creatorLabel: 'کارتابل ثبت‌کننده (اصلاح)',
+            endApprovedLabel: 'تصویب شد نهایی',
+            endRejectedLabel: 'رد و خروج از فرآیند',
+            notifications: [],
+          }),
+          now
+        );
+
+        db.prepare(`
+          INSERT OR IGNORE INTO project_structures (id, title, code, description, category, defaultWorkflowId, orderIndex, isActive, createdAt)
+          VALUES (?, 'ساختار نمونه ارزیابی (مدیر و شورا)', 'SAMPLE_MC', 'ساختار نمونه شامل سمت مدیر و سمت شورا زیرمجموعه آن', 'نمونه عملیاتی', ?, 0, 1, ?)
+        `).run(sampleStructId, sampleWfId, now);
+
+        const spMgrId = 'sp-sample-mgr';
+        const spCouncilId = 'sp-sample-council';
+        const hasSpMgr = db.prepare('SELECT 1 FROM structure_positions WHERE id = ?').get(spMgrId);
+        if (!hasSpMgr) {
+          db.prepare(`
+            INSERT INTO structure_positions (id, structureId, positionId, parentId, orderIndex, createdAt)
+            VALUES (?, ?, ?, NULL, 1, ?)
+          `).run(spMgrId, sampleStructId, managerPosId, now);
+        }
+        const hasSpCouncil = db.prepare('SELECT 1 FROM structure_positions WHERE id = ?').get(spCouncilId);
+        if (!hasSpCouncil) {
+          db.prepare(`
+            INSERT INTO structure_positions (id, structureId, positionId, parentId, orderIndex, createdAt)
+            VALUES (?, ?, ?, ?, 1, ?)
+          `).run(spCouncilId, sampleStructId, councilPosId, spMgrId, now);
+        }
+
+        // Assign sample members to مدیر (usr-admin) and شورا (3 council users)
+        const insSpUser = db.prepare('INSERT OR IGNORE INTO structure_position_users (structurePositionId, userId) VALUES (?, ?)');
+        const hasUser = (uid: string) => Boolean(db.prepare('SELECT 1 FROM users WHERE id = ?').get(uid));
+        if (hasUser('usr-admin')) insSpUser.run(spMgrId, 'usr-admin');
+        for (const cUid of ['usr-rezaei', 'usr-tehrani', 'usr-moradi']) {
+          if (hasUser(cUid)) insSpUser.run(spCouncilId, cUid);
+        }
+
+        // Grant structure-scoped permissions to مدیر and شورا
+        const insSpp = db.prepare('INSERT OR IGNORE INTO structure_position_permissions (structurePositionId, permissionCode) VALUES (?, ?)');
+        for (const pCode of ['projects', 'projects.view', 'projects.cartable.view', 'workflow.forward', 'workflow.history.view', 'workflow.live_status.view']) {
+          insSpp.run(spMgrId, pCode);
+        }
+        for (const pCode of ['projects', 'projects.view', 'projects.cartable.view', 'workflow.forward', 'workflow.live_status.view']) {
+          insSpp.run(spCouncilId, pCode);
+        }
+
+        // Populate the 7 workflow steps if none exist yet for wf-sample-manager-council
+        const existingSampleSteps = (db.prepare('SELECT count(*) as count FROM workflow_steps WHERE workflowId = ?').get(sampleWfId) as any)?.count || 0;
+        if (existingSampleSteps === 0) {
+          const insStep = db.prepare(`
+            INSERT INTO workflow_steps (id, workflowId, stepOrder, title, structureId, positionId, positionIdsJson, actionType, description, configJson)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'APPROVAL', ?, ?)
+          `);
+
+          insStep.run(
+            'st-smc-1',
+            sampleWfId,
+            1,
+            'بررسی اولیه مدیر',
+            sampleStructId,
+            managerPosId,
+            JSON.stringify([managerPosId]),
+            'پس از ثبت پروژه توسط کاربر خارج از ساختار، پروژه در کارتابل سمت مدیر قرار می‌گیرد.',
+            JSON.stringify({
+              assigneeMode: 'POSITIONS',
+              taskTitle: 'بررسی اولیه و ارسال به شورا',
+              allowedActions: ['APPROVE', 'REVISION', 'REJECT'],
+              approvalMode: 'SINGLE',
+              voteCollectionMode: 'EARLY_DECIDE',
+              approveTarget: 'NEXT_STEP',
+              onRevisionAction: 'RETURN_CREATOR',
+              onRejectAction: 'REJECT_PROJECT',
+              hasGateway: true,
+              gatewayTitle: 'تصمیم مدیر (مرحله ۱)',
+              nodePosition: { x: 240, y: 100 },
+              gatewayPos: { x: 420, y: 115 },
+            })
+          );
+
+          insStep.run(
+            'st-smc-2',
+            sampleWfId,
+            2,
+            'رای‌گیری اکثریت اعضای شورا',
+            sampleStructId,
+            councilPosId,
+            JSON.stringify([councilPosId]),
+            'در صورت تایید اکثریت اعضای سمت شورا به مدیر ارجاع می‌شود.',
+            JSON.stringify({
+              assigneeMode: 'POSITIONS',
+              taskTitle: 'بررسی و رای‌گیری اولیه شورا (اکثریت)',
+              allowedActions: ['APPROVE', 'REVISION', 'REJECT'],
+              approvalMode: 'MAJORITY',
+              revisionMode: 'MAJORITY',
+              rejectMode: 'MAJORITY',
+              voteCollectionMode: 'WAIT_ALL',
+              removeFromCartableAfterVote: true,
+              showVotesInStatusHistory: true,
+              approveTarget: 'NEXT_STEP',
+              onRevisionAction: 'RETURN_CREATOR',
+              onRejectAction: 'REJECT_PROJECT',
+              hasGateway: true,
+              gatewayTitle: 'نصاب اکثریت شورا',
+              nodePosition: { x: 520, y: 100 },
+              gatewayPos: { x: 700, y: 115 },
+            })
+          );
+
+          insStep.run(
+            'st-smc-3',
+            sampleWfId,
+            3,
+            'تایید مدیر پس از اکثریت شورا',
+            sampleStructId,
+            managerPosId,
+            JSON.stringify([managerPosId]),
+            'پس از تایید اکثریت شورا، مدیر بررسی و برای بارگذاری فایل به ثبت‌کننده ارسال می‌کند.',
+            JSON.stringify({
+              assigneeMode: 'POSITIONS',
+              taskTitle: 'تایید مدیر جهت ارجاع به ثبت‌کننده',
+              allowedActions: ['APPROVE', 'REVISION', 'REJECT'],
+              approvalMode: 'SINGLE',
+              voteCollectionMode: 'EARLY_DECIDE',
+              approveTarget: 'NEXT_STEP',
+              onRevisionAction: 'RETURN_CREATOR',
+              onRejectAction: 'REJECT_PROJECT',
+              hasGateway: true,
+              gatewayTitle: 'تایید ارجاع به ثبت‌کننده',
+              nodePosition: { x: 800, y: 100 },
+              gatewayPos: { x: 970, y: 115 },
+            })
+          );
+
+          insStep.run(
+            'st-smc-4',
+            sampleWfId,
+            4,
+            'ویرایش پروژه و بارگذاری فایل‌ها توسط ثبت‌کننده',
+            null,
+            null,
+            '[]',
+            'ثبت‌کننده پروژه اطلاعات پروژه را ویرایش و فایل‌های ساخته‌شده را بارگذاری کرده و برای شورا ارسال می‌کند.',
+            JSON.stringify({
+              assigneeMode: 'CREATOR',
+              taskTitle: 'ویرایش پروژه، بارگذاری فایل‌های ساخته‌شده و ارسال به شورا',
+              allowedActions: ['APPROVE'],
+              actionLabels: { APPROVE: 'ارسال به سمت شورا' },
+              approvalMode: 'SINGLE',
+              approveTarget: 'NEXT_STEP',
+              hasGateway: false,
+              nodePosition: { x: 240, y: 380 },
+            })
+          );
+
+          insStep.run(
+            'st-smc-5',
+            sampleWfId,
+            5,
+            'تایید اجماع همه اعضای شورا',
+            sampleStructId,
+            councilPosId,
+            JSON.stringify([councilPosId]),
+            'بررسی فایل‌های بارگذاری‌شده؛ در صورت تایید همه اعضای شورا برای تایید مدیر ارسال می‌شود.',
+            JSON.stringify({
+              assigneeMode: 'POSITIONS',
+              taskTitle: 'بررسی فایل‌های نهایی شورا (اجماع همه اعضا)',
+              allowedActions: ['APPROVE', 'REVISION', 'REJECT'],
+              approvalMode: 'ALL',
+              revisionMode: 'SINGLE',
+              rejectMode: 'MAJORITY',
+              voteCollectionMode: 'WAIT_ALL',
+              removeFromCartableAfterVote: true,
+              showVotesInStatusHistory: true,
+              approveTarget: 'NEXT_STEP',
+              onRevisionAction: 'CUSTOM_STEP',
+              onRevisionStepOrder: 4,
+              onRejectAction: 'REJECT_PROJECT',
+              hasGateway: true,
+              gatewayTitle: 'اجماع همه اعضای شورا',
+              nodePosition: { x: 500, y: 380 },
+              gatewayPos: { x: 670, y: 395 },
+            })
+          );
+
+          insStep.run(
+            'st-smc-6',
+            sampleWfId,
+            6,
+            'تایید نهایی مدیر پیش از ابلاغ',
+            sampleStructId,
+            managerPosId,
+            JSON.stringify([managerPosId]),
+            'پس از اجماع کامل شورا، مدیر تایید کرده و جهت تصویب نهایی به ثبت‌کننده ارسال می‌کند.',
+            JSON.stringify({
+              assigneeMode: 'POSITIONS',
+              taskTitle: 'تایید مدیر و ارسال برای تصویب نهایی',
+              allowedActions: ['APPROVE', 'REVISION', 'REJECT'],
+              approvalMode: 'SINGLE',
+              voteCollectionMode: 'EARLY_DECIDE',
+              approveTarget: 'NEXT_STEP',
+              onRevisionAction: 'CUSTOM_STEP',
+              onRevisionStepOrder: 4,
+              onRejectAction: 'REJECT_PROJECT',
+              hasGateway: true,
+              gatewayTitle: 'تایید مدیر (مرحله ۶)',
+              nodePosition: { x: 760, y: 380 },
+              gatewayPos: { x: 920, y: 395 },
+            })
+          );
+
+          insStep.run(
+            'st-smc-7',
+            sampleWfId,
+            7,
+            'تصویب نهایی توسط ثبت‌کننده پروژه',
+            null,
+            null,
+            '[]',
+            'ثبت‌کننده نهایی پروژه با کلیک روی «تصویب شد نهایی» فرآیند را با وضعیت تصویب‌شده خاتمه می‌دهد.',
+            JSON.stringify({
+              assigneeMode: 'CREATOR',
+              taskTitle: 'ثبت تصویب شد نهایی',
+              allowedActions: ['APPROVE'],
+              actionLabels: { APPROVE: 'تصویب شد نهایی' },
+              approvalMode: 'SINGLE',
+              approveTarget: 'END_APPROVED',
+              hasGateway: false,
+              nodePosition: { x: 990, y: 380 },
+            })
+          );
+        }
+
+        db.prepare(`
+          INSERT OR REPLACE INTO system_settings (key, value, description, updatedAt)
+          VALUES ('seeded_sample_manager_council_v1', '1', 'Sample Manager-Council structure and 7-step workflow seed flag', ?)
+        `).run(now);
+      });
+      seedSampleTx();
+    }
+  } catch (e) {
+    console.warn('Warning during sample manager-council workflow seed:', e);
   }
 
   // 9. Seed Sample Project Attachments

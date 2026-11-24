@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { User, Position, StructurePositionSummary } from '../types';
+import { User, Position, StructurePositionSummary, UserGroup } from '../types';
 import { api } from '../services/api';
 import { PermissionsTreeModal } from './PermissionsTreeModal';
 import { hasPerm, hasAnyPerm } from '../utils/permissions';
@@ -16,7 +16,9 @@ import {
   Lock, 
   Search, 
   Crown,
-  FolderTree
+  FolderTree,
+  Layers,
+  Check
 } from 'lucide-react';
 
 interface UsersPositionsManagerProps {
@@ -56,30 +58,47 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
   const canEditPos = hasPerm(currentUser, 'org.positions.edit');
   const canDeletePos = hasPerm(currentUser, 'org.positions.delete');
 
-  const [subTab, setSubTab] = useState<'users' | 'positions' | 'permissions'>(() => {
+  const canManageGroups = canManagePerms || canEditUser || canCreateUser;
+
+  const [subTab, setSubTab] = useState<'users' | 'positions' | 'groups' | 'permissions'>(() => {
     if (canViewUsers) return 'users';
     if (canViewPos) return 'positions';
+    if (canManageGroups) return 'groups';
     return 'permissions';
   });
 
   useEffect(() => {
     if (subTab === 'users' && !canViewUsers) {
-      setSubTab(canViewPos ? 'positions' : 'permissions');
+      setSubTab(canViewPos ? 'positions' : canManageGroups ? 'groups' : 'permissions');
     } else if (subTab === 'positions' && !canViewPos) {
-      setSubTab(canViewUsers ? 'users' : 'permissions');
+      setSubTab(canViewUsers ? 'users' : canManageGroups ? 'groups' : 'permissions');
+    } else if (subTab === 'groups' && !canManageGroups) {
+      setSubTab(canViewUsers ? 'users' : canViewPos ? 'positions' : 'permissions');
     } else if (subTab === 'permissions' && !canManagePerms) {
-      setSubTab(canViewUsers ? 'users' : 'positions');
+      setSubTab(canViewUsers ? 'users' : canViewPos ? 'positions' : 'groups');
     }
-  }, [subTab, canViewUsers, canViewPos, canManagePerms]);
+  }, [subTab, canViewUsers, canViewPos, canManageGroups, canManagePerms]);
 
   // Selected for permissions modal
   const [selectedUserForPerms, setSelectedUserForPerms] = useState<User | null>(null);
+  const [selectedGroupForPerms, setSelectedGroupForPerms] = useState<UserGroup | null>(null);
   const [selectedSpForPerms, setSelectedSpForPerms] = useState<{
     id: string;
     positionTitle: string;
     structureTitle?: string;
     structureId?: string;
   } | null>(null);
+
+  // Groups state
+  const [groups, setGroups] = useState<UserGroup[]>([]);
+  const [searchGroupQuery, setSearchGroupQuery] = useState('');
+  const [showGroupModal, setShowGroupModal] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<UserGroup | null>(null);
+  const [groupTitle, setGroupTitle] = useState('');
+  const [groupDesc, setGroupDesc] = useState('');
+  const [groupColor, setGroupColor] = useState('violet');
+  const [groupUserIds, setGroupUserIds] = useState<string[]>([]);
+  const [groupMemberSearch, setGroupMemberSearch] = useState('');
 
   // Scoped structure-positions catalog for Permissions Matrix tab
   const [structurePositions, setStructurePositions] = useState<StructurePositionSummary[]>([]);
@@ -95,9 +114,25 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
     }
   };
 
+  const loadGroups = async () => {
+    try {
+      const list = await api.getGroups();
+      setGroups(list);
+    } catch (err) {
+      console.error('Error loading user groups:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (canManageGroups || canViewUsers) {
+      loadGroups();
+    }
+  }, [canManageGroups, canViewUsers, users.length]);
+
   useEffect(() => {
     if (canManagePerms && subTab === 'permissions') {
       loadStructurePositions();
+      loadGroups();
     }
   }, [subTab, canManagePerms, users, positions]);
 
@@ -285,6 +320,76 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
   };
 
 
+  const openGroupModal = (grp?: UserGroup) => {
+    if (grp) {
+      setEditingGroup(grp);
+      setGroupTitle(grp.title);
+      setGroupDesc(grp.description || '');
+      setGroupColor(grp.color || 'violet');
+      setGroupUserIds((grp.members || []).map((m) => m.id));
+    } else {
+      setEditingGroup(null);
+      setGroupTitle('');
+      setGroupDesc('');
+      setGroupColor('violet');
+      setGroupUserIds([]);
+    }
+    setGroupMemberSearch('');
+    setError('');
+    setShowGroupModal(true);
+  };
+
+  const toggleGroupMember = (uid: string) => {
+    setGroupUserIds((prev) =>
+      prev.includes(uid) ? prev.filter((id) => id !== uid) : [...prev, uid]
+    );
+  };
+
+  const handleSaveGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!groupTitle.trim()) {
+      setError('عنوان گروه کاربری الزامی است.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      if (editingGroup) {
+        await api.updateGroup(editingGroup.id, {
+          title: groupTitle.trim(),
+          description: groupDesc.trim(),
+          color: groupColor,
+          userIds: groupUserIds,
+        });
+      } else {
+        await api.createGroup({
+          title: groupTitle.trim(),
+          description: groupDesc.trim(),
+          color: groupColor,
+          userIds: groupUserIds,
+        });
+      }
+      setShowGroupModal(false);
+      await loadGroups();
+      onRefresh();
+    } catch (err: any) {
+      setError(err.message || 'خطا در ذخیره گروه کاربری');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteGroup = async (id: string, title: string) => {
+    if (!confirm(`آیا از حذف گروه «${title}» اطمینان دارید؟ دسترسی‌های ارث‌بری‌شده از این گروه برای اعضا لغو می‌شود.`)) return;
+    try {
+      await api.deleteGroup(id);
+      await loadGroups();
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'خطا در حذف گروه کاربری');
+    }
+  };
+
   // Filtered lists
   const filteredUsers = users.filter((u) => {
     const q = searchUserQuery.toLowerCase().trim();
@@ -303,6 +408,16 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
     return (
       p.title.toLowerCase().includes(q) ||
       (p.description && p.description.toLowerCase().includes(q))
+    );
+  });
+
+  const filteredGroups = groups.filter((g) => {
+    const q = searchGroupQuery.toLowerCase().trim();
+    if (!q) return true;
+    return (
+      g.title.toLowerCase().includes(q) ||
+      (g.description && g.description.toLowerCase().includes(q)) ||
+      (g.members || []).some((m) => m.name.toLowerCase().includes(q) || m.username.toLowerCase().includes(q))
     );
   });
 
@@ -344,6 +459,19 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
               }`}
             >
               سمت‌های سازمانی ({positions.length})
+            </button>
+          )}
+          {canManageGroups && (
+            <button
+              onClick={() => setSubTab('groups')}
+              className={`flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+                subTab === 'groups'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>گروه‌های کاربری ({groups.length})</span>
             </button>
           )}
           {canManagePerms && (
@@ -453,6 +581,18 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                               className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold"
                             >
                               {sp.positionTitle} ({sp.structureTitle})
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {u.groups && u.groups.length > 0 && (
+                        <div className="flex flex-wrap gap-1 pt-1 border-t border-slate-200/70">
+                          {u.groups.map((grp) => (
+                            <span
+                              key={grp.id}
+                              className="text-[10px] px-2 py-0.5 rounded-md bg-violet-50 text-violet-800 border border-violet-200 font-semibold"
+                            >
+                              گروه: {grp.title}
                             </span>
                           ))}
                         </div>
@@ -619,7 +759,135 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
         </div>
       )}
 
-      {/* ======================= TAB 3: PERMISSIONS MATRIX OVERVIEW ======================= */}
+      {/* ======================= TAB 3: USER GROUPS ======================= */}
+      {subTab === 'groups' && (
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="relative flex-1 max-w-sm">
+              <input
+                type="text"
+                placeholder="جستجو در نام گروه یا اعضای آن..."
+                value={searchGroupQuery}
+                onChange={(e) => setSearchGroupQuery(e.target.value)}
+                className="w-full rounded-2xl bg-white border border-slate-200 px-4 py-2 pr-9 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500 shadow-2xs"
+              />
+              <Search className="w-4 h-4 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
+            </div>
+
+            {canManageGroups && (
+              <button
+                onClick={() => openGroupModal()}
+                className="flex items-center justify-center gap-2 px-4 py-2 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>ایجاد گروه کاربری جدید</span>
+              </button>
+            )}
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-violet-50/70 border border-violet-200 text-xs text-violet-950">
+            با ایجاد <strong>گروه‌های کاربری</strong> و عضو کردن افراد در آن‌ها، می‌توانید دسترسی‌ها را یک‌جا به گروه اعطا کنید تا تمام اعضای گروه به‌طور خودکار همان مجوزها را دریافت کنند.
+          </div>
+
+          {filteredGroups.length === 0 ? (
+            <div className="p-10 rounded-2xl bg-white border border-dashed border-slate-300 text-center space-y-2">
+              <Layers className="w-8 h-8 text-slate-300 mx-auto" />
+              <div className="text-sm font-bold text-slate-700">هنوز گروه کاربری تعریف نشده است</div>
+              <p className="text-xs text-slate-500">
+                برای اعطای سریع دسترسی مشترک به چند کاربر، روی «ایجاد گروه کاربری جدید» کلیک کنید.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredGroups.map((g) => (
+                <div
+                  key={g.id}
+                  className="p-5 rounded-2xl bg-white border border-slate-200 hover:border-violet-300 transition flex flex-col justify-between gap-4 text-slate-800 shadow-2xs"
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                          <Layers className="w-4 h-4 text-violet-600 shrink-0" />
+                          <span className="truncate">{g.title}</span>
+                        </h3>
+                        {g.description && (
+                          <p className="text-xs text-slate-500 mt-1 line-clamp-2 leading-relaxed">
+                            {g.description}
+                          </p>
+                        )}
+                      </div>
+                      <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-violet-50 text-violet-800 border border-violet-200 shrink-0 tabular-nums">
+                        {g.memberCount} عضو
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px] px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-600">
+                      <span className="flex items-center gap-1.5">
+                        <Shield className="w-3.5 h-3.5 text-violet-600" />
+                        <span>مجوزهای تعریف‌شده برای گروه:</span>
+                      </span>
+                      <span className="font-bold text-violet-700 tabular-nums">
+                        {g.permissionCount} مجوز
+                      </span>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="text-[11px] font-semibold text-slate-500">اعضای گروه:</div>
+                      {g.members && g.members.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {g.members.map((m) => (
+                            <span
+                              key={m.id}
+                              className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 font-semibold"
+                            >
+                              {m.name}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-[11px] text-slate-400">هنوز عضوی به این گروه اضافه نشده است</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                    {canManagePerms ? (
+                      <button
+                        onClick={() => setSelectedGroupForPerms(g)}
+                        className="px-3 py-1.5 rounded-xl text-xs font-bold text-violet-700 bg-violet-50 hover:bg-violet-100 border border-violet-200 transition flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Shield className="w-3.5 h-3.5" />
+                        <span>تنظیم دسترسی گروه</span>
+                      </button>
+                    ) : <span />}
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => openGroupModal(g)}
+                        className="px-2.5 py-1.5 rounded-xl text-xs text-slate-700 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
+                        title="ویرایش گروه و اعضا"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        <span>اعضا</span>
+                      </button>
+                      <button
+                        onClick={() => handleDeleteGroup(g.id, g.title)}
+                        className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                        title="حذف گروه"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ======================= TAB 4: PERMISSIONS MATRIX OVERVIEW ======================= */}
       {subTab === 'permissions' && (
         <div className="space-y-5">
           <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 flex items-start gap-3">
@@ -628,16 +896,16 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
             </div>
             <div>
               <h3 className="text-sm font-bold text-slate-900">
-                ماتریس دسترسی کاربران و سمت‌های منتصب در ساختارها
+                ماتریس دسترسی کاربران، گروه‌های کاربری و سمت‌های منتصب در ساختارها
               </h3>
               <p className="text-xs text-slate-600 mt-1 max-w-3xl leading-relaxed">
-                مجوزها یا مستقیماً به <strong>کاربر</strong> داده می‌شوند یا به یک <strong>سمت داخل یک ساختار مشخص</strong>. اگر یک سمت (مثلاً «مدیر») در چند ساختار قرار گرفته باشد، دسترسی‌های آن در هر ساختار کاملاً مستقل است.
+                مجوزها به ۳ روش قابل تنظیم هستند: مستقیماً برای <strong>کاربر</strong>، یک‌جا برای یک <strong>گروه کاربری</strong>، یا برای یک <strong>سمت داخل ساختار مشخص</strong>. دسترسی‌های کاربر مجموع ارث‌بری از گروه‌ها، سمت‌هایش در ساختارها و مجوزهای اختصاصی او است.
               </p>
             </div>
           </div>
 
-          {/* Quick Selection Grid for Users & Structure Positions */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          {/* Quick Selection Grid for Users, Groups & Structure Positions */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
             {/* Box 1: User Permissions Access */}
             <div className="p-5 rounded-2xl bg-white border border-slate-200 space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -763,6 +1031,60 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                 )}
               </div>
             </div>
+            {/* Box 3: User Groups Permissions Access */}
+            <div className="p-5 rounded-2xl bg-white border border-slate-200 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-violet-600" />
+                  <span>دسترسی‌های گروه‌های کاربری</span>
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => openGroupModal()}
+                  className="text-[11px] font-bold text-violet-700 hover:text-violet-900 bg-violet-50 hover:bg-violet-100 px-2.5 py-1 rounded-lg border border-violet-200 transition cursor-pointer flex items-center gap-1"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>گروه جدید</span>
+                </button>
+              </div>
+
+              <div className="space-y-2 max-h-[440px] overflow-y-auto pl-1">
+                {groups.length === 0 ? (
+                  <div className="py-10 text-center text-xs text-slate-400 border border-dashed border-slate-200 rounded-xl">
+                    گروه کاربری ایجاد نشده است. از دکمه «گروه جدید» یا تب «گروه‌های کاربری» گروه بسازید.
+                  </div>
+                ) : (
+                  groups.map((g) => (
+                    <div
+                      key={g.id}
+                      className="p-3 rounded-xl border border-slate-200 hover:border-violet-300 bg-slate-50/50 hover:bg-violet-50/30 transition flex items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-violet-50 text-violet-600 font-bold text-xs flex items-center justify-center border border-violet-200 shrink-0">
+                          <Layers className="w-4 h-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-slate-900 truncate">
+                            {g.title}
+                          </div>
+                          <div className="text-[11px] text-slate-500 truncate tabular-nums">
+                            {g.memberCount} عضو • {g.permissionCount} مجوز فعال
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => setSelectedGroupForPerms(g)}
+                        className="px-3 py-1.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shrink-0"
+                      >
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>مجوزها</span>
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -775,6 +1097,18 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
           onSuccess={() => {
             onRefresh();
             loadStructurePositions();
+            loadGroups();
+          }}
+        />
+      )}
+
+      {selectedGroupForPerms && (
+        <PermissionsTreeModal
+          group={selectedGroupForPerms}
+          onClose={() => setSelectedGroupForPerms(null)}
+          onSuccess={() => {
+            onRefresh();
+            loadGroups();
           }}
         />
       )}
@@ -1009,6 +1343,162 @@ export const UsersPositionsManager: React.FC<UsersPositionsManagerProps> = ({
                   className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-md shadow-indigo-500/20 disabled:opacity-50"
                 >
                   {loading ? 'در حال ذخیره...' : 'ذخیره سمت'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: CREATE / EDIT USER GROUP */}
+      {showGroupModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs overflow-y-auto">
+          <div className="w-full max-w-lg rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-slate-800 my-6">
+            <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/80">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Layers className="w-5 h-5 text-violet-600" />
+                {editingGroup ? 'ویرایش گروه کاربری و اعضا' : 'ایجاد گروه کاربری جدید'}
+              </h3>
+              <button
+                onClick={() => setShowGroupModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {error && (
+              <div className="m-4 mb-0 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs">
+                {error}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveGroup} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-800 mb-1.5">
+                  نام گروه کاربری *
+                </label>
+                <input
+                  type="text"
+                  value={groupTitle}
+                  onChange={(e) => setGroupTitle(e.target.value)}
+                  placeholder="مثال: گروه کارشناسان بررسی طرح، گروه ناظران، ثبت‌کنندگان پروژه..."
+                  className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 shadow-2xs"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-800 mb-1.5">
+                  توضیحات گروه
+                </label>
+                <textarea
+                  rows={2}
+                  value={groupDesc}
+                  onChange={(e) => setGroupDesc(e.target.value)}
+                  placeholder="کاربرد و حیطه دسترسی‌های مشترک اعضای این گروه..."
+                  className="w-full rounded-xl bg-white border border-slate-300 px-4 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 leading-relaxed shadow-2xs"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs font-bold text-slate-800">
+                    انتخاب اعضای گروه ({groupUserIds.length} نفر انتخاب‌شده)
+                  </label>
+                  <div className="flex items-center gap-2 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => setGroupUserIds(users.map((u) => u.id))}
+                      className="text-violet-700 hover:underline font-semibold cursor-pointer"
+                    >
+                      انتخاب همه
+                    </button>
+                    <span className="text-slate-300">|</span>
+                    <button
+                      type="button"
+                      onClick={() => setGroupUserIds([])}
+                      className="text-slate-500 hover:underline cursor-pointer"
+                    >
+                      پاک کردن
+                    </button>
+                  </div>
+                </div>
+
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={groupMemberSearch}
+                    onChange={(e) => setGroupMemberSearch(e.target.value)}
+                    placeholder="جستجو بین کاربران..."
+                    className="w-full rounded-xl bg-slate-50 border border-slate-200 pr-8 pl-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-violet-500"
+                  />
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-2 pointer-events-none" />
+                </div>
+
+                <div className="max-h-56 overflow-y-auto rounded-2xl border border-slate-200 divide-y divide-slate-100 bg-slate-50/40">
+                  {users
+                    .filter((u) => {
+                      const q = groupMemberSearch.trim().toLowerCase();
+                      if (!q) return true;
+                      return (
+                        u.name.toLowerCase().includes(q) ||
+                        u.username.toLowerCase().includes(q)
+                      );
+                    })
+                    .map((u) => {
+                      const selected = groupUserIds.includes(u.id);
+                      return (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onClick={() => toggleGroupMember(u.id)}
+                          className={`w-full px-3 py-2 flex items-center justify-between gap-2 text-right transition cursor-pointer ${
+                            selected ? 'bg-violet-50/90' : 'hover:bg-white'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div
+                              className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 transition ${
+                                selected
+                                  ? 'bg-violet-600 border-violet-600 text-white'
+                                  : 'bg-white border-slate-300'
+                              }`}
+                            >
+                              {selected && <Check className="w-3.5 h-3.5" />}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-xs font-bold text-slate-900 truncate">{u.name}</div>
+                              <div className="text-[10px] text-slate-500 font-mono truncate" dir="ltr">
+                                @{u.username}
+                              </div>
+                            </div>
+                          </div>
+                          {u.positionTitle && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-md bg-white border border-slate-200 text-slate-600 shrink-0">
+                              {u.positionTitle}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                </div>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowGroupModal(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-xs text-slate-700 bg-white hover:bg-slate-100 cursor-pointer"
+                >
+                  انصراف
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-5 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-xs font-bold text-white shadow-md shadow-violet-500/20 disabled:opacity-50 cursor-pointer"
+                >
+                  {loading ? 'در حال ذخیره...' : 'ذخیره گروه کاربری'}
                 </button>
               </div>
             </form>

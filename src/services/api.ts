@@ -1,4 +1,4 @@
-import { Position, User, DynamicField, ProjectType, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowDiagramLayout, WorkflowLog, WorkflowTrackingItem, ProjectStructure, StructurePositionNode, StructurePositionSummary, ProjectAttachment, SystemSetting, PasswordResetRequest, SmsRule, SmsLog, PublicSettings, UploadProgressInfo, UserNotification } from '../types';
+import { Position, User, UserGroup, DynamicField, ProjectType, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowDiagramLayout, WorkflowLog, WorkflowTrackingItem, ProjectStructure, StructurePositionNode, StructurePositionSummary, ProjectAttachment, SystemSetting, PasswordResetRequest, SmsRule, SmsLog, PublicSettings, UploadProgressInfo, UserNotification } from '../types';
 
 class ApiService {
   getToken(): string | null {
@@ -191,7 +191,16 @@ class ApiService {
     permissions: string[];
     customPermissions: string[];
     inheritedPermissions: string[];
-    inheritedSources?: Array<{ structurePositionId?: string; positionId: string; positionTitle: string; structureId?: string; structureTitle?: string }>;
+    inheritedSources?: Array<{
+      sourceType?: 'STRUCTURE_POSITION' | 'GROUP';
+      structurePositionId?: string;
+      positionId?: string;
+      positionTitle?: string;
+      structureId?: string;
+      structureTitle?: string;
+      groupId?: string;
+      groupTitle?: string;
+    }>;
     hasCustomPermissions?: boolean;
   }> {
     const res = await fetch(`/api/users/${userId}/permissions`, {
@@ -281,6 +290,70 @@ class ApiService {
     if (!res.ok) {
       const data = await res.json();
       throw new Error(data.error || 'خطا در ذخیره دسترسی‌ها');
+    }
+  }
+
+  // User Groups & Group Permissions
+  async getGroups(): Promise<UserGroup[]> {
+    const res = await fetch('/api/groups', {
+      headers: this.getAuthHeader(),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.groups || [];
+  }
+
+  async createGroup(payload: { title: string; description?: string; color?: string; userIds?: string[] }): Promise<UserGroup> {
+    const res = await fetch('/api/groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'خطا در ایجاد گروه کاربری');
+    return data.group;
+  }
+
+  async updateGroup(id: string, payload: { title: string; description?: string; color?: string; userIds?: string[] }): Promise<UserGroup> {
+    const res = await fetch(`/api/groups/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'خطا در ویرایش گروه کاربری');
+    return data.group;
+  }
+
+  async deleteGroup(id: string): Promise<void> {
+    const res = await fetch(`/api/groups/${id}`, {
+      method: 'DELETE',
+      headers: this.getAuthHeader(),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'خطا در حذف گروه کاربری');
+    }
+  }
+
+  async getGroupPermissions(groupId: string): Promise<string[]> {
+    const res = await fetch(`/api/groups/${groupId}/permissions`, {
+      headers: this.getAuthHeader(),
+    });
+    if (!res.ok) throw new Error('خطا در دریافت دسترسی‌های گروه');
+    const data = await res.json();
+    return data.permissions || [];
+  }
+
+  async updateGroupPermissions(groupId: string, permissions: string[]): Promise<void> {
+    const res = await fetch(`/api/groups/${groupId}/permissions`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify({ permissions }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'خطا در ذخیره دسترسی‌های گروه');
     }
   }
 

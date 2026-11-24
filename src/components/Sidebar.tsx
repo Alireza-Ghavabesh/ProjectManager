@@ -107,7 +107,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: GitBranch,
           badge: null,
           badgeColor: '',
-          permission: ['workflow.view', 'workflow.history.view', 'workflow.create', 'workflow.edit', 'workflow.delete'],
+          permission: ['workflow.view', 'workflow.history.view', 'workflow.live_status.view', 'workflow.create', 'workflow.edit', 'workflow.delete'],
         },
         {
           id: 'users' as const,

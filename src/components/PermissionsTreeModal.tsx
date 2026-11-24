@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Position, Permission, User } from '../types';
+import { Position, Permission, User, UserGroup } from '../types';
 import { api } from '../services/api';
 import { 
   ShieldAlert, 
@@ -29,6 +29,7 @@ interface PermissionsTreeModalProps {
     structureTitle?: string;
     structureId?: string;
   } | null;
+  group?: UserGroup | null;
   user?: User | null;
   onClose: () => void;
   onSuccess: () => void;
@@ -44,6 +45,7 @@ const CRUD_META = [
 function getCrudSlot(code: string): 'view' | 'create' | 'edit' | 'delete' | null {
   if (
     code === 'workflow.history.view' ||
+    code === 'workflow.live_status.view' ||
     code === 'voting.confidential.view_all' ||
     code === 'projects.cartable.view'
   ) {
@@ -59,6 +61,7 @@ function getCrudSlot(code: string): 'view' | 'create' | 'edit' | 'delete' | null
 export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
   position,
   structurePosition,
+  group,
   user,
   onClose,
   onSuccess,
@@ -68,7 +71,16 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
   const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set());
   const [inheritedPermissions, setInheritedPermissions] = useState<Set<string>>(new Set());
   const [inheritedSources, setInheritedSources] = useState<
-    Array<{ structurePositionId?: string; positionId: string; positionTitle: string; structureId?: string; structureTitle?: string }>
+    Array<{
+      sourceType?: 'STRUCTURE_POSITION' | 'GROUP';
+      structurePositionId?: string;
+      positionId?: string;
+      positionTitle?: string;
+      structureId?: string;
+      structureTitle?: string;
+      groupId?: string;
+      groupTitle?: string;
+    }>
   >([]);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [hasCustomPerms, setHasCustomPerms] = useState<boolean>(false);
@@ -81,12 +93,15 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
 
   const targetTitle = user
     ? user.name
+    : group
+    ? group.title
     : structurePosition
     ? structurePosition.positionTitle
     : position
     ? position.title
     : 'سطح دسترسی';
   const isUserTarget = Boolean(user);
+  const isGroupTarget = Boolean(group);
   const isStructPosTarget = Boolean(structurePosition);
 
   const loadData = async () => {
@@ -104,6 +119,11 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
         setInheritedPermissions(new Set(userPermsData.inheritedPermissions || []));
         setInheritedSources(userPermsData.inheritedSources || []);
         setHasCustomPerms(Boolean(userPermsData.hasCustomPermissions));
+      } else if (group) {
+        const grpPermsData = await api.getGroupPermissions(group.id);
+        setSelectedCodes(new Set(grpPermsData || []));
+        setInheritedPermissions(new Set());
+        setInheritedSources([]);
       } else if (structurePosition) {
         const spPermsData = await api.getStructurePositionPermissions(structurePosition.id);
         setSelectedCodes(new Set(spPermsData.permissions || []));
@@ -124,7 +144,7 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
 
   useEffect(() => {
     loadData();
-  }, [position?.id, structurePosition?.id, user?.id]);
+  }, [position?.id, structurePosition?.id, group?.id, user?.id]);
 
   const toggleExpand = (code: string) => {
     setExpandedNodes((prev) => {
@@ -258,6 +278,8 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
           });
           await api.updateUserPermissions(user.id, Array.from(customSet));
         }
+      } else if (group) {
+        await api.updateGroupPermissions(group.id, Array.from(selectedCodes));
       } else if (structurePosition) {
         await api.updateStructurePositionPermissions(structurePosition.id, Array.from(selectedCodes));
       } else if (position) {
@@ -328,12 +350,19 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs text-slate-500 font-medium">
                   {isUserTarget
-                    ? 'ماتریس مجوزهای کاربر (ارث‌بری از سمت در ساختار + اختصاصی):'
+                    ? 'ماتریس مجوزهای کاربر (ارث‌بری از سمت‌ها و گروه‌ها + اختصاصی):'
+                    : isGroupTarget
+                    ? 'ماتریس مجوزهای گروه کاربری:'
                     : isStructPosTarget
                     ? 'ماتریس مجوزهای سمت منتصب در ساختار:'
                     : 'ماتریس مجوزهای سمت:'}
                 </span>
                 <span className="text-sm font-bold text-slate-900">{targetTitle}</span>
+                {isGroupTarget && (
+                  <span className="text-[11px] px-2 py-0.5 rounded-lg bg-violet-50 text-violet-800 font-bold border border-violet-200 tabular-nums">
+                    {group?.memberCount ?? group?.members?.length ?? 0} عضو در گروه
+                  </span>
+                )}
                 {isStructPosTarget && structurePosition?.structureTitle && (
                   <span className="text-[11px] px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-700 font-bold border border-indigo-200">
                     ساختار: {structurePosition.structureTitle}
@@ -347,27 +376,38 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
                         : 'bg-emerald-50 text-emerald-800 border-emerald-200'
                     }`}
                   >
-                    {hasCustomPerms ? 'ارث‌بری از ساختارها + مجوز اختصاصی' : 'ارث‌بری از سمت در ساختارها'}
+                    {hasCustomPerms ? 'ارث‌بری از ساختار و گروه + مجوز اختصاصی' : 'ارث‌بری از سمت در ساختارها و گروه‌ها'}
                   </span>
                 )}
               </div>
               {isUserTarget && inheritedSources.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                  <span className="text-[10px] font-bold text-emerald-800">سمت‌های فعال در ساختارها:</span>
-                  {inheritedSources.map((src, sIdx) => (
-                    <span
-                      key={`${src.structurePositionId || src.positionId}_${sIdx}`}
-                      className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold"
-                    >
-                      {src.positionTitle}
-                      {src.structureTitle ? ` ← ${src.structureTitle}` : ''}
-                    </span>
-                  ))}
+                  <span className="text-[10px] font-bold text-emerald-800">منابع ارث‌بری فعال:</span>
+                  {inheritedSources.map((src, sIdx) =>
+                    src.sourceType === 'GROUP' ? (
+                      <span
+                        key={`grp_${src.groupId}_${sIdx}`}
+                        className="text-[10px] px-2 py-0.5 rounded-md bg-violet-50 text-violet-800 border border-violet-200 font-semibold"
+                      >
+                        گروه: {src.groupTitle}
+                      </span>
+                    ) : (
+                      <span
+                        key={`${src.structurePositionId || src.positionId}_${sIdx}`}
+                        className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold"
+                      >
+                        {src.positionTitle}
+                        {src.structureTitle ? ` ← ${src.structureTitle}` : ''}
+                      </span>
+                    )
+                  )}
                 </div>
               )}
               <p className="text-[11px] text-slate-500 mt-1">
                 {isUserTarget
-                  ? 'مجوزهای «از سمت» فقط از سمت‌هایی که کاربر داخل ساختارهای سازمانی در آن عضو است ارث‌بری می‌شوند و به صورت اختصاصی نیز قابل افزودن هستند.'
+                  ? 'مجوزهای قفل‌شده به صورت خودکار از سمت‌های کاربر در ساختارها یا گروه‌های کاربری او ارث‌بری شده‌اند و مجوزهای اختصاصی نیز قابل افزودن هستند.'
+                  : isGroupTarget
+                  ? `هر مجوزی که برای گروه «${group?.title || ''}» فعال کنید، به‌طور خودکار برای تمام کاربران عضو این گروه اعمال خواهد شد.`
                   : isStructPosTarget
                   ? `این مجوزها منحصراً برای سمت «${structurePosition?.positionTitle}» در ساختار «${structurePosition?.structureTitle || ''}» اعمال می‌شوند و هیچ تاثیری بر همین سمت در ساختارهای دیگر ندارند.`
                   : 'هر دسترسی که به این سمت بدهید، برای اعضای آن فعال می‌شود.'}
@@ -583,7 +623,7 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
                                 onClick={() => toggleChildPermission(perm.code, root)}
                                 title={
                                   isInherited
-                                    ? 'ارث‌بری خودکار از سمت (برای تغییر، دسترسی سمت را ویرایش کنید)'
+                                    ? 'ارث‌بری خودکار از سمت در ساختار یا گروه کاربری (برای تغییر، دسترسی سمت یا گروه را ویرایش کنید)'
                                     : perm.description || perm.title
                                 }
                                 className={`px-3 py-2.5 rounded-xl border text-right transition flex items-center justify-between gap-2 ${
@@ -601,7 +641,7 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
                                   </span>
                                   {isInherited && (
                                     <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold shrink-0">
-                                      از سمت
+                                      ارث‌بری
                                     </span>
                                   )}
                                 </span>
@@ -636,7 +676,7 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
                                   onClick={() => toggleChildPermission(child.code, root)}
                                   title={
                                     isChildInherited
-                                      ? 'ارث‌بری خودکار از سمت (برای تغییر، دسترسی سمت را ویرایش کنید)'
+                                      ? 'ارث‌بری خودکار از سمت در ساختار یا گروه کاربری (برای تغییر، دسترسی سمت یا گروه را ویرایش کنید)'
                                       : child.description || child.title
                                   }
                                   className={`p-2.5 rounded-xl border transition flex items-start justify-between gap-2 text-right ${
@@ -662,7 +702,7 @@ export const PermissionsTreeModal: React.FC<PermissionsTreeModalProps> = ({
                                         <span>{child.title}</span>
                                         {isChildInherited && (
                                           <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold">
-                                            ارث‌بری از سمت
+                                            از سمت / گروه
                                           </span>
                                         )}
                                         {child.isDanger ? (

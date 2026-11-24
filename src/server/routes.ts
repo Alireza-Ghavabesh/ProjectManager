@@ -72,24 +72,30 @@ const EXPLICIT_ONLY_PERMISSIONS = new Set([
   'project_list.delete',
 ]);
 
-// Unified helper to collect position-inherited permissions strictly scoped to each (structure, position) assignment
+// Unified helper to collect position-inherited and group-inherited permissions
 export function getUserPositionInheritance(user: { id: string; positionId?: string | null }): {
   permissionCodes: Set<string>;
   sources: Array<{
-    structurePositionId: string;
-    positionId: string;
-    positionTitle: string;
-    structureId: string;
+    sourceType: 'STRUCTURE_POSITION' | 'GROUP';
+    structurePositionId?: string;
+    positionId?: string;
+    positionTitle?: string;
+    structureId?: string;
     structureTitle?: string;
+    groupId?: string;
+    groupTitle?: string;
   }>;
 } {
   const permissionCodes = new Set<string>();
   const sources: Array<{
-    structurePositionId: string;
-    positionId: string;
-    positionTitle: string;
-    structureId: string;
+    sourceType: 'STRUCTURE_POSITION' | 'GROUP';
+    structurePositionId?: string;
+    positionId?: string;
+    positionTitle?: string;
+    structureId?: string;
     structureTitle?: string;
+    groupId?: string;
+    groupTitle?: string;
   }> = [];
   const seenSourceIds = new Set<string>();
 
@@ -112,9 +118,10 @@ export function getUserPositionInheritance(user: { id: string; positionId?: stri
     }>;
 
     for (const sp of structPositions) {
-      if (!seenSourceIds.has(sp.structurePositionId)) {
-        seenSourceIds.add(sp.structurePositionId);
+      if (!seenSourceIds.has(`sp:${sp.structurePositionId}`)) {
+        seenSourceIds.add(`sp:${sp.structurePositionId}`);
         sources.push({
+          sourceType: 'STRUCTURE_POSITION',
           structurePositionId: sp.structurePositionId,
           positionId: sp.positionId,
           positionTitle: sp.positionTitle,
@@ -133,11 +140,41 @@ export function getUserPositionInheritance(user: { id: string; positionId?: stri
     structPosP.forEach((p) => permissionCodes.add(p.permissionCode));
   } catch (e) {}
 
+  // Also inherit permissions from any user_groups the user belongs to
+  try {
+    const userGroups = db.prepare(`
+      SELECT ug.id as groupId, ug.title as groupTitle
+      FROM user_group_members ugm
+      JOIN user_groups ug ON ugm.groupId = ug.id
+      WHERE ugm.userId = ?
+      ORDER BY ug.title ASC
+    `).all(user.id) as Array<{ groupId: string; groupTitle: string }>;
+
+    for (const grp of userGroups) {
+      if (!seenSourceIds.has(`grp:${grp.groupId}`)) {
+        seenSourceIds.add(`grp:${grp.groupId}`);
+        sources.push({
+          sourceType: 'GROUP',
+          groupId: grp.groupId,
+          groupTitle: grp.groupTitle,
+        });
+      }
+    }
+
+    const groupPerms = db.prepare(`
+      SELECT DISTINCT gp.permissionCode
+      FROM user_group_members ugm
+      JOIN group_permissions gp ON ugm.groupId = gp.groupId
+      WHERE ugm.userId = ?
+    `).all(user.id) as { permissionCode: string }[];
+    groupPerms.forEach((p) => permissionCodes.add(p.permissionCode));
+  } catch (e) {}
+
   return { permissionCodes, sources };
 }
 
 // Unified helper to get all effective permissions for a user
-// Always inherits permissions from any assigned position (primary position OR structure positions) unioned with explicit user permissions.
+// Always inherits permissions from structure positions & user groups unioned with explicit user permissions.
 export function getUserPermissionsList(user: { id: string; role: string; positionId?: string | null; hasCustomPermissions?: number | boolean }): string[] {
   const combined = new Set<string>();
 
@@ -246,7 +283,7 @@ function recordProjectHistory(params: {
   }
 }
 
-// Mask confidential vote choices & workflow step comments only when viewer lacks inspection permissions and step marks votes hidden
+// Enforce full choice & comment history permission (`workflow.history.view`) plus confidential vote masking
 function sanitizeWorkflowLogsForViewer(
   logs: any[],
   viewer: any,
@@ -257,7 +294,13 @@ function sanitizeWorkflowLogsForViewer(
     'workflow.history.view',
     'voting.confidential.view_all',
   ]);
-  return logs.map((l) => {
+
+  // Without workflow.history.view (or confidential view_all), a user only sees their own actions/comments
+  const scopedLogs = canInspectWorkflowHistory
+    ? logs
+    : logs.filter((l) => viewer?.id && l.fromUserId === viewer.id);
+
+  return scopedLogs.map((l) => {
     if (
       !canInspectConfidential &&
       viewer?.id !== l.fromUserId &&
@@ -527,7 +570,14 @@ apiRouter.get('/users', (_req: Request, res: Response) => {
     positionTitle: string;
   }>;
 
-  // Attach unified permissions & structure positions for each user
+  const groupMemberRows = db.prepare(`
+    SELECT ugm.userId, ug.id as groupId, ug.title as groupTitle, ug.color as groupColor
+    FROM user_group_members ugm
+    JOIN user_groups ug ON ugm.groupId = ug.id
+    ORDER BY ug.title ASC
+  `).all() as Array<{ userId: string; groupId: string; groupTitle: string; groupColor?: string }>;
+
+  // Attach unified permissions, structure positions & groups for each user
   const result = users.map((u) => {
     const permissions = getUserPermissionsList(u);
     const structurePositions = structPositionsRows
@@ -539,7 +589,14 @@ apiRouter.get('/users', (_req: Request, res: Response) => {
         positionId,
         positionTitle,
       }));
-    return { ...u, permissions, structurePositions };
+    const groups = groupMemberRows
+      .filter((g) => g.userId === u.id)
+      .map(({ groupId, groupTitle, groupColor }) => ({
+        id: groupId,
+        title: groupTitle,
+        color: groupColor || 'indigo',
+      }));
+    return { ...u, permissions, structurePositions, groups };
   });
 
   res.json({ users: result });
@@ -909,6 +966,222 @@ apiRouter.post('/users/:id/permissions/reset', (req: Request, res: Response) => 
   tx();
 
   res.json({ success: true });
+});
+
+// --------------------------------------------------------------------------
+// 2.5. USER GROUPS & GROUP PERMISSIONS (گروه‌بندی کاربران و دسترسی گروهی)
+// --------------------------------------------------------------------------
+
+apiRouter.get('/groups', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) {
+    return res.status(401).json({ error: 'کاربر احراز هویت نشده است.' });
+  }
+
+  const groups = db.prepare(`
+    SELECT * FROM user_groups
+    ORDER BY createdAt DESC, title ASC
+  `).all() as any[];
+
+  const membersRaw = db.prepare(`
+    SELECT ugm.groupId, u.id, u.name, u.username, u.role, u.avatar, p.title as positionTitle
+    FROM user_group_members ugm
+    JOIN users u ON ugm.userId = u.id
+    LEFT JOIN positions p ON u.positionId = p.id
+    ORDER BY u.name ASC
+  `).all() as any[];
+
+  const permsRaw = db.prepare(`
+    SELECT groupId, permissionCode FROM group_permissions
+  `).all() as Array<{ groupId: string; permissionCode: string }>;
+
+  const enriched = groups.map((g) => {
+    const members = membersRaw
+      .filter((m) => m.groupId === g.id)
+      .map(({ id, name, username, role, avatar, positionTitle }) => ({
+        id,
+        name,
+        username,
+        role,
+        avatar,
+        positionTitle,
+      }));
+    const permissions = permsRaw
+      .filter((p) => p.groupId === g.id)
+      .map((p) => p.permissionCode);
+    return {
+      ...g,
+      memberCount: members.length,
+      permissionCount: permissions.length,
+      members,
+      permissions,
+    };
+  });
+
+  res.json({ groups: enriched });
+});
+
+apiRouter.post('/groups', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || !hasPermission(currentUser, ['system.permissions.manage', 'system.users.edit', 'system.users.create'])) {
+    return res.status(403).json({ error: 'شما مجوز ایجاد گروه کاربری جدید را ندارید.' });
+  }
+
+  const { title, description, color, userIds } = req.body as {
+    title?: string;
+    description?: string;
+    color?: string;
+    userIds?: string[];
+  };
+
+  if (!title || !title.trim()) {
+    return res.status(400).json({ error: 'عنوان گروه کاربری الزامی است.' });
+  }
+
+  const id = `grp-${randomUUID().substring(0, 8)}`;
+  const now = new Date().toISOString();
+
+  try {
+    const tx = db.transaction(() => {
+      db.prepare(`
+        INSERT INTO user_groups (id, title, description, color, createdAt)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(id, title.trim(), (description || '').trim(), color || 'indigo', now);
+
+      if (Array.isArray(userIds)) {
+        const insMem = db.prepare('INSERT OR IGNORE INTO user_group_members (groupId, userId) VALUES (?, ?)');
+        for (const uid of userIds) {
+          if (typeof uid === 'string' && uid.trim()) {
+            insMem.run(id, uid.trim());
+          }
+        }
+      }
+    });
+    tx();
+
+    const created = db.prepare('SELECT * FROM user_groups WHERE id = ?').get(id);
+    res.json({ success: true, group: created });
+  } catch (err: any) {
+    if (err.message && err.message.includes('UNIQUE')) {
+      return res.status(400).json({ error: 'گروهی با این نام قبلاً ثبت شده است.' });
+    }
+    res.status(500).json({ error: 'خطا در ثبت گروه کاربری.' });
+  }
+});
+
+apiRouter.put('/groups/:id', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || !hasPermission(currentUser, ['system.permissions.manage', 'system.users.edit'])) {
+    return res.status(403).json({ error: 'شما مجوز ویرایش گروه کاربری را ندارید.' });
+  }
+
+  const { id } = req.params;
+  const existing = db.prepare('SELECT id FROM user_groups WHERE id = ?').get(id);
+  if (!existing) {
+    return res.status(404).json({ error: 'گروه کاربری یافت نشد.' });
+  }
+
+  const { title, description, color, userIds } = req.body as {
+    title?: string;
+    description?: string;
+    color?: string;
+    userIds?: string[];
+  };
+
+  if (!title || !title.trim()) {
+    return res.status(400).json({ error: 'عنوان گروه کاربری الزامی است.' });
+  }
+
+  try {
+    const tx = db.transaction(() => {
+      db.prepare(`
+        UPDATE user_groups
+        SET title = ?, description = ?, color = ?
+        WHERE id = ?
+      `).run(title.trim(), (description || '').trim(), color || 'indigo', id);
+
+      if (Array.isArray(userIds)) {
+        db.prepare('DELETE FROM user_group_members WHERE groupId = ?').run(id);
+        const insMem = db.prepare('INSERT OR IGNORE INTO user_group_members (groupId, userId) VALUES (?, ?)');
+        for (const uid of userIds) {
+          if (typeof uid === 'string' && uid.trim()) {
+            insMem.run(id, uid.trim());
+          }
+        }
+      }
+    });
+    tx();
+
+    const updated = db.prepare('SELECT * FROM user_groups WHERE id = ?').get(id);
+    res.json({ success: true, group: updated });
+  } catch (err: any) {
+    if (err.message && err.message.includes('UNIQUE')) {
+      return res.status(400).json({ error: 'گروهی با این نام قبلاً ثبت شده است.' });
+    }
+    res.status(500).json({ error: 'خطا در بروزرسانی گروه کاربری.' });
+  }
+});
+
+apiRouter.delete('/groups/:id', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || !hasPermission(currentUser, ['system.permissions.manage', 'system.users.delete'])) {
+    return res.status(403).json({ error: 'شما مجوز حذف گروه کاربری را ندارید.' });
+  }
+
+  const { id } = req.params;
+  const existing = db.prepare('SELECT id FROM user_groups WHERE id = ?').get(id);
+  if (!existing) {
+    return res.status(404).json({ error: 'گروه کاربری یافت نشد.' });
+  }
+
+  db.prepare('DELETE FROM user_groups WHERE id = ?').run(id);
+  res.json({ success: true });
+});
+
+apiRouter.get('/groups/:id/permissions', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) {
+    return res.status(401).json({ error: 'کاربر احراز هویت نشده است.' });
+  }
+  const { id } = req.params;
+  const perms = db.prepare(`
+    SELECT permissionCode FROM group_permissions
+    WHERE groupId = ?
+  `).all(id) as { permissionCode: string }[];
+  res.json({ permissions: perms.map((p) => p.permissionCode) });
+});
+
+apiRouter.put('/groups/:id/permissions', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || !hasPermission(currentUser, 'system.permissions.manage')) {
+    return res.status(403).json({ error: 'تنها دارنده مجوز مدیریت ماتریس دسترسی‌ها امکان تنظیم دسترسی گروه را دارد.' });
+  }
+
+  const { id } = req.params;
+  const { permissions } = req.body as { permissions: string[] };
+  if (!Array.isArray(permissions)) {
+    return res.status(400).json({ error: 'لیست مجوزها نامعتبر است.' });
+  }
+
+  const groupExists = db.prepare('SELECT id FROM user_groups WHERE id = ?').get(id);
+  if (!groupExists) {
+    return res.status(404).json({ error: 'گروه کاربری یافت نشد.' });
+  }
+
+  const deleteStmt = db.prepare('DELETE FROM group_permissions WHERE groupId = ?');
+  const insertStmt = db.prepare('INSERT OR IGNORE INTO group_permissions (groupId, permissionCode) VALUES (?, ?)');
+
+  const tx = db.transaction(() => {
+    deleteStmt.run(id);
+    for (const code of permissions) {
+      if (typeof code === 'string' && code.trim()) {
+        insertStmt.run(id, code.trim());
+      }
+    }
+  });
+  tx();
+
+  res.json({ success: true, count: permissions.length });
 });
 
 // --------------------------------------------------------------------------
@@ -1581,6 +1854,7 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
     !hasPermission(currentUser, [
       'workflow.view',
       'workflow.history.view',
+      'workflow.live_status.view',
       'workflow.create',
       'workflow.edit',
       'workflow.delete',
@@ -1590,8 +1864,8 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
     return res.status(403).json({ error: 'شما مجوز مشاهده و رهگیری گردش کارها را ندارید.' });
   }
   const canViewAllProjects = hasPermission(currentUser, ['projects.view', 'project_list.view']);
-  const canInspectWorkflowHistory = hasPermission(currentUser, [
-    'workflow.history.view',
+  const canInspectLiveStatus = hasPermission(currentUser, [
+    'workflow.live_status.view',
     'voting.confidential.view_all',
   ]);
 
@@ -1744,7 +2018,7 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
             currentStep?.config,
             currentAssignees,
             currentUser.id,
-            canInspectWorkflowHistory
+            canInspectLiveStatus
           );
 
     const logs = allLogs.filter((l) => l.projectId === prj.id);
@@ -1767,6 +2041,17 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
     if (isMyWorkflowTurn && !isCreatorRevisionTurn && shouldLeaveAfterVote && hasCurrentUserVotedInStep) {
       isMyWorkflowTurn = false;
     }
+
+    const visibleCurrentAssignees = canInspectLiveStatus
+      ? currentAssignees
+      : currentAssignees.filter((a) => a.id === currentUser.id);
+
+    const visibleSteps = canInspectLiveStatus
+      ? steps
+      : steps.map((st) => ({
+          ...st,
+          assignees: (st.assignees || []).filter((a: any) => a.id === currentUser.id),
+        }));
 
     const effectiveTaskTitle = isCompletedOrRejected
       ? null
@@ -1808,7 +2093,7 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
         ? currentPositions.map((p) => p.title).join('، ')
         : prj.currentPositionTitle || currentStep?.positionTitle || null,
       currentPositionColor: prj.currentPositionColor || currentStep?.positionColor || 'indigo',
-      currentAssignees,
+      currentAssignees: visibleCurrentAssignees,
       currentStepApprovalProgress,
       isMyWorkflowTurn,
       creatorId: prj.createdById || null,
@@ -1817,7 +2102,7 @@ apiRouter.get('/workflows/tracking', (req: Request, res: Response) => {
       creatorPositionTitle: prj.creatorPositionTitle || '',
       createdAt: prj.createdAt,
       updatedAt: prj.updatedAt,
-      steps,
+      steps: visibleSteps,
       logs,
     };
   });
@@ -3764,8 +4049,8 @@ function enrichProjectsForViewer(projects: any[], currentUser: any) {
   });
 
   const canViewConfidential = hasPermission(currentUser, 'voting.confidential.view_all');
-  const canInspectWorkflowHistory = hasPermission(currentUser, [
-    'workflow.history.view',
+  const canInspectLiveStatus = hasPermission(currentUser, [
+    'workflow.live_status.view',
     'voting.confidential.view_all',
   ]);
 
@@ -3901,8 +4186,19 @@ function enrichProjectsForViewer(projects: any[], currentUser: any) {
             currentStepObj?.config,
             currentAssignees,
             currentUser.id,
-            canInspectWorkflowHistory
+            canInspectLiveStatus
           );
+
+    const visibleCurrentAssignees = canInspectLiveStatus
+      ? currentAssignees
+      : currentAssignees.filter((a) => a.id === currentUser.id);
+
+    const visiblePrjSteps = canInspectLiveStatus
+      ? prjSteps
+      : prjSteps.map((st) => ({
+          ...st,
+          assignees: (st.assignees || []).filter((a: any) => a.id === currentUser.id),
+        }));
 
     const isDirectPosMatch = Boolean(
       !isCompletedOrRejected &&
@@ -4036,7 +4332,7 @@ function enrichProjectsForViewer(projects: any[], currentUser: any) {
         currentPositions,
         currentPositionTitle,
         currentTaskTitle: resolvedTaskTitle,
-        currentAssignees,
+        currentAssignees: visibleCurrentAssignees,
         currentStepApprovalProgress,
         deliveryDate: prj.deliveryDate || '',
         isDeadlineExpired: expired,
@@ -4050,7 +4346,7 @@ function enrichProjectsForViewer(projects: any[], currentUser: any) {
         hasVoted: !!myVote,
         userVote: myVote || null,
         allVotes,
-        workflowSteps: prjSteps,
+        workflowSteps: visiblePrjSteps,
         workflowLogs: prjLogs,
       };
     } else {
@@ -4066,7 +4362,7 @@ function enrichProjectsForViewer(projects: any[], currentUser: any) {
         currentPositions,
         currentPositionTitle,
         currentTaskTitle: resolvedTaskTitle,
-        currentAssignees,
+        currentAssignees: visibleCurrentAssignees,
         currentStepApprovalProgress,
         deliveryDate: prj.deliveryDate || '',
         isDeadlineExpired: expired,
@@ -4079,7 +4375,7 @@ function enrichProjectsForViewer(projects: any[], currentUser: any) {
         totalCouncilMembers: projectExpectedVoters,
         hasVoted: !!myVote,
         userVote: myVote || null,
-        workflowSteps: prjSteps,
+        workflowSteps: visiblePrjSteps,
         workflowLogs: prjLogs,
       };
     }
@@ -4344,6 +4640,19 @@ apiRouter.post('/projects', (req: Request, res: Response) => {
   }
 });
 
+function isUserActiveCreatorStepTurn(project: any, userId: string): boolean {
+  if (!project || !userId || project.createdById !== userId) return false;
+  if (project.status === 'APPROVED' || project.status === 'REJECTED') return false;
+  if (project.status === 'NEEDS_REVISION' && Number(project.currentStepOrder) === 0) return true;
+  if (!project.workflowId) return false;
+  const stepOrder = Number(project.currentStepOrder || 1);
+  const stepRow = db
+    .prepare('SELECT configJson FROM workflow_steps WHERE workflowId = ? AND stepOrder = ?')
+    .get(project.workflowId, stepOrder) as { configJson?: string } | undefined;
+  const cfg = parseStepConfig(stepRow?.configJson);
+  return cfg?.assigneeMode === 'CREATOR';
+}
+
 apiRouter.put('/projects/:id', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
   if (!currentUser) {
@@ -4352,13 +4661,8 @@ apiRouter.put('/projects/:id', (req: Request, res: Response) => {
 
   const { id } = req.params;
   const prevProject = db.prepare('SELECT id, title, status, majorityResult, deadline, workflowId, currentStepOrder, currentPositionId, currentTaskTitle, projectTypeId, createdById FROM projects WHERE id = ?').get(id) as any;
-  const isCreatorRevisionEdit = Boolean(
-    prevProject &&
-      prevProject.status === 'NEEDS_REVISION' &&
-      Number(prevProject.currentStepOrder) === 0 &&
-      prevProject.createdById === currentUser.id
-  );
-  if (!hasPermission(currentUser, ['projects.edit', 'project_list.edit']) && !isCreatorRevisionEdit) {
+  const isCreatorStepEdit = isUserActiveCreatorStepTurn(prevProject, currentUser.id);
+  if (!hasPermission(currentUser, ['projects.edit', 'project_list.edit']) && !isCreatorStepEdit) {
     return res.status(403).json({ error: 'شما مجاز به ویرایش پروژه نیستید.' });
   }
   const { title, code, description, productionType, projectTypeId, location, deadline, deliveryDate, budgetEstimated, requirements, status, workflowId } = req.body;
@@ -4385,8 +4689,12 @@ apiRouter.put('/projects/:id', (req: Request, res: Response) => {
     }
   }
 
+  const hasFullProjectEdit = hasPermission(currentUser, ['projects.edit', 'project_list.edit']);
+  const effectiveWorkflowId = hasFullProjectEdit ? workflowId : prevProject?.workflowId;
+  const effectiveStatus = hasFullProjectEdit ? status : undefined;
+
   const now = new Date().toISOString();
-  const isWorkflowChanged = Boolean(workflowId && prevProject && workflowId !== prevProject.workflowId);
+  const isWorkflowChanged = Boolean(effectiveWorkflowId && prevProject && effectiveWorkflowId !== prevProject.workflowId);
 
   let nextStepOrder = prevProject?.currentStepOrder ?? 1;
   let nextPositionId = prevProject?.currentPositionId ?? null;
@@ -4397,7 +4705,7 @@ apiRouter.put('/projects/:id', (req: Request, res: Response) => {
     nextStepOrder = 1;
     const firstStep = db.prepare(
       'SELECT title, positionId, positionIdsJson, configJson FROM workflow_steps WHERE workflowId = ? ORDER BY stepOrder ASC LIMIT 1'
-    ).get(workflowId) as any;
+    ).get(effectiveWorkflowId) as any;
     const firstCfg = parseStepConfig(firstStep?.configJson);
     const firstPosIds = parseStepPositionIds(firstStep);
     nextPositionId = firstCfg.assigneeMode === 'CREATOR' ? null : (firstPosIds[0] || firstStep?.positionId || null);
@@ -4406,15 +4714,15 @@ apiRouter.put('/projects/:id', (req: Request, res: Response) => {
     db.prepare('DELETE FROM workflow_step_approvals WHERE projectId = ?').run(id);
   }
 
-  if (status === 'APPROVED') {
+  if (effectiveStatus === 'APPROVED') {
     nextMajorityResult = 'APPROVED';
     nextPositionId = null;
     nextTaskTitle = null;
-  } else if (status === 'REJECTED') {
+  } else if (effectiveStatus === 'REJECTED') {
     nextMajorityResult = 'REJECTED';
     nextPositionId = null;
     nextTaskTitle = null;
-  } else if (status === 'NEEDS_REVISION') {
+  } else if (effectiveStatus === 'NEEDS_REVISION') {
     nextMajorityResult = 'NEEDS_REVISION';
   }
 
@@ -4435,9 +4743,9 @@ apiRouter.put('/projects/:id', (req: Request, res: Response) => {
     deliveryDate || '',
     budgetEstimated || '',
     JSON.stringify(requirements || {}),
-    status || null,
+    effectiveStatus || null,
     nextMajorityResult,
-    workflowId || null,
+    effectiveWorkflowId || null,
     nextStepOrder,
     nextPositionId,
     nextTaskTitle,
@@ -4672,18 +4980,15 @@ apiRouter.post('/projects/:id/attachments/stream', async (req: Request, res: Res
   }
 
   const { id: projectId } = req.params;
-  const project = db.prepare('SELECT id, title, createdById, status, currentStepOrder FROM projects WHERE id = ?').get(projectId) as any;
+  const project = db.prepare('SELECT id, title, createdById, status, workflowId, currentStepOrder FROM projects WHERE id = ?').get(projectId) as any;
   if (!project) {
     return res.status(404).json({ error: 'پروژه مورد نظر یافت نشد.' });
   }
 
-  const isCreatorRev =
-    project.status === 'NEEDS_REVISION' &&
-    Number(project.currentStepOrder) === 0 &&
-    project.createdById === currentUser.id;
+  const isCreatorStepTurn = isUserActiveCreatorStepTurn(project, currentUser.id);
   const canUpload =
     hasPermission(currentUser, ['projects.edit', 'project_list.edit']) ||
-    isCreatorRev ||
+    isCreatorStepTurn ||
     (hasPermission(currentUser, ['projects.create', 'project_list.create']) && project.createdById === currentUser.id);
   if (!canUpload) {
     return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به پیوست فایل برای این پروژه نیستید.' });
@@ -4802,18 +5107,15 @@ apiRouter.post('/projects/:id/attachments', (req: Request, res: Response) => {
   }
 
   const { id: projectId } = req.params;
-  const project = db.prepare('SELECT id, title, createdById, status, currentStepOrder FROM projects WHERE id = ?').get(projectId) as any;
+  const project = db.prepare('SELECT id, title, createdById, status, workflowId, currentStepOrder FROM projects WHERE id = ?').get(projectId) as any;
   if (!project) {
     return res.status(404).json({ error: 'پروژه مورد نظر یافت نشد.' });
   }
 
-  const isCreatorRev =
-    project.status === 'NEEDS_REVISION' &&
-    Number(project.currentStepOrder) === 0 &&
-    project.createdById === currentUser.id;
+  const isCreatorStepTurn = isUserActiveCreatorStepTurn(project, currentUser.id);
   const canUpload =
     hasPermission(currentUser, ['projects.edit', 'project_list.edit']) ||
-    isCreatorRev ||
+    isCreatorStepTurn ||
     (hasPermission(currentUser, ['projects.create', 'project_list.create']) && project.createdById === currentUser.id);
   if (!canUpload) {
     return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به پیوست فایل برای این پروژه نیستید.' });
@@ -4897,15 +5199,9 @@ apiRouter.post('/projects/:id/attachments', (req: Request, res: Response) => {
 apiRouter.delete('/projects/:id/attachments/:attachmentId', (req: Request, res: Response) => {
   const currentUser = getCurrentUser(req);
   const { id: projectId, attachmentId } = req.params;
-  const project = db.prepare('SELECT id, title, createdById, status, currentStepOrder FROM projects WHERE id = ?').get(projectId) as any;
-  const isCreatorRev = Boolean(
-    currentUser &&
-      project &&
-      project.status === 'NEEDS_REVISION' &&
-      Number(project.currentStepOrder) === 0 &&
-      project.createdById === currentUser.id
-  );
-  if (!currentUser || (!hasPermission(currentUser, ['projects.edit', 'project_list.edit']) && !isCreatorRev)) {
+  const project = db.prepare('SELECT id, title, createdById, status, workflowId, currentStepOrder FROM projects WHERE id = ?').get(projectId) as any;
+  const isCreatorStepTurn = Boolean(currentUser && isUserActiveCreatorStepTurn(project, currentUser.id));
+  if (!currentUser || (!hasPermission(currentUser, ['projects.edit', 'project_list.edit']) && !isCreatorStepTurn)) {
     return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به حذف فایل‌های پروژه نیستید.' });
   }
 
