@@ -1,14 +1,64 @@
+import './loadEnv.js';
 import { DatabaseSync } from 'node:sqlite';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// Reliable root directory: council.db is always placed at project root regardless of PM2 working directory
+// Reliable root directory regardless of PM2 / shell working directory
 const projectRoot = path.resolve(__dirname, '../../');
-const dbPath = path.join(projectRoot, 'council.db');
+
+const isProductionRuntime =
+  process.env.NODE_ENV === 'production' ||
+  process.argv.includes('--production') ||
+  process.argv.includes('--prod');
+
+function resolveDatabasePath(): string {
+  const customPath = process.env.DB_PATH?.trim();
+  if (customPath) {
+    return path.isAbsolute(customPath) ? customPath : path.resolve(projectRoot, customPath);
+  }
+
+  const devDbPath = path.join(projectRoot, 'council.db');
+  if (!isProductionRuntime) {
+    return devDbPath;
+  }
+
+  const buildDataDir = path.join(projectRoot, 'build-data');
+  const buildDbPath = path.join(buildDataDir, 'council.db');
+
+  // If production build DB doesn't exist yet, create a WAL-safe snapshot from dev DB automatically
+  if (!fs.existsSync(buildDbPath) && fs.existsSync(devDbPath)) {
+    try {
+      fs.mkdirSync(buildDataDir, { recursive: true });
+      const srcDb = new DatabaseSync(devDbPath);
+      try {
+        srcDb.exec('PRAGMA busy_timeout = 5000;');
+        const escaped = buildDbPath.replace(/'/g, "''");
+        srcDb.exec(`VACUUM INTO '${escaped}'`);
+      } finally {
+        srcDb.close();
+      }
+      console.log('[db] Created initial build database copy at build-data/council.db from dev council.db');
+    } catch (err) {
+      console.warn('[db] Could not copy dev DB to build-data/council.db; falling back to council.db:', err);
+      return devDbPath;
+    }
+  }
+
+  if (fs.existsSync(buildDbPath)) {
+    return buildDbPath;
+  }
+
+  return devDbPath;
+}
+
+const dbPath = resolveDatabasePath();
+export const activeDbPath = dbPath;
 
 const rawDb = new DatabaseSync(dbPath);
+rawDb.exec('PRAGMA busy_timeout = 5000;');
 rawDb.exec('PRAGMA journal_mode = WAL;');
 // Foreign keys are enabled after schema initialization and seeding
 

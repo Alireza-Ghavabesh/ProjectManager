@@ -1,12 +1,10 @@
+import { envFilePortRaw } from './src/server/loadEnv.js';
 import express from 'express';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import dotenv from 'dotenv';
-import { initDatabase } from './src/server/db.js';
+import { initDatabase, activeDbPath } from './src/server/db.js';
 import { apiRouter } from './src/server/routes.js';
-
-dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,21 +12,38 @@ const __dirname = path.dirname(__filename);
 // Initialize SQLite database and seed initial data
 initDatabase();
 
-function getPort(): number {
-  const portArgIndex = process.argv.indexOf('--port');
-  if (portArgIndex !== -1 && process.argv[portArgIndex + 1]) {
-    const p = parseInt(process.argv[portArgIndex + 1], 10);
-    if (!isNaN(p)) return p;
-  }
-  if (process.env.PORT) {
-    const p = parseInt(process.env.PORT, 10);
-    if (!isNaN(p) && p !== 8080) return p;
-  }
-  return 3000;
+function parseValidPort(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const p = parseInt(raw.trim(), 10);
+  if (!Number.isFinite(p) || p < 1 || p > 65535) return null;
+  return p;
 }
 
-const PRIMARY_PORT = getPort();
-const USER_PORT = 3241;
+function getPort(): { port: number; source: string } {
+  const portArgIndex = process.argv.indexOf('--port');
+  if (portArgIndex !== -1 && process.argv[portArgIndex + 1]) {
+    const cliPort = parseValidPort(process.argv[portArgIndex + 1]);
+    if (cliPort !== null) return { port: cliPort, source: 'CLI --port' };
+  }
+
+  // Always honor PORT explicitly configured in .env / .env.local (including 8080)
+  const filePort = parseValidPort(envFilePortRaw);
+  if (filePort !== null) {
+    return { port: filePort, source: '.env' };
+  }
+
+  // Honor OS/shell PORT (except Cloud Run's injected 8080 during AI Studio dev preview)
+  const osPort = parseValidPort(process.env.PORT);
+  const isAiStudioDevPreview =
+    Boolean(process.env.K_SERVICE) && process.env.NODE_ENV !== 'production';
+  if (osPort !== null && !(isAiStudioDevPreview && osPort === 8080)) {
+    return { port: osPort, source: 'process.env.PORT' };
+  }
+
+  return { port: 3000, source: 'default' };
+}
+
+const { port: PRIMARY_PORT, source: PORT_SOURCE } = getPort();
 
 const app = express();
 
@@ -58,6 +73,12 @@ async function startServer() {
   const isProduction = process.env.NODE_ENV === 'production' || process.argv.includes('--production') || process.argv.includes('--prod');
 
   if (isProduction) {
+    app.use((req, res, next) => {
+      if (/\.db(-wal|-shm)?$/i.test(req.path)) {
+        return res.status(403).end();
+      }
+      next();
+    });
     app.use(express.static(path.resolve(__dirname, 'dist')));
     app.get('*', (_req, res) => {
       res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
@@ -76,22 +97,11 @@ async function startServer() {
     app.use(vite.middlewares);
   }
 
-  // 1. Listen on Primary Port (Port 3000 for AI Studio environment)
   httpServer.listen(PRIMARY_PORT, '0.0.0.0', () => {
-    console.log(`Council System server running on http://0.0.0.0:${PRIMARY_PORT}`);
+    console.log(
+      `Council System server running on http://0.0.0.0:${PRIMARY_PORT} (port source: ${PORT_SOURCE}, mode: ${isProduction ? 'production' : 'development'}, db: ${activeDbPath})`
+    );
   });
-
-  // 2. Also listen on port 3241 (user requested port) if different
-  if (PRIMARY_PORT !== USER_PORT) {
-    const userPortServer = http.createServer(app);
-    userPortServer.listen(USER_PORT, '0.0.0.0', () => {
-      console.log(`User requested port listener active on http://0.0.0.0:${USER_PORT}`);
-    }).on('error', (err: any) => {
-      if (err.code !== 'EADDRINUSE') {
-        console.warn(`Port ${USER_PORT} warning:`, err.message);
-      }
-    });
-  }
 }
 
 startServer();
