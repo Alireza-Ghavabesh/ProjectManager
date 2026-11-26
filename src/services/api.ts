@@ -1,4 +1,4 @@
-import { Position, User, UserGroup, DynamicField, ProjectType, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowDiagramLayout, WorkflowLog, WorkflowTrackingItem, ProjectStructure, StructurePositionNode, StructurePositionSummary, ProjectAttachment, SystemSetting, PasswordResetRequest, SmsRule, SmsLog, PublicSettings, UploadProgressInfo, UserNotification } from '../types';
+import { Position, User, UserGroup, DynamicField, ProjectType, CustomEntity, CustomEntityRecord, EntityFieldSchema, FieldFileValue, Project, ChatMessage, DashboardStats, Permission, Workflow, WorkflowDiagramLayout, WorkflowLog, WorkflowTrackingItem, ProjectStructure, StructurePositionNode, StructurePositionSummary, ProjectAttachment, SystemSetting, PasswordResetRequest, SmsRule, SmsLog, PublicSettings, UploadProgressInfo, UserNotification } from '../types';
 
 class ApiService {
   getToken(): string | null {
@@ -656,6 +656,192 @@ class ApiService {
       const data = await res.json();
       throw new Error(data.error || 'خطا در حذف فیلد');
     }
+  }
+
+  // Custom Entities & Entity Records
+  async getEntities(includeRecords = true): Promise<CustomEntity[]> {
+    const res = await fetch(`/api/entities?includeRecords=${includeRecords ? '1' : '0'}`, {
+      headers: this.getAuthHeader(),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.entities || [];
+  }
+
+  async createEntity(payload: {
+    title: string;
+    description?: string;
+    icon?: string;
+    fields: EntityFieldSchema[];
+    isActive?: boolean;
+  }): Promise<CustomEntity> {
+    const res = await fetch('/api/entities', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'خطا در ایجاد موجودیت جدید');
+    return data.entity;
+  }
+
+  async updateEntity(
+    id: string,
+    payload: {
+      title?: string;
+      description?: string;
+      icon?: string;
+      fields?: EntityFieldSchema[];
+      isActive?: boolean;
+    }
+  ): Promise<CustomEntity> {
+    const res = await fetch(`/api/entities/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'خطا در ویرایش موجودیت');
+    return data.entity;
+  }
+
+  async deleteEntity(id: string): Promise<void> {
+    const res = await fetch(`/api/entities/${id}`, {
+      method: 'DELETE',
+      headers: this.getAuthHeader(),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'خطا در حذف موجودیت');
+    }
+  }
+
+  async getEntityRecords(entityId: string): Promise<CustomEntityRecord[]> {
+    const res = await fetch(`/api/entities/${entityId}/records`, {
+      headers: this.getAuthHeader(),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.records || [];
+  }
+
+  async createEntityRecord(
+    entityId: string,
+    data: Record<string, any>,
+    displayLabel?: string
+  ): Promise<CustomEntityRecord> {
+    const res = await fetch(`/api/entities/${entityId}/records`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify({ data, displayLabel }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'خطا در ثبت رکورد موجودیت');
+    return json.record;
+  }
+
+  async updateEntityRecord(
+    entityId: string,
+    recordId: string,
+    data: Record<string, any>,
+    displayLabel?: string
+  ): Promise<CustomEntityRecord> {
+    const res = await fetch(`/api/entities/${entityId}/records/${recordId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...this.getAuthHeader() },
+      body: JSON.stringify({ data, displayLabel }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'خطا در ویرایش رکورد موجودیت');
+    return json.record;
+  }
+
+  async deleteEntityRecord(entityId: string, recordId: string): Promise<void> {
+    const res = await fetch(`/api/entities/${entityId}/records/${recordId}`, {
+      method: 'DELETE',
+      headers: this.getAuthHeader(),
+    });
+    if (!res.ok) {
+      const json = await res.json();
+      throw new Error(json.error || 'خطا در حذف رکورد موجودیت');
+    }
+  }
+
+  async uploadFieldFileStream(
+    file: File,
+    onProgress?: (progress: UploadProgressInfo) => void
+  ): Promise<FieldFileValue> {
+    const token = this.getToken();
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const targetUrl = `/api/field-files/stream?fileName=${encodeURIComponent(file.name)}`;
+      xhr.open('POST', targetUrl);
+      xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+      xhr.setRequestHeader('x-file-name', encodeURIComponent(file.name));
+      if (token) {
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      }
+
+      let lastTime = Date.now();
+      let lastLoaded = 0;
+      let calculatedSpeed = 0;
+
+      if (xhr.upload && onProgress) {
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable && event.total > 0) {
+            const now = Date.now();
+            const elapsed = (now - lastTime) / 1000;
+            if (elapsed >= 0.25) {
+              calculatedSpeed = Math.round((event.loaded - lastLoaded) / elapsed);
+              lastTime = now;
+              lastLoaded = event.loaded;
+            }
+            const percent = Math.min(100, Math.round((event.loaded / event.total) * 100));
+            onProgress({
+              percent,
+              loaded: event.loaded,
+              total: event.total,
+              speed: calculatedSpeed,
+            });
+          }
+        };
+      }
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            resolve(data.file);
+          } catch {
+            reject(new Error('خطا در تجزیه پاسخ سرور'));
+          }
+        } else {
+          try {
+            const err = JSON.parse(xhr.responseText);
+            reject(new Error(err.error || `خطا در بارگذاری فایل (${xhr.status})`));
+          } catch {
+            reject(new Error(`خطای آپلود (${xhr.status})`));
+          }
+        }
+      };
+
+      xhr.onerror = () => reject(new Error('خطای ارتباط با سرور در زمان آپلود فایل'));
+      xhr.send(file);
+    });
+  }
+
+  downloadFieldFile(fileId: string, fileName?: string): void {
+    const token = this.getToken();
+    const q = token ? `?token=${encodeURIComponent(token)}` : '';
+    const downloadUrl = `/api/field-files/${encodeURIComponent(fileId)}/download${q}`;
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    if (fileName) {
+      a.download = fileName;
+    }
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   }
 
   // Project Types & Field Linking

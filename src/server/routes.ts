@@ -66,6 +66,7 @@ function getCurrentUser(req: Request) {
 
 const EXPLICIT_ONLY_PERMISSIONS = new Set([
   'projects.manual_approve',
+  'projects.edit_workflow_vote',
   'project_list.view',
   'project_list.create',
   'project_list.edit',
@@ -2674,15 +2675,23 @@ apiRouter.post('/projects/:id/workflow-transition', (req: Request, res: Response
   );
   const currentStepNum = Number(project.currentStepOrder || 1);
 
-  if (!adminOverride && shouldLeaveAfterVote) {
+  if (!adminOverride) {
     const existingVote = db.prepare(`
       SELECT id FROM workflow_step_approvals
       WHERE projectId = ? AND stepOrder = ? AND userId = ?
     `).get(projectId, currentStepNum, currentUser.id);
     if (existingVote) {
-      return res.status(400).json({
-        error: 'رای شما قبلاً در این مرحله ثبت شده و پرونده از کارتابل شما خارج شده است.',
-      });
+      if (shouldLeaveAfterVote) {
+        return res.status(400).json({
+          error: 'رای شما قبلاً در این مرحله ثبت شده و پرونده از کارتابل شما خارج شده است.',
+        });
+      }
+      if (!hasPermission(currentUser, 'projects.edit_workflow_vote')) {
+        return res.status(403).json({
+          error: 'رای شما قبلاً در این مرحله ثبت شده است. پرونده در کارتابل شما می‌ماند اما بدون دسترسی «امکان ویرایش رای در کارتابل» امکان تغییر رای وجود ندارد.',
+          forbidden: true,
+        });
+      }
     }
   }
 
@@ -3736,11 +3745,146 @@ apiRouter.delete('/project-structures/:id/positions/:spId/users/:userId', (req: 
 // 5. DYNAMIC FIELDS (تعریف پویای فیلدها با کنترل سطح دسترسی)
 // --------------------------------------------------------------------------
 
+const VALID_DYNAMIC_FIELD_TYPES = new Set([
+  'number',
+  'currency',
+  'text',
+  'file',
+  'checkbox',
+  'select',
+  'multiselect',
+  'entity',
+  'entity_select',
+  'entity_multiselect',
+]);
+
+const ENTITY_BACKED_FIELD_TYPES = new Set(['entity', 'entity_select', 'entity_multiselect']);
+
+function sanitizeEntityFields(rawFields: any): Array<{
+  key: string;
+  label: string;
+  fieldType: string;
+  unit?: string;
+  options?: string[];
+  required?: boolean;
+  isPrimaryDisplay?: boolean;
+}> {
+  if (!Array.isArray(rawFields)) return [];
+  const usedKeys = new Set<string>();
+  return rawFields
+    .filter((f) => f && String(f.label || '').trim())
+    .map((f, idx) => {
+      const label = String(f.label).trim();
+      let baseKey = String(f.key || '')
+        .trim()
+        .replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '_')
+        .replace(/_+/g, '_');
+      if (!baseKey) baseKey = `attr_${idx + 1}`;
+      let key = baseKey;
+      let counter = 2;
+      while (usedKeys.has(key)) {
+        key = `${baseKey}_${counter++}`;
+      }
+      usedKeys.add(key);
+
+      const allowedTypes = new Set(['text', 'number', 'currency', 'checkbox', 'select', 'multiselect', 'file']);
+      const fieldType = allowedTypes.has(f.fieldType) ? f.fieldType : 'text';
+      const options = Array.isArray(f.options)
+        ? f.options.map((o: any) => String(o).trim()).filter(Boolean)
+        : [];
+      return {
+        key,
+        label,
+        fieldType,
+        unit: f.unit ? String(f.unit).trim() : '',
+        options,
+        required: Boolean(f.required),
+        isPrimaryDisplay: Boolean(f.isPrimaryDisplay),
+      };
+    });
+}
+
+function deriveEntityRecordLabel(
+  fields: Array<{ key: string; label: string; fieldType: string; isPrimaryDisplay?: boolean }>,
+  data: Record<string, any>,
+  explicitLabel?: string
+): string {
+  if (explicitLabel && String(explicitLabel).trim()) {
+    return String(explicitLabel).trim();
+  }
+  const primaryField = fields.find((f) => f.isPrimaryDisplay);
+  if (primaryField) {
+    const val = data[primaryField.key];
+    if (val !== undefined && val !== null && String(val).trim() !== '') {
+      return String(val).trim();
+    }
+  }
+  for (const f of fields) {
+    if (f.fieldType === 'file' || f.fieldType === 'checkbox') continue;
+    const val = data[f.key];
+    if (Array.isArray(val) && val.length > 0) return val.join('، ');
+    if (val !== undefined && val !== null && String(val).trim() !== '') {
+      return String(val).trim();
+    }
+  }
+  return `رکورد ${new Date().toLocaleDateString('fa-IR')}`;
+}
+
+function hydrateEntityRow(row: any, includeRecords = true) {
+  let fields: any[] = [];
+  try {
+    const parsed = JSON.parse(row.fieldsJson || '[]');
+    if (Array.isArray(parsed)) fields = parsed;
+  } catch {}
+  const recordRows = includeRecords
+    ? (db
+        .prepare(
+          `SELECT r.*, u.name as createdByName
+           FROM custom_entity_records r
+           LEFT JOIN users u ON r.createdById = u.id
+           WHERE r.entityId = ?
+           ORDER BY r.createdAt DESC`
+        )
+        .all(row.id) as any[])
+    : [];
+  const records = recordRows.map((r) => {
+    let data: Record<string, any> = {};
+    try {
+      data = JSON.parse(r.dataJson || '{}') || {};
+    } catch {}
+    return {
+      id: r.id,
+      entityId: r.entityId,
+      displayLabel: r.displayLabel,
+      data,
+      createdById: r.createdById,
+      createdByName: r.createdByName,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    };
+  });
+  const countRow = includeRecords
+    ? null
+    : (db.prepare('SELECT count(*) as cnt FROM custom_entity_records WHERE entityId = ?').get(row.id) as any);
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description || '',
+    icon: row.icon || 'Database',
+    fields,
+    isActive: row.isActive,
+    recordCount: includeRecords ? records.length : (countRow?.cnt || 0),
+    records: includeRecords ? records : undefined,
+    createdAt: row.createdAt,
+  };
+}
+
 apiRouter.get('/dynamic-fields', (_req: Request, res: Response) => {
   const fields = db.prepare(`
-    SELECT df.*, parentDf.name as parentName
+    SELECT df.*, parentDf.name as parentName, ce.title as entityTitle
     FROM dynamic_fields df
     LEFT JOIN dynamic_fields parentDf ON df.parentId = parentDf.id
+    LEFT JOIN custom_entities ce ON df.entityId = ce.id
     WHERE df.isActive = 1
     ORDER BY df.orderIndex ASC, df.name ASC
   `).all();
@@ -3755,9 +3899,35 @@ apiRouter.post('/dynamic-fields', (req: Request, res: Response) => {
     });
   }
 
-  const { name, key, fieldType, unit, defaultValue, optionsJson, required, category, icon, parentId, orderIndex } = req.body;
+  const {
+    name,
+    key,
+    fieldType,
+    unit,
+    defaultValue,
+    optionsJson,
+    entityId,
+    fieldConfigJson,
+    required,
+    category,
+    icon,
+    parentId,
+    orderIndex,
+  } = req.body;
   if (!name || !name.trim()) {
     return res.status(400).json({ error: 'نام فیلد الزامی است.' });
+  }
+
+  const normalizedType = VALID_DYNAMIC_FIELD_TYPES.has(fieldType) ? fieldType : 'number';
+
+  if (ENTITY_BACKED_FIELD_TYPES.has(normalizedType)) {
+    if (!entityId) {
+      return res.status(400).json({ error: 'برای فیلدهای از نوع موجودیت، انتخاب موجودیت مرتبط الزامی است.' });
+    }
+    const entityExists = db.prepare('SELECT id FROM custom_entities WHERE id = ?').get(entityId);
+    if (!entityExists) {
+      return res.status(400).json({ error: 'موجودیت انتخاب‌شده یافت نشد.' });
+    }
   }
 
   if (parentId) {
@@ -3775,18 +3945,39 @@ apiRouter.post('/dynamic-fields', (req: Request, res: Response) => {
   const maxOrder = db.prepare('SELECT MAX(orderIndex) as maxO FROM dynamic_fields').get() as any;
   const nextOrder = orderIndex !== undefined ? orderIndex : ((maxOrder?.maxO || 0) + 1);
 
+  const resolvedUnit =
+    unit !== undefined
+      ? unit
+      : normalizedType === 'currency'
+      ? 'تومان'
+      : normalizedType === 'number'
+      ? 'نفر'
+      : '';
+  const resolvedDefault =
+    defaultValue !== undefined
+      ? String(defaultValue)
+      : normalizedType === 'number'
+      ? '1'
+      : normalizedType === 'currency'
+      ? '0'
+      : normalizedType === 'checkbox'
+      ? 'false'
+      : '';
+
   try {
     db.prepare(`
-      INSERT INTO dynamic_fields (id, name, key, fieldType, unit, defaultValue, optionsJson, required, orderIndex, isActive, icon, category, parentId, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+      INSERT INTO dynamic_fields (id, name, key, fieldType, unit, defaultValue, optionsJson, entityId, fieldConfigJson, required, orderIndex, isActive, icon, category, parentId, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
     `).run(
       id,
       name.trim(),
       safeKey,
-      fieldType || 'number',
-      unit !== undefined ? unit : (fieldType === 'currency' ? 'تومان' : fieldType === 'text' || fieldType === 'select' ? '' : 'نفر'),
-      defaultValue !== undefined ? String(defaultValue) : (fieldType === 'text' || fieldType === 'select' ? '' : '1'),
+      normalizedType,
+      resolvedUnit,
+      resolvedDefault,
       optionsJson || '[]',
+      ENTITY_BACKED_FIELD_TYPES.has(normalizedType) ? entityId : null,
+      fieldConfigJson || '{}',
       required ? 1 : 0,
       nextOrder,
       icon || 'Users',
@@ -3796,9 +3987,10 @@ apiRouter.post('/dynamic-fields', (req: Request, res: Response) => {
     );
 
     const created = db.prepare(`
-      SELECT df.*, parentDf.name as parentName
+      SELECT df.*, parentDf.name as parentName, ce.title as entityTitle
       FROM dynamic_fields df
       LEFT JOIN dynamic_fields parentDf ON df.parentId = parentDf.id
+      LEFT JOIN custom_entities ce ON df.entityId = ce.id
       WHERE df.id = ?
     `).get(id);
     res.json({ success: true, field: created });
@@ -3863,9 +4055,42 @@ apiRouter.put('/dynamic-fields/:id', (req: Request, res: Response) => {
     return res.status(404).json({ error: 'فیلد مورد نظر یافت نشد.' });
   }
 
-  const { name, fieldType, unit, defaultValue, optionsJson, required, category, icon, parentId, orderIndex } = req.body;
+  const {
+    name,
+    fieldType,
+    unit,
+    defaultValue,
+    optionsJson,
+    entityId,
+    fieldConfigJson,
+    required,
+    category,
+    icon,
+    parentId,
+    orderIndex,
+  } = req.body;
   if (name !== undefined && !String(name).trim()) {
     return res.status(400).json({ error: 'نام فیلد نمی‌تواند خالی باشد.' });
+  }
+
+  const nextType =
+    fieldType !== undefined && VALID_DYNAMIC_FIELD_TYPES.has(fieldType)
+      ? fieldType
+      : existing.fieldType;
+
+  const nextEntityId =
+    entityId !== undefined
+      ? entityId || null
+      : existing.entityId || null;
+
+  if (ENTITY_BACKED_FIELD_TYPES.has(nextType)) {
+    if (!nextEntityId) {
+      return res.status(400).json({ error: 'برای فیلدهای از نوع موجودیت، انتخاب موجودیت مرتبط الزامی است.' });
+    }
+    const entityExists = db.prepare('SELECT id FROM custom_entities WHERE id = ?').get(nextEntityId);
+    if (!entityExists) {
+      return res.status(400).json({ error: 'موجودیت انتخاب‌شده یافت نشد.' });
+    }
   }
 
   if (parentId !== undefined && parentId !== null) {
@@ -3877,14 +4102,16 @@ apiRouter.put('/dynamic-fields/:id', (req: Request, res: Response) => {
 
   db.prepare(`
     UPDATE dynamic_fields
-    SET name = ?, fieldType = ?, unit = ?, defaultValue = ?, optionsJson = ?, required = ?, category = ?, icon = ?, parentId = ?, orderIndex = ?
+    SET name = ?, fieldType = ?, unit = ?, defaultValue = ?, optionsJson = ?, entityId = ?, fieldConfigJson = ?, required = ?, category = ?, icon = ?, parentId = ?, orderIndex = ?
     WHERE id = ?
   `).run(
     name !== undefined ? String(name).trim() : existing.name,
-    fieldType !== undefined ? fieldType : existing.fieldType,
+    nextType,
     unit !== undefined ? unit : existing.unit,
     defaultValue !== undefined ? String(defaultValue) : existing.defaultValue,
     optionsJson !== undefined ? optionsJson : existing.optionsJson,
+    ENTITY_BACKED_FIELD_TYPES.has(nextType) ? nextEntityId : null,
+    fieldConfigJson !== undefined ? fieldConfigJson : (existing.fieldConfigJson || '{}'),
     required !== undefined ? (required ? 1 : 0) : existing.required,
     category !== undefined ? category : existing.category,
     icon !== undefined ? icon : existing.icon,
@@ -3894,9 +4121,10 @@ apiRouter.put('/dynamic-fields/:id', (req: Request, res: Response) => {
   );
 
   const updated = db.prepare(`
-    SELECT df.*, parentDf.name as parentName
+    SELECT df.*, parentDf.name as parentName, ce.title as entityTitle
     FROM dynamic_fields df
     LEFT JOIN dynamic_fields parentDf ON df.parentId = parentDf.id
+    LEFT JOIN custom_entities ce ON df.entityId = ce.id
     WHERE df.id = ?
   `).get(id);
 
@@ -3917,6 +4145,322 @@ apiRouter.delete('/dynamic-fields/:id', (req: Request, res: Response) => {
     db.prepare('DELETE FROM dynamic_fields WHERE id = ?').run(id);
   });
   tx();
+  res.json({ success: true });
+});
+
+// --------------------------------------------------------------------------
+// 5.2. CUSTOM ENTITIES & ENTITY RECORDS (تعریف موجودیت‌ها و رکوردها)
+// --------------------------------------------------------------------------
+
+apiRouter.get('/entities', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) {
+    return res.status(401).json({ error: 'احراز هویت نشده است.' });
+  }
+  const includeRecords = req.query.includeRecords !== '0';
+  const rows = db.prepare('SELECT * FROM custom_entities ORDER BY createdAt DESC, title ASC').all() as any[];
+  const entities = rows.map((row) => hydrateEntityRow(row, includeRecords));
+  res.json({ entities });
+});
+
+apiRouter.post('/entities', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || !hasPermission(currentUser, 'projects.fields.create')) {
+    return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به تعریف موجودیت جدید نیستید.' });
+  }
+
+  const { title, description, icon, fields, isActive } = req.body;
+  if (!title || !String(title).trim()) {
+    return res.status(400).json({ error: 'عنوان موجودیت الزامی است.' });
+  }
+
+  const sanitizedFields = sanitizeEntityFields(fields);
+  if (sanitizedFields.length === 0) {
+    return res.status(400).json({ error: 'حداقل یک فیلد برای موجودیت تعریف کنید.' });
+  }
+
+  const id = `ent-${randomUUID().substring(0, 8)}`;
+  const now = new Date().toISOString();
+
+  try {
+    db.prepare(`
+      INSERT INTO custom_entities (id, title, description, icon, fieldsJson, isActive, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      String(title).trim(),
+      description ? String(description).trim() : '',
+      icon || 'Database',
+      JSON.stringify(sanitizedFields),
+      isActive === false ? 0 : 1,
+      now
+    );
+
+    const row = db.prepare('SELECT * FROM custom_entities WHERE id = ?').get(id) as any;
+    res.json({ success: true, entity: hydrateEntityRow(row, true) });
+  } catch (err: any) {
+    if (err.message && err.message.includes('UNIQUE')) {
+      return res.status(400).json({ error: 'موجودیتی با این عنوان قبلاً ثبت شده است.' });
+    }
+    res.status(500).json({ error: 'خطا در ایجاد موجودیت جدید.' });
+  }
+});
+
+apiRouter.put('/entities/:id', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || !hasPermission(currentUser, 'projects.fields.edit')) {
+    return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به ویرایش موجودیت‌ها نیستید.' });
+  }
+
+  const { id } = req.params;
+  const existing = db.prepare('SELECT * FROM custom_entities WHERE id = ?').get(id) as any;
+  if (!existing) {
+    return res.status(404).json({ error: 'موجودیت مورد نظر یافت نشد.' });
+  }
+
+  const { title, description, icon, fields, isActive } = req.body;
+  if (title !== undefined && !String(title).trim()) {
+    return res.status(400).json({ error: 'عنوان موجودیت نمی‌تواند خالی باشد.' });
+  }
+
+  let nextFieldsJson = existing.fieldsJson;
+  if (fields !== undefined) {
+    const sanitized = sanitizeEntityFields(fields);
+    if (sanitized.length === 0) {
+      return res.status(400).json({ error: 'موجودیت باید حداقل یک فیلد داشته باشد.' });
+    }
+    nextFieldsJson = JSON.stringify(sanitized);
+  }
+
+  try {
+    db.prepare(`
+      UPDATE custom_entities
+      SET title = ?, description = ?, icon = ?, fieldsJson = ?, isActive = ?
+      WHERE id = ?
+    `).run(
+      title !== undefined ? String(title).trim() : existing.title,
+      description !== undefined ? String(description).trim() : existing.description,
+      icon !== undefined ? icon : existing.icon,
+      nextFieldsJson,
+      isActive !== undefined ? (isActive ? 1 : 0) : existing.isActive,
+      id
+    );
+
+    const updated = db.prepare('SELECT * FROM custom_entities WHERE id = ?').get(id) as any;
+    res.json({ success: true, entity: hydrateEntityRow(updated, true) });
+  } catch (err: any) {
+    if (err.message && err.message.includes('UNIQUE')) {
+      return res.status(400).json({ error: 'موجودیت دیگری با این عنوان وجود دارد.' });
+    }
+    res.status(500).json({ error: 'خطا در ویرایش موجودیت.' });
+  }
+});
+
+apiRouter.delete('/entities/:id', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser || !hasPermission(currentUser, 'projects.fields.delete')) {
+    return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به حذف موجودیت‌ها نیستید.' });
+  }
+
+  const { id } = req.params;
+  const linkedFields = db
+    .prepare('SELECT name FROM dynamic_fields WHERE entityId = ? AND isActive = 1')
+    .all(id) as Array<{ name: string }>;
+  if (linkedFields.length > 0) {
+    const names = linkedFields.map((f) => `«${f.name}»`).join('، ');
+    return res.status(400).json({
+      error: `امکان حذف موجودیت وجود ندارد؛ این موجودیت به فیلدهای پویای ${names} متصل است. ابتدا اتصال فیلدها را تغییر دهید یا آن‌ها را حذف کنید.`,
+    });
+  }
+
+  db.prepare('DELETE FROM custom_entities WHERE id = ?').run(id);
+  res.json({ success: true });
+});
+
+apiRouter.get('/entities/:entityId/records', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) {
+    return res.status(401).json({ error: 'احراز هویت نشده است.' });
+  }
+  const { entityId } = req.params;
+  const rows = db
+    .prepare(
+      `SELECT r.*, u.name as createdByName
+       FROM custom_entity_records r
+       LEFT JOIN users u ON r.createdById = u.id
+       WHERE r.entityId = ?
+       ORDER BY r.createdAt DESC`
+    )
+    .all(entityId) as any[];
+  const records = rows.map((r) => {
+    let data: Record<string, any> = {};
+    try {
+      data = JSON.parse(r.dataJson || '{}') || {};
+    } catch {}
+    return {
+      id: r.id,
+      entityId: r.entityId,
+      displayLabel: r.displayLabel,
+      data,
+      createdById: r.createdById,
+      createdByName: r.createdByName,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    };
+  });
+  res.json({ records });
+});
+
+apiRouter.post('/entities/:entityId/records', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (
+    !currentUser ||
+    !hasPermission(currentUser, [
+      'projects.fields.create',
+      'projects.fields.edit',
+      'projects.create',
+      'project_list.create',
+      'projects.edit',
+      'project_list.edit',
+    ])
+  ) {
+    return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به ثبت رکورد برای موجودیت نیستید.' });
+  }
+
+  const { entityId } = req.params;
+  const entity = db.prepare('SELECT * FROM custom_entities WHERE id = ?').get(entityId) as any;
+  if (!entity) {
+    return res.status(404).json({ error: 'موجودیت مورد نظر یافت نشد.' });
+  }
+
+  let entityFields: any[] = [];
+  try {
+    entityFields = JSON.parse(entity.fieldsJson || '[]') || [];
+  } catch {}
+
+  const rawData = req.body.data && typeof req.body.data === 'object' ? req.body.data : {};
+  for (const ef of entityFields) {
+    if (ef.required) {
+      const val = rawData[ef.key];
+      const missing =
+        val === undefined ||
+        val === null ||
+        val === '' ||
+        (Array.isArray(val) && val.length === 0) ||
+        (ef.fieldType === 'file' && !val?.fileId);
+      if (missing) {
+        return res.status(400).json({ error: `تکمیل فیلد «${ef.label}» برای موجودیت «${entity.title}» الزامی است.` });
+      }
+    }
+  }
+
+  const id = `rec-${randomUUID().substring(0, 8)}`;
+  const now = new Date().toISOString();
+  const displayLabel = deriveEntityRecordLabel(entityFields, rawData, req.body.displayLabel);
+
+  db.prepare(`
+    INSERT INTO custom_entity_records (id, entityId, displayLabel, dataJson, createdById, createdAt, updatedAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(id, entityId, displayLabel, JSON.stringify(rawData), currentUser.id, now, now);
+
+  res.json({
+    success: true,
+    record: {
+      id,
+      entityId,
+      displayLabel,
+      data: rawData,
+      createdById: currentUser.id,
+      createdByName: currentUser.name,
+      createdAt: now,
+      updatedAt: now,
+    },
+  });
+});
+
+apiRouter.put('/entities/:entityId/records/:recordId', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (
+    !currentUser ||
+    !hasPermission(currentUser, [
+      'projects.fields.edit',
+      'projects.edit',
+      'project_list.edit',
+    ])
+  ) {
+    return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به ویرایش رکورد موجودیت نیستید.' });
+  }
+
+  const { entityId, recordId } = req.params;
+  const entity = db.prepare('SELECT * FROM custom_entities WHERE id = ?').get(entityId) as any;
+  if (!entity) {
+    return res.status(404).json({ error: 'موجودیت مورد نظر یافت نشد.' });
+  }
+
+  const existing = db
+    .prepare('SELECT * FROM custom_entity_records WHERE id = ? AND entityId = ?')
+    .get(recordId, entityId) as any;
+  if (!existing) {
+    return res.status(404).json({ error: 'رکورد مورد نظر یافت نشد.' });
+  }
+
+  let entityFields: any[] = [];
+  try {
+    entityFields = JSON.parse(entity.fieldsJson || '[]') || [];
+  } catch {}
+
+  const rawData =
+    req.body.data && typeof req.body.data === 'object'
+      ? req.body.data
+      : JSON.parse(existing.dataJson || '{}');
+  for (const ef of entityFields) {
+    if (ef.required) {
+      const val = rawData[ef.key];
+      const missing =
+        val === undefined ||
+        val === null ||
+        val === '' ||
+        (Array.isArray(val) && val.length === 0) ||
+        (ef.fieldType === 'file' && !val?.fileId);
+      if (missing) {
+        return res.status(400).json({ error: `تکمیل فیلد «${ef.label}» الزامی است.` });
+      }
+    }
+  }
+
+  const now = new Date().toISOString();
+  const displayLabel = deriveEntityRecordLabel(entityFields, rawData, req.body.displayLabel);
+
+  db.prepare(`
+    UPDATE custom_entity_records
+    SET displayLabel = ?, dataJson = ?, updatedAt = ?
+    WHERE id = ? AND entityId = ?
+  `).run(displayLabel, JSON.stringify(rawData), now, recordId, entityId);
+
+  res.json({
+    success: true,
+    record: {
+      id: recordId,
+      entityId,
+      displayLabel,
+      data: rawData,
+      createdById: existing.createdById,
+      createdAt: existing.createdAt,
+      updatedAt: now,
+    },
+  });
+});
+
+apiRouter.delete('/entities/:entityId/records/:recordId', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (
+    !currentUser ||
+    !hasPermission(currentUser, ['projects.fields.delete', 'projects.fields.edit'])
+  ) {
+    return res.status(403).json({ error: 'عدم دسترسی: شما مجاز به حذف رکورد موجودیت نیستید.' });
+  }
+  const { entityId, recordId } = req.params;
+  db.prepare('DELETE FROM custom_entity_records WHERE id = ? AND entityId = ?').run(recordId, entityId);
   res.json({ success: true });
 });
 
@@ -5146,6 +5690,107 @@ apiRouter.get('/attachments/:id/download', (req: Request, res: Response) => {
   }
 
   res.status(404).json({ error: 'داده‌های فایل پیوست در سرور یافت نشد.' });
+});
+
+// Upload & Download endpoints for dynamic/entity file fields (independent of an existing projectId)
+apiRouter.post('/field-files/stream', async (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) {
+    return res.status(401).json({ error: 'احراز هویت نشده است.' });
+  }
+
+  const rawFileName = (req.query.fileName as string) || (req.headers['x-file-name'] as string) || 'field-file.dat';
+  let fileName = rawFileName;
+  try {
+    fileName = decodeURIComponent(rawFileName);
+  } catch {}
+  const fileType = (req.headers['content-type'] as string) || 'application/octet-stream';
+
+  const maxSetting = db.prepare("SELECT value FROM system_settings WHERE key = 'max_file_size_mb'").get() as any;
+  const maxMb = parseInt(maxSetting?.value || '1024', 10);
+  const maxBytes = maxMb * 1024 * 1024;
+
+  const headerContentLength = parseInt(req.headers['content-length'] || '0', 10);
+  if (headerContentLength > maxBytes) {
+    const sizeDisplay = (headerContentLength / (1024 * 1024)).toFixed(1);
+    const maxDisplay = maxMb >= 1024 ? `${(maxMb / 1024).toFixed(1)} گیگابایت` : `${maxMb} مگابایت`;
+    return res.status(413).json({
+      error: `حجم فایل ارسالی (${sizeDisplay} مگابایت) بیش از سقف مجاز سیستم (${maxDisplay}) است.`,
+    });
+  }
+
+  const ext = path.extname(path.basename(fileName)) || '';
+  const id = `ff-${randomUUID().substring(0, 10)}`;
+  const diskFileName = `${id}${ext}`;
+  const diskFilePath = path.join(uploadsDir, diskFileName);
+
+  try {
+    let bytesWritten = 0;
+    let limitExceeded = false;
+    const fileWriteStream = fs.createWriteStream(diskFilePath);
+
+    req.on('data', (chunk) => {
+      bytesWritten += chunk.length;
+      if (bytesWritten > maxBytes && !limitExceeded) {
+        limitExceeded = true;
+        fileWriteStream.destroy();
+        try { if (fs.existsSync(diskFilePath)) fs.unlinkSync(diskFilePath); } catch (e) {}
+      }
+    });
+
+    await pipeline(req, fileWriteStream);
+
+    if (limitExceeded) {
+      const maxDisplay = maxMb >= 1024 ? `${(maxMb / 1024).toFixed(1)} گیگابایت` : `${maxMb} مگابایت`;
+      return res.status(413).json({
+        error: `حجم فایل ارسالی از سقف مجاز سیستم (${maxDisplay}) فراتر رفت.`,
+      });
+    }
+
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO field_files (id, fileName, fileSize, fileType, filePath, uploadedBy, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, fileName.trim(), bytesWritten, fileType, diskFileName, currentUser.id, now);
+
+    res.json({
+      success: true,
+      file: {
+        fileId: id,
+        fileName: fileName.trim(),
+        fileSize: bytesWritten,
+        fileType,
+      },
+    });
+  } catch (err: any) {
+    try { if (fs.existsSync(diskFilePath)) fs.unlinkSync(diskFilePath); } catch (e) {}
+    res.status(500).json({ error: 'خطا در ذخیره‌سازی فایل فیلد.' });
+  }
+});
+
+apiRouter.get('/field-files/:id/download', (req: Request, res: Response) => {
+  const currentUser = getCurrentUser(req);
+  if (!currentUser) {
+    return res.status(401).json({ error: 'احراز هویت نشده است.' });
+  }
+  const { id } = req.params;
+  const row = db.prepare('SELECT * FROM field_files WHERE id = ?').get(id) as any;
+  if (!row) {
+    return res.status(404).json({ error: 'فایل مورد نظر یافت نشد.' });
+  }
+  const fullPath = path.resolve(uploadsDir, row.filePath);
+  if (!fullPath.startsWith(uploadsDir) || !fs.existsSync(fullPath)) {
+    return res.status(404).json({ error: 'فایل در سرور یافت نشد.' });
+  }
+  try {
+    const stat = fs.statSync(fullPath);
+    res.setHeader('Content-Type', row.fileType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(row.fileName)}"`);
+    res.setHeader('Content-Length', stat.size);
+    fs.createReadStream(fullPath).pipe(res);
+  } catch {
+    res.status(500).json({ error: 'خطا در خواندن فایل.' });
+  }
 });
 
 // Binary Streaming Upload endpoint (supports huge files up to 10GB without memory buffer)

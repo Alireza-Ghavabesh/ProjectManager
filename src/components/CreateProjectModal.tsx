@@ -1,5 +1,16 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { DynamicField, ProjectType, Project, ProjectAttachment, Workflow, UploadProgressInfo, User } from '../types';
+import {
+  DynamicField,
+  ProjectType,
+  CustomEntity,
+  CustomEntityRecord,
+  FieldFileValue,
+  Project,
+  ProjectAttachment,
+  Workflow,
+  UploadProgressInfo,
+  User,
+} from '../types';
 import { api, formatFileSize } from '../services/api';
 import { ProjectAttachments } from './ProjectAttachments';
 import { PersianDatePicker } from './PersianDatePicker';
@@ -11,13 +22,13 @@ import {
   getDefaultDeliveryDateJalali,
 } from '../utils/formatters';
 import { hasPerm } from '../utils/permissions';
-import { 
-  X, 
-  Coins, 
-  FileText, 
-  Minus, 
-  Plus, 
-  Layers, 
+import {
+  X,
+  Coins,
+  FileText,
+  Minus,
+  Plus,
+  Layers,
   Users,
   CheckCircle2,
   Paperclip,
@@ -26,12 +37,17 @@ import {
   File,
   GitBranch,
   RefreshCw,
-  FolderKanban
+  FolderKanban,
+  Database,
+  Download,
+  Check,
 } from 'lucide-react';
 
 interface CreateProjectModalProps {
   dynamicFields: DynamicField[];
   projectTypes?: ProjectType[];
+  entities?: CustomEntity[];
+  onEntitiesUpdated?: () => void;
   currentUser?: User | null;
   onClose: () => void;
   onSuccess: () => void;
@@ -42,12 +58,25 @@ interface CreateProjectModalProps {
 export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   dynamicFields,
   projectTypes = [],
+  entities = [],
+  onEntitiesUpdated,
   currentUser,
   onClose,
   onSuccess,
   editProject,
   workflows = [],
 }) => {
+  const [availableEntities, setAvailableEntities] = useState<CustomEntity[]>(entities);
+  useEffect(() => {
+    setAvailableEntities(entities);
+  }, [entities]);
+  useEffect(() => {
+    if (entities.length === 0) {
+      api.getEntities().then((ents) => {
+        if (ents.length > 0) setAvailableEntities(ents);
+      }).catch(() => {});
+    }
+  }, []);
   const [title, setTitle] = useState(editProject?.title || '');
   const [code, setCode] = useState(
     editProject?.code || `PRJ-${getTodayJalali().year}-${Math.floor(10 + Math.random() * 90)}`
@@ -179,14 +208,25 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   const [requirements, setRequirements] = useState<Record<string, any>>(() => {
     const initial: Record<string, any> = {};
     for (const f of dynamicFields) {
-      const defVal =
-        f.defaultValue !== undefined && f.defaultValue !== null && f.defaultValue !== ''
-          ? String(f.defaultValue)
-          : f.fieldType === 'currency'
-          ? '0'
-          : f.fieldType === 'text' || f.fieldType === 'select'
-          ? ''
-          : '1';
+      let defVal: any;
+      if (f.fieldType === 'checkbox') {
+        defVal = f.defaultValue === 'true';
+      } else if (f.fieldType === 'multiselect' || f.fieldType === 'entity_multiselect') {
+        defVal = [];
+      } else if (f.fieldType === 'file' || f.fieldType === 'entity_select') {
+        defVal = null;
+      } else if (f.fieldType === 'entity') {
+        defVal = {};
+      } else {
+        defVal =
+          f.defaultValue !== undefined && f.defaultValue !== null && f.defaultValue !== ''
+            ? String(f.defaultValue)
+            : f.fieldType === 'currency'
+            ? '0'
+            : f.fieldType === 'text' || f.fieldType === 'select'
+            ? ''
+            : '1';
+      }
       initial[f.key] =
         editProject?.requirements && editProject.requirements[f.key] !== undefined
           ? editProject.requirements[f.key]
@@ -197,6 +237,18 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     }
     return initial;
   });
+
+  // Field-level file upload & quick entity record creation state
+  const [uploadingFieldKey, setUploadingFieldKey] = useState<string | null>(null);
+  const [quickRecordState, setQuickRecordState] = useState<{
+    fieldKey: string;
+    fieldMode: 'entity_select' | 'entity_multiselect';
+    entity: CustomEntity;
+    data: Record<string, any>;
+    saving: boolean;
+    error: string;
+  } | null>(null);
+  const [quickRecordUploadingAttr, setQuickRecordUploadingAttr] = useState<string | null>(null);
 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [existingAttachments, setExistingAttachments] = useState<ProjectAttachment[]>(
@@ -239,11 +291,94 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     return `${maxFileSizeMb} مگابایت`;
   };
 
-  const handleRequirementChange = (key: string, value: string) => {
+  const handleRequirementChange = (key: string, value: any) => {
     setRequirements((prev) => ({
       ...prev,
       [key]: value,
     }));
+  };
+
+  const handleFieldFileUpload = async (fieldKey: string, file: File, subAttrKey?: string) => {
+    const tokenKey = subAttrKey ? `${fieldKey}::${subAttrKey}` : fieldKey;
+    setUploadingFieldKey(tokenKey);
+    setError('');
+    try {
+      const uploaded: FieldFileValue = await api.uploadFieldFileStream(file);
+      if (subAttrKey) {
+        setRequirements((prev) => ({
+          ...prev,
+          [fieldKey]: {
+            ...(typeof prev[fieldKey] === 'object' && prev[fieldKey] ? prev[fieldKey] : {}),
+            [subAttrKey]: uploaded,
+          },
+        }));
+      } else {
+        handleRequirementChange(fieldKey, uploaded);
+      }
+    } catch (err: any) {
+      setError(err.message || 'خطا در آپلود فایل فیلد');
+    } finally {
+      setUploadingFieldKey(null);
+    }
+  };
+
+  const openQuickEntityRecordModal = (
+    fieldKey: string,
+    fieldMode: 'entity_select' | 'entity_multiselect',
+    entity: CustomEntity
+  ) => {
+    const initial: Record<string, any> = {};
+    for (const ef of entity.fields || []) {
+      initial[ef.key] =
+        ef.fieldType === 'checkbox'
+          ? false
+          : ef.fieldType === 'multiselect'
+          ? []
+          : ef.fieldType === 'file'
+          ? null
+          : '';
+    }
+    setQuickRecordState({
+      fieldKey,
+      fieldMode,
+      entity,
+      data: initial,
+      saving: false,
+      error: '',
+    });
+  };
+
+  const handleSaveQuickEntityRecord = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickRecordState) return;
+    setQuickRecordState((prev) => (prev ? { ...prev, saving: true, error: '' } : prev));
+    try {
+      const created = await api.createEntityRecord(quickRecordState.entity.id, quickRecordState.data);
+      const updatedEntities = await api.getEntities().catch(() => null);
+      if (updatedEntities) setAvailableEntities(updatedEntities);
+      if (onEntitiesUpdated) onEntitiesUpdated();
+
+      const snapshot = {
+        recordId: created.id,
+        displayLabel: created.displayLabel,
+        data: created.data,
+        entityId: quickRecordState.entity.id,
+        entityTitle: quickRecordState.entity.title,
+      };
+      if (quickRecordState.fieldMode === 'entity_select') {
+        handleRequirementChange(quickRecordState.fieldKey, snapshot);
+      } else {
+        const curArr = Array.isArray(requirements[quickRecordState.fieldKey])
+          ? requirements[quickRecordState.fieldKey]
+          : [];
+        handleRequirementChange(quickRecordState.fieldKey, [...curArr, snapshot]);
+      }
+      setQuickRecordState(null);
+    } catch (err: any) {
+      setQuickRecordState((prev) =>
+        prev ? { ...prev, saving: false, error: err.message || 'خطا در ثبت رکورد' } : prev
+      );
+    }
   };
 
   const handleIncrement = (key: string) => {
@@ -284,6 +419,58 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     if (!title.trim()) {
       setError('نام پروژه الزامی است.');
       return;
+    }
+
+    // Validate required dynamic fields
+    for (const f of displayedDynamicFields) {
+      if (!f.required) continue;
+      const val = requirements[f.key];
+      if (f.fieldType === 'file') {
+        if (!val || !val.fileId) {
+          setError(`آپلود فایل برای فیلد الزامی «${f.name}» ضروری است.`);
+          return;
+        }
+      } else if (f.fieldType === 'checkbox') {
+        if (val !== true) {
+          setError(`تایید/انتخاب چک‌باکس «${f.name}» الزامی است.`);
+          return;
+        }
+      } else if (f.fieldType === 'multiselect' || f.fieldType === 'entity_multiselect') {
+        if (!Array.isArray(val) || val.length === 0) {
+          setError(`انتخاب حداقل یک مورد برای فیلد «${f.name}» الزامی است.`);
+          return;
+        }
+      } else if (f.fieldType === 'entity_select') {
+        if (!val || !val.recordId) {
+          setError(`انتخاب یک رکورد برای فیلد «${f.name}» الزامی است.`);
+          return;
+        }
+      } else if (f.fieldType === 'entity') {
+        const ent = availableEntities.find((en) => en.id === f.entityId);
+        const obj = val && typeof val === 'object' ? val : {};
+        if (ent) {
+          for (const ef of ent.fields || []) {
+            if (ef.required) {
+              const sv = obj[ef.key];
+              const missing =
+                sv === undefined ||
+                sv === null ||
+                sv === '' ||
+                (Array.isArray(sv) && sv.length === 0) ||
+                (ef.fieldType === 'file' && !sv?.fileId);
+              if (missing) {
+                setError(`تکمیل «${ef.label}» در بخش «${f.name}» الزامی است.`);
+                return;
+              }
+            }
+          }
+        }
+      } else {
+        if (val === undefined || val === null || String(val).trim() === '') {
+          setError(`تکمیل فیلد الزامی «${f.name}» ضروری است.`);
+          return;
+        }
+      }
     }
 
     setLoading(true);
@@ -642,14 +829,15 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
               const rootFields = buildFieldTree(null);
 
               const renderFieldInput = (field: DynamicField) => {
-                const rawVal = requirements[field.key] ?? '';
+                const rawVal = requirements[field.key];
+
                 if (field.fieldType === 'currency') {
                   return (
                     <div className="space-y-1">
                       <div className="relative flex items-center bg-white border border-slate-200/90 rounded-xl px-2.5 py-1.5 shadow-2xs focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/10">
                         <input
                           type="text"
-                          value={formatCurrencyInput(String(rawVal))}
+                          value={formatCurrencyInput(String(rawVal ?? ''))}
                           onChange={(e) => handleRequirementChange(field.key, formatCurrencyInput(e.target.value))}
                           placeholder="0"
                           className="w-full text-center font-bold text-xs sm:text-sm bg-transparent text-slate-900 focus:outline-none"
@@ -658,7 +846,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                           <span className="text-[10px] text-slate-400 shrink-0 mr-1">{field.unit}</span>
                         )}
                       </div>
-                      {String(rawVal).replace(/\D/g, '') !== '' && String(rawVal) !== '0' && (
+                      {String(rawVal ?? '').replace(/\D/g, '') !== '' && String(rawVal) !== '0' && (
                         <div className="text-[10px] text-amber-700 font-medium truncate text-center">
                           {formatBudgetDisplay(String(rawVal))}
                         </div>
@@ -666,6 +854,73 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                     </div>
                   );
                 }
+
+                if (field.fieldType === 'checkbox') {
+                  const checked = rawVal === true || rawVal === 'true';
+                  return (
+                    <label
+                      className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl border cursor-pointer transition ${
+                        checked
+                          ? 'bg-teal-50 border-teal-300 text-teal-900'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="text-xs font-bold">{checked ? 'بله (فعال)' : 'خیر'}</span>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => handleRequirementChange(field.key, e.target.checked)}
+                        className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500"
+                      />
+                    </label>
+                  );
+                }
+
+                if (field.fieldType === 'file') {
+                  const fileVal = rawVal as FieldFileValue | null;
+                  const isUploadingThis = uploadingFieldKey === field.key;
+                  return (
+                    <div className="space-y-1.5">
+                      {fileVal?.fileId ? (
+                        <div className="flex items-center justify-between gap-1.5 px-2.5 py-2 rounded-xl bg-sky-50 border border-sky-200">
+                          <button
+                            type="button"
+                            onClick={() => api.downloadFieldFile(fileVal.fileId, fileVal.fileName)}
+                            className="inline-flex items-center gap-1.5 text-[11px] font-bold text-sky-800 hover:underline truncate cursor-pointer min-w-0"
+                            title={fileVal.fileName}
+                          >
+                            <Download className="w-3.5 h-3.5 shrink-0" />
+                            <span className="truncate">{fileVal.fileName}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRequirementChange(field.key, null)}
+                            className="p-1 rounded-lg text-rose-500 hover:bg-rose-100 shrink-0 cursor-pointer"
+                            title="حذف فایل"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <label className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-dashed border-sky-300 bg-white hover:bg-sky-50/70 text-xs font-bold text-sky-700 cursor-pointer transition">
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>{isUploadingThis ? 'در حال آپلود...' : 'انتخاب و آپلود فایل'}</span>
+                          <input
+                            type="file"
+                            className="hidden"
+                            disabled={isUploadingThis}
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) handleFieldFileUpload(field.key, file);
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+                      )}
+                    </div>
+                  );
+                }
+
                 if (field.fieldType === 'select') {
                   let opts: string[] = [];
                   try {
@@ -674,7 +929,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                   } catch {}
                   return (
                     <select
-                      value={String(rawVal)}
+                      value={String(rawVal ?? '')}
                       onChange={(e) => handleRequirementChange(field.key, e.target.value)}
                       className="w-full rounded-xl bg-white border border-slate-200/90 px-2.5 py-2 text-xs font-bold text-slate-800 focus:outline-none focus:border-indigo-500 shadow-2xs"
                     >
@@ -687,11 +942,413 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                     </select>
                   );
                 }
+
+                if (field.fieldType === 'multiselect') {
+                  let opts: string[] = [];
+                  try {
+                    const parsed = JSON.parse(field.optionsJson || '[]');
+                    if (Array.isArray(parsed)) opts = parsed;
+                  } catch {}
+                  const selectedArr: string[] = Array.isArray(rawVal) ? rawVal : [];
+                  return (
+                    <div className="flex flex-wrap gap-1.5 p-2 rounded-xl bg-white border border-slate-200/90 max-h-32 overflow-y-auto">
+                      {opts.length === 0 ? (
+                        <span className="text-[11px] text-slate-400">گزینه‌ای تعریف نشده</span>
+                      ) : (
+                        opts.map((opt) => {
+                          const checked = selectedArr.includes(opt);
+                          return (
+                            <label
+                              key={opt}
+                              className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-semibold cursor-pointer transition ${
+                                checked
+                                  ? 'bg-purple-600 text-white border-purple-600'
+                                  : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-purple-50'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => {
+                                  const next = checked
+                                    ? selectedArr.filter((x) => x !== opt)
+                                    : [...selectedArr, opt];
+                                  handleRequirementChange(field.key, next);
+                                }}
+                                className="hidden"
+                              />
+                              {checked && <Check className="w-3 h-3" />}
+                              <span>{opt}</span>
+                            </label>
+                          );
+                        })
+                      )}
+                    </div>
+                  );
+                }
+
+                if (field.fieldType === 'entity') {
+                  const entity = availableEntities.find((en) => en.id === field.entityId);
+                  if (!entity) {
+                    return (
+                      <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-2.5 py-2">
+                        موجودیت متصل یافت نشد.
+                      </div>
+                    );
+                  }
+                  const objVal: Record<string, any> =
+                    rawVal && typeof rawVal === 'object' ? rawVal : {};
+                  const setSubVal = (attrKey: string, val: any) => {
+                    handleRequirementChange(field.key, {
+                      ...objVal,
+                      _entityId: entity.id,
+                      _entityTitle: entity.title,
+                      [attrKey]: val,
+                    });
+                  };
+                  const recs = entity.records || [];
+
+                  return (
+                    <div className="space-y-2.5">
+                      {recs.length > 0 && (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <select
+                            value=""
+                            onChange={(e) => {
+                              const rec = recs.find((r) => r.id === e.target.value);
+                              if (rec) {
+                                handleRequirementChange(field.key, {
+                                  ...rec.data,
+                                  _entityId: entity.id,
+                                  _entityTitle: entity.title,
+                                  _sourceRecordId: rec.id,
+                                });
+                              }
+                            }}
+                            className="rounded-lg bg-cyan-50 border border-cyan-200 px-2.5 py-1 text-[11px] font-bold text-cyan-900 focus:outline-none"
+                          >
+                            <option value="">پر کردن سریع از رکوردهای «{entity.title}»...</option>
+                            {recs.map((r) => (
+                              <option key={r.id} value={r.id}>
+                                {r.displayLabel}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                        {(entity.fields || []).map((ef) => {
+                          const sv = objVal[ef.key];
+                          const uploadToken = `${field.key}::${ef.key}`;
+                          return (
+                            <div
+                              key={ef.key}
+                              className="p-2 rounded-xl bg-white border border-cyan-200/80 space-y-1"
+                            >
+                              <div className="flex items-center justify-between gap-1 text-[11px] font-bold text-slate-700">
+                                <span>
+                                  {ef.label}
+                                  {ef.required && <span className="text-rose-500 mr-0.5">*</span>}
+                                </span>
+                                {ef.unit && (
+                                  <span className="text-[10px] text-slate-400 font-normal">{ef.unit}</span>
+                                )}
+                              </div>
+
+                              {ef.fieldType === 'checkbox' ? (
+                                <label className="flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer py-1">
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(sv)}
+                                    onChange={(e) => setSubVal(ef.key, e.target.checked)}
+                                    className="w-3.5 h-3.5 rounded text-cyan-600"
+                                  />
+                                  <span>{sv ? 'بله' : 'خیر'}</span>
+                                </label>
+                              ) : ef.fieldType === 'currency' ? (
+                                <input
+                                  type="text"
+                                  value={formatCurrencyInput(String(sv ?? ''))}
+                                  onChange={(e) =>
+                                    setSubVal(ef.key, formatCurrencyInput(e.target.value))
+                                  }
+                                  placeholder="0"
+                                  className="w-full rounded-lg bg-slate-50 border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-900 focus:outline-none focus:border-cyan-500"
+                                />
+                              ) : ef.fieldType === 'number' ? (
+                                <input
+                                  type="number"
+                                  value={String(sv ?? '')}
+                                  onChange={(e) => setSubVal(ef.key, e.target.value)}
+                                  className="w-full rounded-lg bg-slate-50 border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-900 focus:outline-none focus:border-cyan-500"
+                                />
+                              ) : ef.fieldType === 'select' ? (
+                                <select
+                                  value={String(sv ?? '')}
+                                  onChange={(e) => setSubVal(ef.key, e.target.value)}
+                                  className="w-full rounded-lg bg-slate-50 border border-slate-200 px-2 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-cyan-500"
+                                >
+                                  <option value="">انتخاب...</option>
+                                  {(ef.options || []).map((o) => (
+                                    <option key={o} value={o}>
+                                      {o}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : ef.fieldType === 'multiselect' ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {(ef.options || []).map((o) => {
+                                    const arr: string[] = Array.isArray(sv) ? sv : [];
+                                    const chk = arr.includes(o);
+                                    return (
+                                      <label
+                                        key={o}
+                                        className={`px-1.5 py-0.5 rounded border text-[10px] cursor-pointer ${
+                                          chk
+                                            ? 'bg-cyan-600 text-white border-cyan-600'
+                                            : 'bg-slate-50 text-slate-700 border-slate-200'
+                                        }`}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={chk}
+                                          onChange={() =>
+                                            setSubVal(
+                                              ef.key,
+                                              chk ? arr.filter((x) => x !== o) : [...arr, o]
+                                            )
+                                          }
+                                          className="hidden"
+                                        />
+                                        {o}
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              ) : ef.fieldType === 'file' ? (
+                                (sv as FieldFileValue)?.fileId ? (
+                                  <div className="flex items-center justify-between gap-1 text-[10px] bg-sky-50 px-2 py-1 rounded border border-sky-200">
+                                    <span className="truncate font-bold text-sky-800">{sv.fileName}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setSubVal(ef.key, null)}
+                                      className="text-rose-500 cursor-pointer"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <label className="flex items-center justify-center gap-1 py-1 px-2 rounded border border-dashed border-sky-300 text-[10px] font-bold text-sky-700 cursor-pointer hover:bg-sky-50">
+                                    <Upload className="w-3 h-3" />
+                                    <span>
+                                      {uploadingFieldKey === uploadToken ? 'در حال آپلود...' : 'آپلود فایل'}
+                                    </span>
+                                    <input
+                                      type="file"
+                                      className="hidden"
+                                      onChange={(e) => {
+                                        const file = e.target.files?.[0];
+                                        if (file) handleFieldFileUpload(field.key, file, ef.key);
+                                        e.target.value = '';
+                                      }}
+                                    />
+                                  </label>
+                                )
+                              ) : (
+                                <input
+                                  type="text"
+                                  value={String(sv ?? '')}
+                                  onChange={(e) => setSubVal(ef.key, e.target.value)}
+                                  placeholder={ef.label}
+                                  className="w-full rounded-lg bg-slate-50 border border-slate-200 px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-cyan-500"
+                                />
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (field.fieldType === 'entity_select') {
+                  const entity = availableEntities.find((en) => en.id === field.entityId);
+                  if (!entity) {
+                    return (
+                      <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-2.5 py-2">
+                        موجودیت متصل یافت نشد.
+                      </div>
+                    );
+                  }
+                  const records = entity.records || [];
+                  const selectedId =
+                    rawVal && typeof rawVal === 'object' ? rawVal.recordId : String(rawVal || '');
+                  const selectedRec =
+                    records.find((r) => r.id === selectedId) ||
+                    (rawVal && typeof rawVal === 'object' && rawVal.recordId ? rawVal : null);
+
+                  return (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <select
+                          value={selectedId || ''}
+                          onChange={(e) => {
+                            const rec = records.find((r) => r.id === e.target.value);
+                            if (!rec) {
+                              handleRequirementChange(field.key, null);
+                            } else {
+                              handleRequirementChange(field.key, {
+                                recordId: rec.id,
+                                displayLabel: rec.displayLabel,
+                                data: rec.data,
+                                entityId: entity.id,
+                                entityTitle: entity.title,
+                              });
+                            }
+                          }}
+                          className="w-full rounded-xl bg-white border border-blue-200 px-2.5 py-2 text-xs font-bold text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs"
+                        >
+                          <option value="">انتخاب {entity.title}...</option>
+                          {records.map((rec) => (
+                            <option key={rec.id} value={rec.id}>
+                              {rec.displayLabel}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => openQuickEntityRecordModal(field.key, 'entity_select', entity)}
+                          className="p-2 rounded-xl bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 text-cyan-800 shrink-0 cursor-pointer"
+                          title={`افزودن رکورد جدید به «${entity.title}»`}
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      {selectedRec && (
+                        <div className="p-2 rounded-xl bg-blue-50/60 border border-blue-200/80 flex flex-wrap gap-1.5">
+                          {(entity.fields || []).map((ef) => {
+                            const val = selectedRec.data?.[ef.key];
+                            if (val === undefined || val === null || val === '') return null;
+                            const disp =
+                              ef.fieldType === 'currency'
+                                ? formatBudgetDisplay(String(val))
+                                : ef.fieldType === 'checkbox'
+                                ? val
+                                  ? 'بله'
+                                  : 'خیر'
+                                : ef.fieldType === 'file' && val?.fileName
+                                ? val.fileName
+                                : Array.isArray(val)
+                                ? val.join('، ')
+                                : `${val}${ef.unit ? ` ${ef.unit}` : ''}`;
+                            return (
+                              <span
+                                key={ef.key}
+                                className="text-[10px] px-2 py-0.5 rounded bg-white border border-blue-200/70 text-slate-700"
+                              >
+                                <span className="text-slate-500">{ef.label}: </span>
+                                <strong className="text-blue-900">{disp}</strong>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
+                if (field.fieldType === 'entity_multiselect') {
+                  const entity = availableEntities.find((en) => en.id === field.entityId);
+                  if (!entity) {
+                    return (
+                      <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-2.5 py-2">
+                        موجودیت متصل یافت نشد.
+                      </div>
+                    );
+                  }
+                  const records = entity.records || [];
+                  const selectedList: Array<any> = Array.isArray(rawVal) ? rawVal : [];
+                  const selectedIds = new Set(
+                    selectedList.map((item) => (typeof item === 'string' ? item : item?.recordId)).filter(Boolean)
+                  );
+
+                  const toggleRecord = (rec: CustomEntityRecord) => {
+                    if (selectedIds.has(rec.id)) {
+                      handleRequirementChange(
+                        field.key,
+                        selectedList.filter((item) =>
+                          (typeof item === 'string' ? item : item?.recordId) !== rec.id
+                        )
+                      );
+                    } else {
+                      handleRequirementChange(field.key, [
+                        ...selectedList,
+                        {
+                          recordId: rec.id,
+                          displayLabel: rec.displayLabel,
+                          data: rec.data,
+                          entityId: entity.id,
+                          entityTitle: entity.title,
+                        },
+                      ]);
+                    }
+                  };
+
+                  return (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] text-fuchsia-800 font-bold">
+                          {selectedIds.size} مورد انتخاب‌شده
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openQuickEntityRecordModal(field.key, 'entity_multiselect', entity)
+                          }
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 text-cyan-800 text-[10px] font-bold cursor-pointer"
+                        >
+                          <Plus className="w-3 h-3" />
+                          <span>افزودن {entity.title} جدید</span>
+                        </button>
+                      </div>
+
+                      <div className="flex flex-wrap gap-1.5 p-2 rounded-xl bg-white border border-fuchsia-200/80 max-h-36 overflow-y-auto">
+                        {records.length === 0 ? (
+                          <span className="text-[11px] text-slate-400">
+                            رکوردی ثبت نشده است؛ از دکمه «+ افزودن» استفاده کنید.
+                          </span>
+                        ) : (
+                          records.map((rec) => {
+                            const checked = selectedIds.has(rec.id);
+                            return (
+                              <button
+                                key={rec.id}
+                                type="button"
+                                onClick={() => toggleRecord(rec)}
+                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-pointer transition ${
+                                  checked
+                                    ? 'bg-fuchsia-600 text-white border-fuchsia-600'
+                                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-fuchsia-50'
+                                }`}
+                              >
+                                {checked && <Check className="w-3 h-3" />}
+                                <span>{rec.displayLabel}</span>
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+
                 if (field.fieldType === 'text') {
                   return (
                     <input
                       type="text"
-                      value={String(rawVal)}
+                      value={String(rawVal ?? '')}
                       onChange={(e) => handleRequirementChange(field.key, e.target.value)}
                       placeholder={`مقدار ${field.name}...`}
                       className="w-full rounded-xl bg-white border border-slate-200/90 px-3 py-1.5 text-xs font-semibold text-slate-900 focus:outline-none focus:border-indigo-500 shadow-2xs"
@@ -715,7 +1372,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                       <input
                         type="number"
                         min="0"
-                        value={String(rawVal || '0')}
+                        value={String(rawVal ?? '0')}
                         onChange={(e) => handleRequirementChange(field.key, e.target.value)}
                         className="w-full text-center font-bold text-sm bg-transparent text-slate-900 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
@@ -735,28 +1392,45 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
               const renderDynamicFieldCard = (field: DynamicField, depth: number = 0): React.ReactNode => {
                 const hasChildren = field.children && field.children.length > 0;
+                const isWideField =
+                  field.fieldType === 'entity' ||
+                  field.fieldType === 'entity_multiselect' ||
+                  field.fieldType === 'multiselect';
                 return (
                   <div
                     key={field.key}
                     className={`p-3 rounded-2xl border flex flex-col justify-between transition shadow-2xs ${
                       depth === 0
-                        ? hasChildren
+                        ? hasChildren || field.fieldType === 'entity'
                           ? 'bg-indigo-50/40 border-indigo-200/90 col-span-full'
+                          : isWideField
+                          ? 'bg-slate-50/80 border-slate-200 hover:border-slate-300 sm:col-span-2'
                           : 'bg-slate-50/80 border-slate-200 hover:border-slate-300'
+                        : field.fieldType === 'entity'
+                        ? 'bg-white border-indigo-200/70 col-span-full'
                         : 'bg-white border-indigo-200/70'
                     }`}
                   >
                     <div>
                       <div className="flex items-center justify-between gap-2 mb-2">
-                        <span className="text-xs font-bold text-slate-800 truncate" title={field.name}>
-                          {field.name}
+                        <span className="text-xs font-bold text-slate-800 truncate flex items-center gap-1.5" title={field.name}>
+                          {(field.fieldType === 'entity' ||
+                            field.fieldType === 'entity_select' ||
+                            field.fieldType === 'entity_multiselect') && (
+                            <Database className="w-3.5 h-3.5 text-cyan-600 shrink-0" />
+                          )}
+                          <span className="truncate">{field.name}</span>
                           {Boolean(field.required) && <span className="text-rose-500 mr-0.5">*</span>}
                         </span>
-                        {field.unit && (
+                        {field.entityTitle ? (
+                          <span className="text-[10px] font-bold text-cyan-800 bg-cyan-50 px-1.5 py-0.5 rounded-md border border-cyan-200 shrink-0">
+                            {field.entityTitle}
+                          </span>
+                        ) : field.unit ? (
                           <span className="text-[10px] font-medium text-slate-500 bg-white px-1.5 py-0.5 rounded-md border border-slate-200/60 shrink-0">
                             {field.unit}
                           </span>
-                        )}
+                        ) : null}
                       </div>
                       {renderFieldInput(field)}
                     </div>
@@ -986,6 +1660,177 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
         </form>
       </div>
+
+      {/* Inline Quick Create Entity Record Modal */}
+      {quickRecordState && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden text-slate-800">
+            <div className="flex items-center justify-between p-4 border-b border-slate-100 bg-cyan-50/70">
+              <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Database className="w-4 h-4 text-cyan-700" />
+                افزودن رکورد جدید به «{quickRecordState.entity.title}»
+              </h4>
+              <button
+                type="button"
+                onClick={() => setQuickRecordState(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {quickRecordState.error && (
+              <div className="m-3 p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs">
+                {quickRecordState.error}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveQuickEntityRecord} className="p-4 space-y-3 max-h-[75vh] overflow-y-auto">
+              {(quickRecordState.entity.fields || []).map((ef) => {
+                const val = quickRecordState.data[ef.key];
+                const setQuickVal = (nextVal: any) =>
+                  setQuickRecordState((prev) =>
+                    prev ? { ...prev, data: { ...prev.data, [ef.key]: nextVal } } : prev
+                  );
+                return (
+                  <div key={ef.key}>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">
+                      {ef.label}
+                      {ef.required && <span className="text-rose-500 mr-1">*</span>}
+                      {ef.unit && <span className="text-[10px] text-slate-500 mr-1">({ef.unit})</span>}
+                    </label>
+                    {ef.fieldType === 'checkbox' ? (
+                      <label className="flex items-center gap-2 p-2 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer text-xs">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(val)}
+                          onChange={(e) => setQuickVal(e.target.checked)}
+                          className="w-4 h-4 rounded text-cyan-600"
+                        />
+                        <span>بله</span>
+                      </label>
+                    ) : ef.fieldType === 'currency' ? (
+                      <input
+                        type="text"
+                        value={formatCurrencyInput(String(val ?? ''))}
+                        onChange={(e) => setQuickVal(formatCurrencyInput(e.target.value))}
+                        placeholder="0"
+                        className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:border-cyan-600"
+                        required={ef.required}
+                      />
+                    ) : ef.fieldType === 'number' ? (
+                      <input
+                        type="number"
+                        value={String(val ?? '')}
+                        onChange={(e) => setQuickVal(e.target.value)}
+                        className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-cyan-600"
+                        required={ef.required}
+                      />
+                    ) : ef.fieldType === 'select' ? (
+                      <select
+                        value={String(val ?? '')}
+                        onChange={(e) => setQuickVal(e.target.value)}
+                        className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-cyan-600"
+                        required={ef.required}
+                      >
+                        <option value="">انتخاب کنید...</option>
+                        {(ef.options || []).map((o) => (
+                          <option key={o} value={o}>
+                            {o}
+                          </option>
+                        ))}
+                      </select>
+                    ) : ef.fieldType === 'multiselect' ? (
+                      <div className="flex flex-wrap gap-1.5 p-2 rounded-xl bg-slate-50 border border-slate-200">
+                        {(ef.options || []).map((o) => {
+                          const arr: string[] = Array.isArray(val) ? val : [];
+                          const chk = arr.includes(o);
+                          return (
+                            <label
+                              key={o}
+                              className={`px-2 py-1 rounded-lg border text-xs cursor-pointer ${
+                                chk ? 'bg-cyan-600 text-white border-cyan-600 font-bold' : 'bg-white border-slate-200'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={chk}
+                                onChange={() => setQuickVal(chk ? arr.filter((x) => x !== o) : [...arr, o])}
+                                className="hidden"
+                              />
+                              {o}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    ) : ef.fieldType === 'file' ? (
+                      (val as FieldFileValue)?.fileId ? (
+                        <div className="flex items-center justify-between gap-2 bg-sky-50 px-3 py-1.5 rounded-xl border border-sky-200 text-xs">
+                          <span className="truncate font-bold text-sky-800">{val.fileName}</span>
+                          <button type="button" onClick={() => setQuickVal(null)} className="text-rose-500 cursor-pointer">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <label className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl border border-dashed border-cyan-300 text-xs font-bold text-cyan-800 cursor-pointer hover:bg-cyan-50">
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>{quickRecordUploadingAttr === ef.key ? 'در حال آپلود...' : 'انتخاب فایل'}</span>
+                          <input
+                            type="file"
+                            className="hidden"
+                            onChange={async (ev) => {
+                              const f = ev.target.files?.[0];
+                              if (f) {
+                                setQuickRecordUploadingAttr(ef.key);
+                                try {
+                                  const uploaded = await api.uploadFieldFileStream(f);
+                                  setQuickVal(uploaded);
+                                } catch (err: any) {
+                                  setQuickRecordState((prev) =>
+                                    prev ? { ...prev, error: err.message || 'خطا در آپلود' } : prev
+                                  );
+                                } finally {
+                                  setQuickRecordUploadingAttr(null);
+                                }
+                              }
+                              ev.target.value = '';
+                            }}
+                          />
+                        </label>
+                      )
+                    ) : (
+                      <input
+                        type="text"
+                        value={String(val ?? '')}
+                        onChange={(e) => setQuickVal(e.target.value)}
+                        className="w-full rounded-xl bg-white border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-cyan-600"
+                        required={ef.required}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setQuickRecordState(null)}
+                  className="px-3.5 py-1.5 rounded-xl border border-slate-200 text-xs text-slate-600 hover:bg-slate-100 cursor-pointer"
+                >
+                  انصراف
+                </button>
+                <button
+                  type="submit"
+                  disabled={quickRecordState.saving || Boolean(quickRecordUploadingAttr)}
+                  className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-xs font-bold text-white cursor-pointer disabled:opacity-50"
+                >
+                  {quickRecordState.saving ? 'در حال ثبت...' : 'ثبت و انتخاب'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

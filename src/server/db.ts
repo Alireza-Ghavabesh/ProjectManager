@@ -120,14 +120,46 @@ export function initDatabase() {
       createdAt TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS custom_entities (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL UNIQUE,
+      description TEXT DEFAULT '',
+      icon TEXT DEFAULT 'Database',
+      fieldsJson TEXT DEFAULT '[]',
+      isActive INTEGER DEFAULT 1,
+      createdAt TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS custom_entity_records (
+      id TEXT PRIMARY KEY,
+      entityId TEXT NOT NULL REFERENCES custom_entities(id) ON DELETE CASCADE,
+      displayLabel TEXT NOT NULL,
+      dataJson TEXT DEFAULT '{}',
+      createdById TEXT REFERENCES users(id) ON DELETE SET NULL,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS field_files (
+      id TEXT PRIMARY KEY,
+      fileName TEXT NOT NULL,
+      fileSize INTEGER NOT NULL,
+      fileType TEXT,
+      filePath TEXT NOT NULL,
+      uploadedBy TEXT REFERENCES users(id) ON DELETE SET NULL,
+      createdAt TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS dynamic_fields (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       key TEXT UNIQUE NOT NULL,
-      fieldType TEXT DEFAULT 'number', -- 'number', 'text', 'select', 'currency'
+      fieldType TEXT DEFAULT 'number', -- 'number', 'currency', 'text', 'file', 'checkbox', 'select', 'multiselect', 'entity', 'entity_select', 'entity_multiselect'
       unit TEXT DEFAULT 'نفر',
       defaultValue TEXT DEFAULT '1',
       optionsJson TEXT DEFAULT '[]',
+      entityId TEXT REFERENCES custom_entities(id) ON DELETE SET NULL,
+      fieldConfigJson TEXT DEFAULT '{}',
       required INTEGER DEFAULT 0,
       orderIndex INTEGER DEFAULT 0,
       isActive INTEGER DEFAULT 1,
@@ -445,6 +477,12 @@ export function initDatabase() {
     db.prepare('ALTER TABLE dynamic_fields ADD COLUMN parentId TEXT REFERENCES dynamic_fields(id) ON DELETE SET NULL').run();
   } catch (e) {}
   try {
+    db.prepare('ALTER TABLE dynamic_fields ADD COLUMN entityId TEXT REFERENCES custom_entities(id) ON DELETE SET NULL').run();
+  } catch (e) {}
+  try {
+    db.prepare("ALTER TABLE dynamic_fields ADD COLUMN fieldConfigJson TEXT DEFAULT '{}'").run();
+  } catch (e) {}
+  try {
     db.prepare("ALTER TABLE workflow_steps ADD COLUMN configJson TEXT DEFAULT '{}'").run();
   } catch (e) {}
   try {
@@ -535,6 +573,7 @@ function seedInitialData() {
     ['p-16', 'projects.delete', 'حذف پروژه', 'کارتابل', 'projects', 'حذف کامل پروژه و سوابق آن از سامانه', 1],
     ['p-17', 'projects.finalize', 'تصویب نهایی و صدور ابلاغیه', 'کارتابل', 'projects', 'خاتمه گردش کار و صدور مصوبه رسمی شورا', 1],
     ['p-56', 'projects.manual_approve', 'تایید نهایی دستی (خارج از گردش کار)', 'کارتابل', 'projects', 'امکان تایید نهایی دستی پروژه بدون طی مراحل گردش کار (به طور پیش‌فرض حتی برای مدیران غیرفعال است)', 1],
+    ['p-64', 'projects.edit_workflow_vote', 'امکان ویرایش رای در کارتابل', 'کارتابل', 'projects', 'در صورت نداشتن این دسترسی، کاربر پس از ثبت رای در مراحل گردش کار، پرونده در کارتابلش می‌ماند اما امکان تغییر یا ویرایش رای خود را ندارد (به‌طور پیش‌فرض غیرفعال است)', 0],
 
     // Entity 1.5: فهرست پروژه‌ها (نمای کل پروژه‌های سامانه)
     ['p-58', 'project_list', 'فهرست پروژه‌ها (نمای کل پروژه‌ها)', 'فهرست پروژه‌ها', null, 'دسترسی به بخش فهرست پروژه‌ها در سایدبار برای مشاهده و مدیریت همه پروژه‌های سامانه', 0],
@@ -687,7 +726,7 @@ function seedInitialData() {
   if (posPermCount === 0 || isFirstCrudMigration) {
     // Admin positions (pos-1 and pos-root) get standard permissions (never explicit-only overrides like projects.manual_approve)
     for (const p of allPerms) {
-      if (p.code === 'projects.manual_approve') continue;
+      if (p.code === 'projects.manual_approve' || p.code === 'projects.edit_workflow_vote') continue;
       if (existingPosSet.has('pos-1')) {
         try { insertPosPerm.run('pos-1', p.code); } catch (e) {}
       }
@@ -840,7 +879,7 @@ function seedInitialData() {
     const allPerms = db.prepare('SELECT code FROM permissions').all() as { code: string }[];
     const insertUserPerm = db.prepare('INSERT OR IGNORE INTO user_permissions (userId, permissionCode) VALUES (?, ?)');
     for (const p of allPerms) {
-      if (p.code === 'projects.manual_approve') continue;
+      if (p.code === 'projects.manual_approve' || p.code === 'projects.edit_workflow_vote') continue;
       insertUserPerm.run('usr-ghavabesh', p.code);
     }
   } catch (e) {}
@@ -1055,7 +1094,7 @@ function seedInitialData() {
         for (const sp of allSps) {
           const codes = permsByPos.get(sp.positionId) || [];
           for (const code of codes) {
-            if (code === 'projects.manual_approve') continue;
+            if (code === 'projects.manual_approve' || code === 'projects.edit_workflow_vote') continue;
             insertSpp.run(sp.id, code);
           }
         }

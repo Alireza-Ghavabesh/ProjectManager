@@ -2,6 +2,7 @@ import { User } from '../types';
 
 export const EXPLICIT_ONLY_PERMISSIONS = new Set([
   'projects.manual_approve',
+  'projects.edit_workflow_vote',
   'project_list.view',
   'project_list.create',
   'project_list.edit',

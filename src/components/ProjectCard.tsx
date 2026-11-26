@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Project, User, DynamicField } from '../types';
+import { Project, User, DynamicField, CustomEntity, FieldFileValue } from '../types';
 import {
   CheckCircle2,
   XCircle,
@@ -25,18 +25,21 @@ import {
   History,
   MessageSquare,
   UserCheck,
+  Download,
+  Database,
 } from 'lucide-react';
 
 import { ProjectAttachments } from './ProjectAttachments';
 import { formatBudgetDisplay, isDeadlineExpired } from '../utils/formatters';
 import { hasPerm } from '../utils/permissions';
 import { getActionBadgeMeta } from '../utils/workflowActions';
-import { api } from '../services/api';
+import { api, formatFileSize } from '../services/api';
 
 interface ProjectCardProps {
   project: Project;
   currentUser: User;
   dynamicFields: DynamicField[];
+  entities?: CustomEntity[];
   isExpanded?: boolean;
   onToggleExpand?: () => void;
   onOpenVoteModal: (project: Project) => void;
@@ -51,6 +54,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   project,
   currentUser,
   dynamicFields,
+  entities = [],
   isExpanded: controlledExpanded,
   onToggleExpand,
   onOpenVoteModal,
@@ -86,6 +90,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
     ? hasPerm(currentUser, 'project_list.create')
     : hasPerm(currentUser, 'projects.create');
   const canManualApprove = hasPerm(currentUser, 'projects.manual_approve');
+  const canEditWorkflowVote = hasPerm(currentUser, 'projects.edit_workflow_vote');
   const canViewConfidential = hasPerm(currentUser, 'voting.confidential.view_all');
   const canViewWorkflowHistory = hasPerm(currentUser, ['workflow.history.view', 'voting.confidential.view_all']);
   const canViewLiveStatus = hasPerm(currentUser, ['workflow.live_status.view', 'voting.confidential.view_all']);
@@ -231,22 +236,41 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
       .map((f) => ({ ...f, children: buildFieldTree(f.id) }));
 
   const fieldTree = buildFieldTree(null);
+  const isMeaningfulValue = (val: any, fieldType?: string): boolean => {
+    if (val === undefined || val === null || val === '') return false;
+    if (Array.isArray(val)) return val.length > 0;
+    if (fieldType === 'checkbox') return typeof val === 'boolean' || val === 'true' || val === 'false';
+    if (fieldType === 'file') return Boolean((val as FieldFileValue)?.fileId);
+    if (fieldType === 'entity_select') return Boolean(val?.recordId || (typeof val === 'string' && val.trim()));
+    if (fieldType === 'entity') {
+      if (typeof val !== 'object') return false;
+      return Object.entries(val).some(
+        ([k, v]) =>
+          !k.startsWith('_') &&
+          v !== undefined &&
+          v !== null &&
+          v !== '' &&
+          !(Array.isArray(v) && v.length === 0)
+      );
+    }
+    return true;
+  };
   const hasAnyKeyInBranch = (fld: DynamicField): boolean => {
-    if (reqObj[fld.key] !== undefined && reqObj[fld.key] !== '') return true;
+    if (isMeaningfulValue(reqObj[fld.key], fld.fieldType)) return true;
     return (fld.children || []).some((ch) => hasAnyKeyInBranch(ch));
   };
   const visibleRootFields = fieldTree.filter((fld) => hasAnyKeyInBranch(fld));
 
   const knownKeys = new Set(dynamicFields.map((f) => f.key));
   const legacyEntries = Object.entries(reqObj)
-    .filter(([key]) => !knownKeys.has(key))
+    .filter(([key, val]) => !knownKeys.has(key) && isMeaningfulValue(val))
     .map(([key, val]) => ({
       key,
       name: key,
       unit: '',
       value: val,
     }));
-  const totalRequirementCount = Object.keys(reqObj).length;
+  const totalRequirementCount = visibleRootFields.length + legacyEntries.length;
 
   const steps = project.workflowSteps || [];
   const hasWorkflow = Boolean(project.hasWorkflow || project.workflowId || steps.length > 0);
@@ -501,10 +525,15 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                 type="button"
                 onClick={() => onOpenWorkflowModal && onOpenWorkflowModal(project)}
                 className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-[11px] font-bold transition cursor-pointer whitespace-nowrap shrink-0"
-                title="تایید شما در این گام ثبت شده است"
+                title={
+                  canEditWorkflowVote
+                    ? 'تایید شما در این گام ثبت شده است (کلیک برای مشاهده یا ویرایش رای)'
+                    : 'تایید شما در این گام ثبت شده و غیرقابل ویرایش است (کلیک برای مشاهده وضعیت)'
+                }
               >
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                 <span>تایید شما ثبت شد</span>
+                {!canEditWorkflowVote && <Lock className="w-3 h-3 text-emerald-600/70" />}
               </button>
             )}
 
@@ -516,10 +545,15 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   type="button"
                   onClick={() => onOpenWorkflowModal && onOpenWorkflowModal(project)}
                   className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-[11px] font-bold transition cursor-pointer whitespace-nowrap shrink-0"
-                  title="درخواست اصلاح شما در این گام ثبت شده است (در انتظار نظر سایر اعضا)"
+                  title={
+                    canEditWorkflowVote
+                      ? 'درخواست اصلاح شما در این گام ثبت شده است (کلیک برای مشاهده یا ویرایش رای)'
+                      : 'درخواست اصلاح شما در این گام ثبت شده و غیرقابل ویرایش است (در انتظار نظر سایر اعضا)'
+                  }
                 >
                   <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
                   <span>رای اصلاح ثبت شد</span>
+                  {!canEditWorkflowVote && <Lock className="w-3 h-3 text-amber-700/70" />}
                 </button>
               )}
 
@@ -532,10 +566,15 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   type="button"
                   onClick={() => onOpenWorkflowModal && onOpenWorkflowModal(project)}
                   className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[11px] font-bold transition cursor-pointer whitespace-nowrap shrink-0"
-                  title="رای مخالف شما در این گام ثبت شده است"
+                  title={
+                    canEditWorkflowVote
+                      ? 'رای مخالف شما در این گام ثبت شده است (کلیک برای مشاهده یا ویرایش رای)'
+                      : 'رای مخالف شما در این گام ثبت شده و غیرقابل ویرایش است (کلیک برای مشاهده وضعیت)'
+                  }
                 >
                   <XCircle className="w-3.5 h-3.5 text-rose-600" />
                   <span>رای مخالف ثبت شد</span>
+                  {!canEditWorkflowVote && <Lock className="w-3 h-3 text-rose-600/70" />}
                 </button>
               )}
 
@@ -891,38 +930,224 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
                 {visibleRootFields.map((fld) => {
                   const val = reqObj[fld.key];
-                  const childNodes = (fld.children || []).filter(
-                    (ch) => reqObj[ch.key] !== undefined && reqObj[ch.key] !== ''
+                  const childNodes = (fld.children || []).filter((ch) =>
+                    isMeaningfulValue(reqObj[ch.key], ch.fieldType)
                   );
                   const hasChildren = childNodes.length > 0;
-                  const formattedVal =
-                    fld.fieldType === 'currency' && val !== undefined && val !== ''
-                      ? formatBudgetDisplay(String(val))
-                      : val ?? '—';
+                  const isWide =
+                    hasChildren ||
+                    fld.fieldType === 'entity' ||
+                    fld.fieldType === 'entity_select' ||
+                    fld.fieldType === 'entity_multiselect' ||
+                    fld.fieldType === 'multiselect';
+
+                  const renderEntityRecordDetails = (
+                    entityId: string | null | undefined,
+                    dataObj: Record<string, any> | undefined
+                  ) => {
+                    if (!dataObj || typeof dataObj !== 'object') return null;
+                    const ent = entities.find((e) => e.id === entityId);
+                    const attrs = ent?.fields || [];
+                    if (attrs.length > 0) {
+                      return (
+                        <div className="flex flex-wrap gap-1.5 mt-1.5">
+                          {attrs.map((ef) => {
+                            const sv = dataObj[ef.key];
+                            if (
+                              sv === undefined ||
+                              sv === null ||
+                              sv === '' ||
+                              (Array.isArray(sv) && sv.length === 0)
+                            ) {
+                              return null;
+                            }
+                            if (ef.fieldType === 'file' && (sv as FieldFileValue)?.fileId) {
+                              return (
+                                <button
+                                  key={ef.key}
+                                  type="button"
+                                  onClick={() => api.downloadFieldFile(sv.fileId, sv.fileName)}
+                                  className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 font-bold hover:underline cursor-pointer"
+                                >
+                                  <Download className="w-3 h-3 shrink-0" />
+                                  <span>{ef.label}: {sv.fileName}</span>
+                                </button>
+                              );
+                            }
+                            const disp =
+                              ef.fieldType === 'currency'
+                                ? formatBudgetDisplay(String(sv))
+                                : ef.fieldType === 'checkbox'
+                                ? sv
+                                  ? 'بله'
+                                  : 'خیر'
+                                : Array.isArray(sv)
+                                ? sv.join('، ')
+                                : `${sv}${ef.unit ? ` ${ef.unit}` : ''}`;
+                            return (
+                              <span
+                                key={ef.key}
+                                className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-lg bg-white border border-cyan-200/80 text-slate-700"
+                              >
+                                <span className="text-slate-500">{ef.label}:</span>
+                                <strong className="text-cyan-900 tabular-nums">{disp}</strong>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      );
+                    }
+                    // Fallback when entity schema isn't loaded
+                    const rawEntries = Object.entries(dataObj).filter(
+                      ([k, v]) => !k.startsWith('_') && v !== undefined && v !== null && v !== ''
+                    );
+                    if (rawEntries.length === 0) return null;
+                    return (
+                      <div className="flex flex-wrap gap-1.5 mt-1.5">
+                        {rawEntries.map(([k, v]) => (
+                          <span
+                            key={k}
+                            className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-lg bg-white border border-slate-200 text-slate-700"
+                          >
+                            <span className="text-slate-500">{k}:</span>
+                            <strong>{Array.isArray(v) ? v.join('، ') : typeof v === 'object' ? (v?.fileName || JSON.stringify(v)) : String(v)}</strong>
+                          </span>
+                        ))}
+                      </div>
+                    );
+                  };
+
+                  const renderValueContent = () => {
+                    if (fld.fieldType === 'checkbox') {
+                      const boolVal = val === true || val === 'true';
+                      return (
+                        <span
+                          className={`inline-flex items-center gap-1 text-xs font-extrabold px-2 py-0.5 rounded-lg border ${
+                            boolVal
+                              ? 'bg-teal-50 text-teal-800 border-teal-200'
+                              : 'bg-slate-100 text-slate-600 border-slate-200'
+                          }`}
+                        >
+                          {boolVal ? 'بله' : 'خیر'}
+                        </span>
+                      );
+                    }
+                    if (fld.fieldType === 'file') {
+                      const fileVal = val as FieldFileValue | null;
+                      if (!fileVal?.fileId) return <span className="text-sm text-slate-400">—</span>;
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => api.downloadFieldFile(fileVal.fileId, fileVal.fileName)}
+                          className="inline-flex items-center gap-1.5 text-xs font-bold text-sky-700 hover:text-sky-900 bg-sky-50 hover:bg-sky-100 border border-sky-200 px-2.5 py-1 rounded-lg transition cursor-pointer max-w-full"
+                          title={`دانلود ${fileVal.fileName}`}
+                        >
+                          <Download className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">{fileVal.fileName}</span>
+                          {fileVal.fileSize > 0 && (
+                            <span className="text-[10px] text-sky-600/80 shrink-0">
+                              ({formatFileSize(fileVal.fileSize)})
+                            </span>
+                          )}
+                        </button>
+                      );
+                    }
+                    if (fld.fieldType === 'multiselect') {
+                      const arr = Array.isArray(val) ? val : [];
+                      return (
+                        <div className="flex flex-wrap gap-1">
+                          {arr.map((opt: string) => (
+                            <span
+                              key={opt}
+                              className="text-[11px] font-bold px-2 py-0.5 rounded-lg bg-purple-50 text-purple-800 border border-purple-200"
+                            >
+                              {opt}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    }
+                    if (fld.fieldType === 'entity') {
+                      return renderEntityRecordDetails(fld.entityId || val?._entityId, val);
+                    }
+                    if (fld.fieldType === 'entity_select') {
+                      const recObj = val && typeof val === 'object' ? val : null;
+                      const label = recObj?.displayLabel || (typeof val === 'string' ? val : '—');
+                      return (
+                        <div>
+                          <div className="inline-flex items-center gap-1 text-xs font-extrabold text-blue-900 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200">
+                            <Database className="w-3 h-3 text-blue-600 shrink-0" />
+                            <span>{label}</span>
+                          </div>
+                          {recObj?.data && renderEntityRecordDetails(fld.entityId || recObj.entityId, recObj.data)}
+                        </div>
+                      );
+                    }
+                    if (fld.fieldType === 'entity_multiselect') {
+                      const arr = Array.isArray(val) ? val : [];
+                      return (
+                        <div className="space-y-1.5">
+                          {arr.map((item: any, idx: number) => {
+                            const label = typeof item === 'object' ? item.displayLabel : String(item);
+                            return (
+                              <div
+                                key={item?.recordId || idx}
+                                className="p-2 rounded-xl bg-white border border-fuchsia-200/80"
+                              >
+                                <div className="inline-flex items-center gap-1 text-xs font-extrabold text-fuchsia-900">
+                                  <Database className="w-3 h-3 text-fuchsia-600 shrink-0" />
+                                  <span>{label}</span>
+                                </div>
+                                {typeof item === 'object' &&
+                                  item?.data &&
+                                  renderEntityRecordDetails(fld.entityId || item.entityId, item.data)}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    }
+
+                    const formattedVal =
+                      fld.fieldType === 'currency' && val !== undefined && val !== ''
+                        ? formatBudgetDisplay(String(val))
+                        : val ?? '—';
+
+                    return (
+                      <div className="flex items-baseline justify-between gap-1">
+                        <span className="text-sm font-extrabold text-indigo-600 truncate tabular-nums">
+                          {typeof formattedVal === 'object' ? JSON.stringify(formattedVal) : String(formattedVal)}
+                        </span>
+                        {fld.fieldType !== 'currency' && fld.unit && (
+                          <span className="text-[10px] text-slate-500 font-normal shrink-0">
+                            {fld.unit}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  };
 
                   return (
                     <div
                       key={fld.key}
                       className={`p-2.5 rounded-xl border flex flex-col justify-between ${
-                        hasChildren
+                        isWide
                           ? 'bg-indigo-50/40 border-indigo-200/90 col-span-2 sm:col-span-3 md:col-span-2'
                           : 'bg-slate-50 border-slate-200/80'
                       }`}
                     >
                       <div>
-                        <span className="text-[11px] text-slate-500 font-medium truncate block mb-1">
-                          {fld.name}
-                        </span>
-                        <div className="flex items-baseline justify-between gap-1">
-                          <span className="text-sm font-extrabold text-indigo-600 truncate tabular-nums">
-                            {formattedVal}
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <span className="text-[11px] text-slate-500 font-medium truncate">
+                            {fld.name}
                           </span>
-                          {fld.fieldType !== 'currency' && fld.unit && (
-                            <span className="text-[10px] text-slate-500 font-normal shrink-0">
-                              {fld.unit}
+                          {fld.entityTitle && (
+                            <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-cyan-50 text-cyan-800 border border-cyan-200 shrink-0">
+                              {fld.entityTitle}
                             </span>
                           )}
                         </div>
+                        {renderValueContent()}
                       </div>
 
                       {hasChildren && (
@@ -932,6 +1157,16 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                             const chDisplay =
                               ch.fieldType === 'currency'
                                 ? formatBudgetDisplay(String(chVal))
+                                : ch.fieldType === 'checkbox'
+                                ? chVal
+                                  ? 'بله'
+                                  : 'خیر'
+                                : ch.fieldType === 'file' && chVal?.fileName
+                                ? chVal.fileName
+                                : Array.isArray(chVal)
+                                ? chVal.map((x: any) => (typeof x === 'object' ? x.displayLabel || '' : x)).join('، ')
+                                : typeof chVal === 'object' && chVal?.displayLabel
+                                ? chVal.displayLabel
                                 : `${chVal}${ch.unit ? ` ${ch.unit}` : ''}`;
                             return (
                               <span
@@ -958,7 +1193,17 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                       {req.name}
                     </span>
                     <div className="flex items-baseline justify-between">
-                      <span className="text-sm font-extrabold text-indigo-600 tabular-nums">{req.value}</span>
+                      <span className="text-sm font-extrabold text-indigo-600 tabular-nums truncate">
+                        {Array.isArray(req.value)
+                          ? req.value.map((x: any) => (typeof x === 'object' ? x.displayLabel || JSON.stringify(x) : x)).join('، ')
+                          : typeof req.value === 'object' && req.value !== null
+                          ? req.value.displayLabel || req.value.fileName || JSON.stringify(req.value)
+                          : typeof req.value === 'boolean'
+                          ? req.value
+                            ? 'بله'
+                            : 'خیر'
+                          : String(req.value)}
+                      </span>
                       <span className="text-[10px] text-slate-500 font-normal">{req.unit}</span>
                     </div>
                   </div>

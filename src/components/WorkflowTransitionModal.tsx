@@ -100,7 +100,16 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
       (!isCreatorRevisionTurn && currentUser.positionId && currentPosIds.includes(currentUser.positionId))
   );
   const isAdminOverriding = !isAssignee && currentUser.role === 'ADMIN' && adminOverride;
-  const lockedAfterVote = !isCreatorRevisionTurn && hasCurrentUserVotedInStep && leavesCartable && !isAdminOverriding;
+  const canEditWorkflowVote = hasPerm(currentUser, 'projects.edit_workflow_vote');
+  const lockedByLeaveCartable =
+    !isCreatorRevisionTurn && hasCurrentUserVotedInStep && leavesCartable && !isAdminOverriding;
+  const lockedByNoEditPerm =
+    !isCreatorRevisionTurn &&
+    hasCurrentUserVotedInStep &&
+    !leavesCartable &&
+    !canEditWorkflowVote &&
+    !isAdminOverriding;
+  const lockedAfterVote = lockedByLeaveCartable || lockedByNoEditPerm;
   const canSubmitAction =
     !isCompletedOrRejected &&
     !lockedAfterVote &&
@@ -582,21 +591,27 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
                   <div className="text-[11px] font-bold text-emerald-700">
                     {leavesCartable
                       ? 'شما رای موافق خود را در این مرحله ثبت کرده‌اید و پرونده از کارتابل شما خارج شده است.'
-                      : 'شما رای موافق خود را در این مرحله ثبت کرده‌اید و پرونده در انتظار تکمیل آرای سایر افراد است (در صورت نیاز می‌توانید رای خود را تغییر دهید).'}
+                      : canEditWorkflowVote
+                      ? 'شما رای موافق خود را در این مرحله ثبت کرده‌اید و پرونده در انتظار تکمیل آرای سایر افراد است (به دلیل داشتن دسترسی «امکان ویرایش رای در کارتابل» می‌توانید رای خود را تغییر دهید).'
+                      : 'شما رای موافق خود را در این مرحله ثبت کرده‌اید و پرونده در کارتابل شما باقی مانده است، اما امکان تغییر رای وجود ندارد.'}
                   </div>
                 )}
                 {stepProgress.hasCurrentUserRequestedRevision && (
                   <div className="text-[11px] font-bold text-amber-800">
                     {leavesCartable
                       ? 'شما رای «نیاز به اصلاح» خود را ثبت کرده‌اید و پرونده از کارتابل شما خارج شده است.'
-                      : 'شما رای «نیاز به اصلاح» خود را در این مرحله ثبت کرده‌اید و پرونده همچنان در انتظار نظر سایر اعضای مرحله است (در صورت نیاز می‌توانید رای خود را تغییر دهید).'}
+                      : canEditWorkflowVote
+                      ? 'شما رای «نیاز به اصلاح» خود را در این مرحله ثبت کرده‌اید و پرونده همچنان در انتظار نظر سایر اعضای مرحله است (به دلیل داشتن دسترسی «امکان ویرایش رای در کارتابل» می‌توانید رای خود را تغییر دهید).'
+                      : 'شما رای «نیاز به اصلاح» خود را در این مرحله ثبت کرده‌اید و پرونده در کارتابل شما باقی مانده است، اما امکان تغییر رای وجود ندارد.'}
                   </div>
                 )}
                 {stepProgress.hasCurrentUserRejected && (
                   <div className="text-[11px] font-bold text-rose-700">
                     {leavesCartable
                       ? 'شما رای مخالف خود را ثبت کرده‌اید و پرونده از کارتابل شما خارج شده است.'
-                      : 'شما رای مخالف خود را در این مرحله ثبت کرده‌اید و پرونده در انتظار تکمیل آرای سایر افراد است (در صورت نیاز می‌توانید رای خود را تغییر دهید).'}
+                      : canEditWorkflowVote
+                      ? 'شما رای مخالف خود را در این مرحله ثبت کرده‌اید و پرونده در انتظار تکمیل آرای سایر افراد است (به دلیل داشتن دسترسی «امکان ویرایش رای در کارتابل» می‌توانید رای خود را تغییر دهید).'
+                      : 'شما رای مخالف خود را در این مرحله ثبت کرده‌اید و پرونده در کارتابل شما باقی مانده است، اما امکان تغییر رای وجود ندارد.'}
                   </div>
                 )}
               </div>
@@ -612,9 +627,21 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
             </div>
           )}
 
-          {lockedAfterVote && !isCompletedOrRejected && (
-            <div className="p-3.5 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-900 text-xs font-semibold">
-              رای و توضیحات شما در این مرحله ثبت شده و پرونده از کارتابل شما خارج شده است. تکمیل مرحله پس از اقدام سایر اعضای این گام انجام می‌شود.
+          {lockedByLeaveCartable && !isCompletedOrRejected && (
+            <div className="p-3.5 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-900 text-xs font-semibold flex items-start gap-2">
+              <Lock className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+              <span>
+                رای و توضیحات شما در این مرحله ثبت شده و پرونده از کارتابل شما خارج شده است. انتقال به گام بعدی پس از ثبت رای سایر اعضای این سمت انجام می‌شود.
+              </span>
+            </div>
+          )}
+
+          {lockedByNoEditPerm && !isCompletedOrRejected && (
+            <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-300 text-amber-950 text-xs font-semibold flex items-start gap-2">
+              <Lock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <span>
+                رای شما قبلاً در این مرحله ثبت شده است. پرونده تا تکمیل رای سایر اعضا در کارتابل شما باقی می‌ماند، اما به دلیل نداشتن دسترسی «امکان ویرایش رای در کارتابل» امکان تغییر یا ویرایش رای خود را ندارید.
+              </span>
             </div>
           )}
 
@@ -788,8 +815,11 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
                 {allowApprove && (
                   <button
                     type="button"
+                    disabled={lockedAfterVote || isCompletedOrRejected}
                     onClick={() => setAction('FORWARD')}
-                    className={`p-3 rounded-2xl border text-center transition cursor-pointer flex flex-col items-center justify-center ${
+                    className={`p-3 rounded-2xl border text-center transition flex flex-col items-center justify-center disabled:opacity-55 disabled:cursor-not-allowed ${
+                      lockedAfterVote || isCompletedOrRejected ? 'cursor-not-allowed' : 'cursor-pointer'
+                    } ${
                       action === 'FORWARD'
                         ? 'bg-emerald-50 border-emerald-500 text-emerald-800 ring-2 ring-emerald-500/20 shadow-xs'
                         : 'bg-white border-slate-200 text-slate-600 hover:border-emerald-300 hover:bg-emerald-50/50'
@@ -806,8 +836,11 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
                 {allowRevision && (
                   <button
                     type="button"
+                    disabled={lockedAfterVote || isCompletedOrRejected}
                     onClick={() => setAction('NEEDS_REVISION')}
-                    className={`p-3 rounded-2xl border text-center transition cursor-pointer flex flex-col items-center justify-center ${
+                    className={`p-3 rounded-2xl border text-center transition flex flex-col items-center justify-center disabled:opacity-55 disabled:cursor-not-allowed ${
+                      lockedAfterVote || isCompletedOrRejected ? 'cursor-not-allowed' : 'cursor-pointer'
+                    } ${
                       action === 'NEEDS_REVISION'
                         ? 'bg-amber-50 border-amber-500 text-amber-800 ring-2 ring-amber-500/20 shadow-xs'
                         : 'bg-white border-slate-200 text-slate-600 hover:border-amber-300 hover:bg-amber-50/50'
@@ -824,8 +857,11 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
                 {allowReject && (
                   <button
                     type="button"
+                    disabled={lockedAfterVote || isCompletedOrRejected}
                     onClick={() => setAction('REJECTED')}
-                    className={`p-3 rounded-2xl border text-center transition cursor-pointer flex flex-col items-center justify-center ${
+                    className={`p-3 rounded-2xl border text-center transition flex flex-col items-center justify-center disabled:opacity-55 disabled:cursor-not-allowed ${
+                      lockedAfterVote || isCompletedOrRejected ? 'cursor-not-allowed' : 'cursor-pointer'
+                    } ${
                       action === 'REJECTED'
                         ? 'bg-rose-50 border-rose-500 text-rose-800 ring-2 ring-rose-500/20 shadow-xs'
                         : 'bg-white border-slate-200 text-slate-600 hover:border-rose-300 hover:bg-rose-50/50'
@@ -867,13 +903,16 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
             <textarea
               rows={3}
               value={comment}
+              disabled={lockedAfterVote || isCompletedOrRejected}
               onChange={(e) => setComment(e.target.value)}
               placeholder={
-                currentStep?.config?.assigneeMode === 'CREATOR' && !isCreatorRevisionTurn
+                lockedAfterVote
+                  ? 'رای شما پیش‌تر ثبت شده و امکان ویرایش ندارد.'
+                  : currentStep?.config?.assigneeMode === 'CREATOR' && !isCreatorRevisionTurn
                   ? 'توضیحات اختیاری پیش از ارسال به مرحله بعد...'
                   : 'دستور، نظر کارشناسی یا توضیحات برای ثبت در تاریخچه وضعیت پروژه...'
               }
-              className="w-full rounded-2xl bg-slate-50 border border-slate-300 px-4 py-2.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white leading-relaxed transition"
+              className="w-full rounded-2xl bg-slate-50 border border-slate-300 px-4 py-2.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white leading-relaxed transition disabled:opacity-60 disabled:cursor-not-allowed"
             />
           </div>
 
@@ -956,7 +995,13 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
               className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-xs font-bold text-white shadow-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition"
             >
               <Send className="w-3.5 h-3.5" />
-              <span>{loading ? 'در حال ثبت...' : 'ثبت ارجاع در گردش کار'}</span>
+              <span>
+                {loading
+                  ? 'در حال ثبت...'
+                  : hasCurrentUserVotedInStep && canEditWorkflowVote && !leavesCartable
+                  ? 'ویرایش و ثبت مجدد رای'
+                  : 'ثبت ارجاع در گردش کار'}
+              </span>
             </button>
           </div>
         </form>

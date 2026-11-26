@@ -942,6 +942,20 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
     });
   };
 
+  const handleStepConfigPatch = (index: number, patch: Partial<WorkflowStepConfig>) => {
+    setSteps((prev) => {
+      const copy = [...prev];
+      copy[index] = {
+        ...copy[index],
+        config: {
+          ...copy[index].config,
+          ...patch,
+        },
+      };
+      return copy;
+    });
+  };
+
   const clearDragState = () => {
     setDragPayload(null);
     setDropSlotIndex(null);
@@ -2706,56 +2720,130 @@ export const WorkflowManager: React.FC<WorkflowManagerProps> = ({
                           })}
                         </div>
 
-                        {/* Cartable & Status History Visibility */}
-                        <div className="p-3 rounded-xl bg-indigo-50/50 border border-indigo-200/80 space-y-2.5">
-                          <label className="flex items-start gap-2 cursor-pointer text-[11px] text-slate-800">
-                            <input
-                              type="checkbox"
-                              checked={Boolean(
-                                selectedStep.config.removeFromCartableAfterVote ??
-                                  (selectedStep.config.voteCollectionMode === 'WAIT_ALL')
-                              )}
-                              onChange={(e) =>
-                                handleStepConfigChange(
-                                  selectedStepIdx,
-                                  'removeFromCartableAfterVote',
-                                  e.target.checked
-                                )
-                              }
-                              className="mt-0.5 rounded text-indigo-600"
-                            />
-                            <span className="leading-relaxed">
-                              <strong className="flex items-center gap-1 text-indigo-950">
-                                <LogOut className="w-3 h-3 text-indigo-600" />
-                                خروج از کارتابل کاربر بلافاصله پس از ثبت رای
-                              </strong>
-                              <span className="text-[10px] text-slate-500 block">
-                                پروژه از کارتابل این کاربر خارج شده اما برای بقیه نفرات این سمت باز می‌ماند.
-                              </span>
-                            </span>
-                          </label>
+                        {/* Cartable & Multi-User Voting Mode Selector */}
+                        {(() => {
+                          const isLeaveAfterVoteMode = Boolean(
+                            selectedStep.config.removeFromCartableAfterVote ??
+                              (selectedStep.config.voteCollectionMode === 'WAIT_ALL')
+                          );
+                          const isWaitAllCollection =
+                            selectedStep.config.voteCollectionMode === 'WAIT_ALL';
+                          return (
+                            <div className="p-3 rounded-xl bg-indigo-50/50 border border-indigo-200/80 space-y-2.5">
+                              <div className="text-[11px] font-black text-indigo-950 flex items-center gap-1.5">
+                                <Users className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                                <span>رفتار کارتابل پس از ثبت رای (سمت‌های چندنفره)</span>
+                              </div>
 
-                          <label className="flex items-start gap-2 cursor-pointer text-[11px] text-slate-800">
-                            <input
-                              type="checkbox"
-                              checked={selectedStep.config.showVotesInStatusHistory !== false}
-                              onChange={(e) =>
-                                handleStepConfigChange(
-                                  selectedStepIdx,
-                                  'showVotesInStatusHistory',
-                                  e.target.checked
-                                )
-                              }
-                              className="mt-0.5 rounded text-indigo-600"
-                            />
-                            <span className="leading-relaxed">
-                              <strong className="flex items-center gap-1 text-indigo-950">
-                                <Eye className="w-3 h-3 text-indigo-600" />
-                                ثبت رای و توضیحات هر کاربر در تاریخچه وضعیت پروژه
-                              </strong>
-                            </span>
-                          </label>
-                        </div>
+                              {/* Mode 1: Stay in cartable, vote edit controlled by RBAC permission */}
+                              <label
+                                className={`flex items-start gap-2 p-2.5 rounded-xl border cursor-pointer transition text-[11px] ${
+                                  !isLeaveAfterVoteMode
+                                    ? 'bg-white border-indigo-400 ring-1 ring-indigo-300/60 shadow-2xs'
+                                    : 'bg-white/60 border-slate-200 hover:border-indigo-300'
+                                }`}
+                              >
+                                <input
+                                  type="radio"
+                                  name={`cartable-vote-mode-${selectedStep.localKey}`}
+                                  checked={!isLeaveAfterVoteMode}
+                                  onChange={() =>
+                                    handleStepConfigPatch(selectedStepIdx, {
+                                      removeFromCartableAfterVote: false,
+                                    })
+                                  }
+                                  className="mt-0.5 text-indigo-600 accent-indigo-600"
+                                />
+                                <span className="leading-relaxed">
+                                  <strong className="block text-slate-900">
+                                    حالت ۱: ماندن در کارتابل پس از رای (ویرایش فقط با مجوز)
+                                  </strong>
+                                  <span className="text-[10px] text-slate-500 block mt-0.5">
+                                    پس از ثبت رای هر عضو، پرونده در کارتابل او باقی می‌ماند. تغییر رای فقط برای دارندگان دسترسی «امکان ویرایش رای در کارتابل» مجاز است.
+                                  </span>
+                                </span>
+                              </label>
+
+                              {!isLeaveAfterVoteMode && (
+                                <label className="flex items-start gap-2 px-2.5 py-1.5 rounded-lg bg-white/80 border border-indigo-100 cursor-pointer text-[10px] text-slate-700">
+                                  <input
+                                    type="checkbox"
+                                    checked={isWaitAllCollection}
+                                    onChange={(e) =>
+                                      handleStepConfigPatch(selectedStepIdx, {
+                                        removeFromCartableAfterVote: false,
+                                        voteCollectionMode: e.target.checked
+                                          ? 'WAIT_ALL'
+                                          : 'EARLY_DECIDE',
+                                      })
+                                    }
+                                    className="mt-0.5 rounded text-indigo-600 accent-indigo-600"
+                                  />
+                                  <span className="leading-relaxed">
+                                    <strong className="text-indigo-950">
+                                      صبر تا رای‌دهی همه اعضای سمت پیش از رفتن به گام بعد
+                                    </strong>
+                                    <span className="block text-slate-500">
+                                      در صورت فعال بودن، حتی پس از رای نفرات اول، مرحله تا ثبت نظر همه اعضای این سمت به گام بعدی نمی‌رود.
+                                    </span>
+                                  </span>
+                                </label>
+                              )}
+
+                              {/* Mode 2: Leave cartable immediately after vote, wait for all members before moving on */}
+                              <label
+                                className={`flex items-start gap-2 p-2.5 rounded-xl border cursor-pointer transition text-[11px] ${
+                                  isLeaveAfterVoteMode
+                                    ? 'bg-white border-indigo-400 ring-1 ring-indigo-300/60 shadow-2xs'
+                                    : 'bg-white/60 border-slate-200 hover:border-indigo-300'
+                                }`}
+                              >
+                                <input
+                                  type="radio"
+                                  name={`cartable-vote-mode-${selectedStep.localKey}`}
+                                  checked={isLeaveAfterVoteMode}
+                                  onChange={() =>
+                                    handleStepConfigPatch(selectedStepIdx, {
+                                      removeFromCartableAfterVote: true,
+                                      voteCollectionMode: 'WAIT_ALL',
+                                    })
+                                  }
+                                  className="mt-0.5 text-indigo-600 accent-indigo-600"
+                                />
+                                <span className="leading-relaxed">
+                                  <strong className="flex items-center gap-1 text-indigo-950">
+                                    <LogOut className="w-3 h-3 text-indigo-600 shrink-0" />
+                                    حالت ۲: خروج از کارتابل هر نفر پس از رای + صبر تا رای همه اعضا
+                                  </strong>
+                                  <span className="text-[10px] text-slate-500 block mt-0.5">
+                                    پرونده برای همه اعضای این سمت ارسال می‌شود؛ هر نفر که رای داد بلافاصله از کارتابلش خارج می‌شود، ولی تا همه اعضا رای ندهند به گام بعد منتقل نمی‌شود.
+                                  </span>
+                                </span>
+                              </label>
+
+                              <label className="flex items-start gap-2 pt-1 border-t border-indigo-200/60 cursor-pointer text-[11px] text-slate-800">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedStep.config.showVotesInStatusHistory !== false}
+                                  onChange={(e) =>
+                                    handleStepConfigChange(
+                                      selectedStepIdx,
+                                      'showVotesInStatusHistory',
+                                      e.target.checked
+                                    )
+                                  }
+                                  className="mt-0.5 rounded text-indigo-600"
+                                />
+                                <span className="leading-relaxed">
+                                  <strong className="flex items-center gap-1 text-indigo-950">
+                                    <Eye className="w-3 h-3 text-indigo-600" />
+                                    ثبت رای و توضیحات هر کاربر در تاریخچه وضعیت پروژه
+                                  </strong>
+                                </span>
+                              </label>
+                            </div>
+                          );
+                        })()}
 
                         {/* Step Validation Controls & Direct File Attachment */}
                         <div className="p-3 rounded-xl bg-rose-50/50 border border-rose-200/80 space-y-2.5">

@@ -119,14 +119,78 @@ export interface ProjectStructure {
   userCount?: number;
 }
 
+export type DynamicFieldType =
+  | 'number'
+  | 'currency'
+  | 'text'
+  | 'file'
+  | 'checkbox'
+  | 'select'
+  | 'multiselect'
+  | 'entity'
+  | 'entity_select'
+  | 'entity_multiselect';
+
+export type EntityFieldType =
+  | 'text'
+  | 'number'
+  | 'currency'
+  | 'checkbox'
+  | 'select'
+  | 'multiselect'
+  | 'file';
+
+export interface EntityFieldSchema {
+  key: string;
+  label: string;
+  fieldType: EntityFieldType;
+  unit?: string;
+  options?: string[];
+  required?: boolean;
+  isPrimaryDisplay?: boolean;
+}
+
+export interface CustomEntityRecord {
+  id: string;
+  entityId: string;
+  displayLabel: string;
+  data: Record<string, any>;
+  createdById?: string | null;
+  createdByName?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CustomEntity {
+  id: string;
+  title: string;
+  description?: string;
+  icon?: string;
+  fields: EntityFieldSchema[];
+  isActive: number | boolean;
+  recordCount?: number;
+  records?: CustomEntityRecord[];
+  createdAt: string;
+}
+
+export interface FieldFileValue {
+  fileId: string;
+  fileName: string;
+  fileSize: number;
+  fileType?: string;
+}
+
 export interface DynamicField {
   id: string;
   name: string;
   key: string;
-  fieldType: 'number' | 'text' | 'select' | 'currency';
+  fieldType: DynamicFieldType;
   unit?: string;
   defaultValue?: string;
   optionsJson?: string;
+  entityId?: string | null;
+  entityTitle?: string | null;
+  fieldConfigJson?: string;
   required: number | boolean;
   orderIndex: number;
   isActive: number | boolean;

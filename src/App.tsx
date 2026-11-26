@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { User, Project, DynamicField, ProjectType, Position, DashboardStats, ProjectStructure, Workflow, PasswordResetRequest, PublicSettings, UserNotification } from './types';
+import { User, Project, DynamicField, ProjectType, CustomEntity, Position, DashboardStats, ProjectStructure, Workflow, PasswordResetRequest, PublicSettings, UserNotification } from './types';
 import { api } from './services/api';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -58,6 +58,7 @@ export default function App() {
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [dynamicFields, setDynamicFields] = useState<DynamicField[]>([]);
   const [projectTypes, setProjectTypes] = useState<ProjectType[]>([]);
+  const [customEntities, setCustomEntities] = useState<CustomEntity[]>([]);
   const [projectStructures, setProjectStructures] = useState<ProjectStructure[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -255,12 +256,14 @@ export default function App() {
   const refreshDynamicFieldsData = async () => {
     if (!currentUser) return;
     try {
-      const [flds, pTypes] = await Promise.all([
+      const [flds, pTypes, ents] = await Promise.all([
         api.getDynamicFields().catch(() => null),
         api.getProjectTypes().catch(() => null),
+        api.getEntities().catch(() => null),
       ]);
       if (flds) setDynamicFields(flds);
       if (pTypes) setProjectTypes(pTypes);
+      if (ents) setCustomEntities(ents);
     } catch (err) {
       console.error('Error refreshing dynamic fields:', err);
     }
@@ -277,11 +280,12 @@ export default function App() {
         ? api.getPasswordResetRequests().catch(() => [])
         : Promise.resolve([]);
 
-      const [prjs, allPrjs, flds, pTypes, structs, usrs, pos, st, wfs, me, resets] = await Promise.all([
+      const [prjs, allPrjs, flds, pTypes, ents, structs, usrs, pos, st, wfs, me, resets] = await Promise.all([
         api.getProjects('cartable').catch(() => []),
         canSeeProjectList ? api.getProjects('all').catch(() => []) : Promise.resolve([]),
         api.getDynamicFields().catch(() => []),
         api.getProjectTypes().catch(() => []),
+        api.getEntities().catch(() => []),
         api.getProjectStructures().catch(() => []),
         api.getUsers().catch(() => []),
         api.getPositions().catch(() => []),
@@ -294,6 +298,7 @@ export default function App() {
       setAllProjects(allPrjs);
       setDynamicFields(flds);
       setProjectTypes(pTypes);
+      setCustomEntities(ents);
       setProjectStructures(structs);
       setUsers(usrs);
       setPositions(pos);
@@ -1145,6 +1150,7 @@ export default function App() {
                         project={prj}
                         currentUser={currentUser}
                         dynamicFields={dynamicFields}
+                        entities={customEntities}
                         viewContext="cartable"
                         isExpanded={Boolean(expandedProjectIds[prj.id])}
                         onToggleExpand={() =>
@@ -1389,6 +1395,7 @@ export default function App() {
                             project={prj}
                             currentUser={currentUser}
                             dynamicFields={dynamicFields}
+                            entities={customEntities}
                             viewContext="project_list"
                             isExpanded={Boolean(expandedListProjectIds[prj.id])}
                             onToggleExpand={() =>
@@ -1456,6 +1463,7 @@ export default function App() {
             <DynamicFieldsManager
               fields={dynamicFields}
               projectTypes={projectTypes}
+              entities={customEntities}
               workflows={workflows}
               currentUser={currentUser}
               onRefresh={refreshDynamicFieldsData}
@@ -1533,6 +1541,8 @@ export default function App() {
         <CreateProjectModal
           dynamicFields={dynamicFields}
           projectTypes={projectTypes}
+          entities={customEntities}
+          onEntitiesUpdated={refreshDynamicFieldsData}
           currentUser={currentUser}
           onClose={() => {
             setShowCreateModal(false);
