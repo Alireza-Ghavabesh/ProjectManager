@@ -154,6 +154,14 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
     }
   }, [isCreatorRevisionTurn, allowApprove, allowRevision, allowReject, action]);
 
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, []);
+
   const showQuorumBar =
     Boolean(stepProgress) &&
     !isCreatorRevisionTurn &&
@@ -341,40 +349,49 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm overflow-y-auto">
-      <div className="w-full max-w-2xl rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden my-6 animate-in fade-in zoom-in-95 duration-150">
-        
-        {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/60">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 border border-blue-200 flex items-center justify-center">
-              <GitBranch className="w-5 h-5" />
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/40 backdrop-blur-sm overflow-hidden"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-2xl max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-2rem)] flex flex-col rounded-2xl sm:rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Fixed Header */}
+        <div className="shrink-0 flex items-center justify-between gap-2 p-3.5 sm:p-5 border-b border-slate-100 bg-slate-50/60">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-2xl bg-blue-50 text-blue-600 border border-blue-200 flex items-center justify-center">
+              <GitBranch className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
-            <div>
-              <h3 className="text-base font-bold text-slate-900">
+            <div className="min-w-0">
+              <h3 className="text-sm sm:text-base font-bold text-slate-900 truncate">
                 ارجاع و گردش کار سازمانی پروژه
               </h3>
-              <p className="text-xs text-blue-700 font-semibold">
+              <p className="text-[11px] sm:text-xs text-blue-700 font-semibold truncate">
                 {project.code} — {project.title}
               </p>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+            className="shrink-0 p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {error && (
-          <div className="m-5 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs">
-            {error}
-          </div>
-        )}
+        {/* Form wraps scrollable middle body + fixed bottom action bar */}
+        <form onSubmit={handleTransition} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+            {error && (
+              <div className="mx-4 mt-4 sm:mx-5 sm:mt-5 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs">
+                {error}
+              </div>
+            )}
 
-        {/* Workflow Progression Roadmap */}
-        <div className="p-5 border-b border-slate-100 bg-slate-50/40 space-y-3">
+            {/* Workflow Progression Roadmap */}
+            <div className="p-4 sm:p-5 border-b border-slate-100 bg-slate-50/40 space-y-3">
           <div className="text-xs font-bold text-slate-600 flex items-center justify-between gap-2 flex-wrap">
             <span>مراحل طی‌شده در چارت سازمانی:</span>
             <div className="flex items-center gap-1.5 flex-wrap">
@@ -617,10 +634,10 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
               </div>
             );
           })()}
-        </div>
+            </div>
 
-        {/* Action Form */}
-        <form onSubmit={handleTransition} className="p-5 space-y-4">
+            {/* Action Form Body */}
+            <div className="p-4 sm:p-5 space-y-4">
           {isCompletedOrRejected && (
             <div className="p-3.5 rounded-2xl bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold">
               این پروژه پیش‌تر در گردش کار {project.status === 'APPROVED' ? 'تصویب نهایی' : 'رد و مختومه'} شده است و امکان ثبت اقدام جدید ندارد.
@@ -980,8 +997,11 @@ export const WorkflowTransitionModal: React.FC<WorkflowTransitionModalProps> = (
             </div>
           )}
 
-          {/* Actions */}
-          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+            </div>
+          </div>
+
+          {/* Fixed Bottom Actions Bar */}
+          <div className="shrink-0 flex items-center justify-end gap-2.5 sm:gap-3 px-4 py-3 sm:px-5 sm:py-3.5 border-t border-slate-100 bg-white">
             <button
               type="button"
               onClick={onClose}
